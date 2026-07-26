@@ -158,7 +158,8 @@ open Concrete
     needed for the soundness proofs. -/
 structure ConcreteSpec [Concrete] : Prop where
   litLoc_inj   : ∀ v w, litLoc v = litLoc w → v = w
-  allocC_fresh : ∀ h κ, h.val (allocC h κ) = none ∧ ∀ p, h.obj (allocC h κ) p = none
+  allocC_fresh : ∀ (h : Heap) (κ : Idx),
+    h.val (allocC h κ) = none ∧ ∀ p, h.obj (allocC h κ) p = none
 
 /-! ## Expression evaluation (Fig. A3)
 
