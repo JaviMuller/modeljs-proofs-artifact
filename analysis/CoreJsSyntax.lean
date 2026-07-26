@@ -109,7 +109,7 @@ inductive Stmt where
   | setSink  (e : Expr)
   deriving Repr
 
-@[inherit_doc] scoped infixr:70 " ;; " => Stmt.seq
+@[inherit_doc] scoped infixr:70 (name := stmtSeq) " ;; " => Stmt.seq
 
 /-! ## Literals occurring in a program
 

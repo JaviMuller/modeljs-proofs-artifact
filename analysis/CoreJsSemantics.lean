@@ -113,7 +113,7 @@ inductive Trc where
   | seq (t₁ t₂ : Trc)
   deriving Repr
 
-@[inherit_doc] scoped infixr:70 " ;; " => Trc.seq
+@[inherit_doc] scoped infixr:70 (name := trcSeq) " ;; " => Trc.seq
 
 /-- Execution outcomes `o ∈ Out ::= · | r⟨l⟩`. -/
 inductive Out where

@@ -4,4 +4,4 @@ defaultTargets = ["Analysis"]
 [[lean_lib]]
 name = "Analysis"
 srcDir = "analysis"
-globs = ["CoreJsSyntax", "CoreJsSemantics"]
+globs = ["CoreJsSyntax", "CoreJsSemantics", "CoreJsAbstract", "CoreJsAbstractSemantics"]

@@ -135,7 +135,7 @@ inductive ATrc where
   /-- `t̂*`: Kleene star. -/
   | star (t : ATrc)
 
-@[inherit_doc] scoped infixr:70 " ;; " => ATrc.seq
+@[inherit_doc] scoped infixr:70 (name := atrcSeq) " ;; " => ATrc.seq
 
 /-- Abstract outcomes `ô ∈ Ôut ::= · | r⟨L⟩`. -/
 inductive AOut where
