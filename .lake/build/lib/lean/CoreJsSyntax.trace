@@ -1,0 +1,32 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["3c7ff7e60bcf9f5c.olean"],
+  "m": false,
+  "i": "c60e3e5dd3ae46db.ilean",
+  "c": "c8f33823b64a7cae.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/home/arckenimuz/dev/modeljs_proofs/.lake/build/lib/lean /home/arckenimuz/.elan/toolchains/leanprover--lean4---v4.32.1/bin/lean /home/arckenimuz/dev/modeljs_proofs/analysis/CoreJsSyntax.lean -o /home/arckenimuz/dev/modeljs_proofs/.lake/build/lib/lean/CoreJsSyntax.olean -i /home/arckenimuz/dev/modeljs_proofs/.lake/build/lib/lean/CoreJsSyntax.ilean -c /home/arckenimuz/dev/modeljs_proofs/.lake/build/ir/CoreJsSyntax.c --setup /home/arckenimuz/dev/modeljs_proofs/.lake/build/ir/CoreJsSyntax.setup.json --json",
+   "level": "trace"}],
+ "inputs":
+ [["CoreJsSyntax:deps",
+   [["deps",
+     [["modeljs_proofs/Analysis:extraDep",
+       [["@modeljs_proofs:extraDep", "00000000000006bb"]]],
+      ["imports", "00000000000006bb"]]],
+    ["libs",
+     [["import dynlibs", "00000000000006bb"],
+      ["package external libraries", "00000000000006bb"],
+      ["module dynlibs", "00000000000006bb"],
+      ["module plugins", "00000000000006bb"]]]]],
+  ["Lean 4.32.1, commit f054605aea4b840552cca2e725580bffd1e1b704",
+   "4ce1780d8d26fd00"],
+  ["/home/arckenimuz/dev/modeljs_proofs/analysis/CoreJsSyntax.lean",
+   "8303064a7c858f9a"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: CoreJsSyntax", "881ce5efd872c716"],
+  ["Package.id?: (some modeljs_proofs)", "fb91856175000f39"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "255398a60593768b"}

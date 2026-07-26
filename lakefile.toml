@@ -1,0 +1,7 @@
+name = "modeljs_proofs"
+defaultTargets = ["Analysis"]
+
+[[lean_lib]]
+name = "Analysis"
+srcDir = "analysis"
+globs = ["CoreJsSyntax", "CoreJsSemantics"]

@@ -1,0 +1,9 @@
+{"plugins": [],
+ "package": "modeljs_proofs",
+ "options": {},
+ "name": "CoreJsSemantics",
+ "isModule": false,
+ "importArts":
+ {"CoreJsSyntax":
+  ["/home/arckenimuz/dev/modeljs_proofs/.lake/build/lib/lean/CoreJsSyntax.olean"]},
+ "dynlibs": []}
