@@ -105,8 +105,11 @@ inductive Act where
 
 /-- Execution traces `t ∈ Trc ::= ε | a | t₁; t₂`. -/
 inductive Trc where
+  /-- `ε`: the empty trace. -/
   | emp
+  /-- A single action. -/
   | act (a : Act)
+  /-- `t₁; t₂`: concatenation. -/
   | seq (t₁ t₂ : Trc)
   deriving Repr
 

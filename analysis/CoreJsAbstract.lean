@@ -274,80 +274,143 @@ The corresponding facts for `AOut` and `AAct` require Def. B5.4/B5.5 to be
 made total first (REMARK 1); given that, they follow by case analysis on the
 shape of the outcome/action. -/
 
-theorem ALocSet.subset_refl (A : ALocSet) : A ⊆ A := fun _ h => h
+theorem ALocSet.subset_refl (A : ALocSet) : A ⊆ A := by
+  -- `A ⊆ A` unfolds to `∀ l, A l → A l`.
+  intro _ h
+  exact h
 
 theorem ALocSet.subset_trans {A B C : ALocSet} (h₁ : A ⊆ B) (h₂ : B ⊆ C) :
-    A ⊆ C := fun l h => h₂ l (h₁ l h)
+    A ⊆ C := by
+  intro l h
+  exact h₂ l (h₁ l h)
 
-theorem ALocSet.subset_union_left (A B : ALocSet) : A ⊆ A ∪ B :=
-  fun _ h => Or.inl h
+theorem ALocSet.subset_union_left (A B : ALocSet) : A ⊆ A ∪ B := by
+  -- membership in `A ∪ B` is the disjunction `A l ∨ B l`.
+  intro _ h
+  exact Or.inl h
 
-theorem ALocSet.subset_union_right (A B : ALocSet) : B ⊆ A ∪ B :=
-  fun _ h => Or.inr h
+theorem ALocSet.subset_union_right (A B : ALocSet) : B ⊆ A ∪ B := by
+  intro _ h
+  exact Or.inr h
 
 theorem ALocSet.union_subset {A B C : ALocSet} (h₁ : A ⊆ C) (h₂ : B ⊆ C) :
-    A ∪ B ⊆ C := fun l h => Or.elim h (h₁ l) (h₂ l)
+    A ∪ B ⊆ C := by
+  intro l h
+  rcases h with hA | hB
+  · exact h₁ l hA
+  · exact h₂ l hB
 
-theorem VSet.le_refl (V : VSet) : V.Le V := fun _ h => h
+theorem VSet.le_refl (V : VSet) : V.Le V := by
+  intro _ h
+  exact h
 
 theorem VSet.le_trans (V₁ V₂ V₃ : VSet) (h₁ : V₁.Le V₂) (h₂ : V₂.Le V₃) :
-    V₁.Le V₃ := fun v h => h₂ v (h₁ v h)
+    V₁.Le V₃ := by
+  intro v h
+  exact h₂ v (h₁ v h)
 
-theorem VSet.le_join_left : ∀ (V₁ V₂ : VSet), V₁.Le (V₁.join V₂)
-  | .top,    _       => fun _ _ => trivial
-  | .vals _, .top    => fun _ _ => trivial
-  | .vals _, .vals _ => fun _ h => Or.inl h
+theorem VSet.le_join_left (V₁ V₂ : VSet) : V₁.Le (V₁.join V₂) := by
+  cases V₁ with
+  | top =>
+      -- the join is `⊤`, and everything is `⊤`-membered.
+      intro _ _
+      exact trivial
+  | vals V =>
+      cases V₂ with
+      | top =>
+          intro _ _
+          exact trivial
+      | vals W =>
+          intro _ h
+          exact Or.inl h
 
-theorem VSet.le_join_right : ∀ (V₁ V₂ : VSet), V₂.Le (V₁.join V₂)
-  | .top,    .top    => fun _ _ => trivial
-  | .top,    .vals _ => fun _ _ => trivial
-  | .vals _, .top    => fun _ _ => trivial
-  | .vals _, .vals _ => fun _ h => Or.inr h
+theorem VSet.le_join_right (V₁ V₂ : VSet) : V₂.Le (V₁.join V₂) := by
+  cases V₁ with
+  | top =>
+      intro _ _
+      exact trivial
+  | vals V =>
+      cases V₂ with
+      | top =>
+          intro _ _
+          exact trivial
+      | vals W =>
+          intro _ h
+          exact Or.inr h
 
-theorem VSet.join_le : ∀ (V₁ V₂ W : VSet), V₁.Le W → V₂.Le W →
-    (V₁.join V₂).Le W
-  | .top,    _,       _, h₁, _  => h₁
-  | .vals _, .top,    _, _,  h₂ => h₂
-  | .vals _, .vals _, _, h₁, h₂ => fun v h => Or.elim h (h₁ v) (h₂ v)
+theorem VSet.join_le (V₁ V₂ W : VSet) (h₁ : V₁.Le W) (h₂ : V₂.Le W) :
+    (V₁.join V₂).Le W := by
+  cases V₁ with
+  | top =>
+      -- the join *is* `V₁` here, so `h₁` already is the goal.
+      exact h₁
+  | vals V =>
+      cases V₂ with
+      | top => exact h₂
+      | vals U =>
+          intro v h
+          rcases h with hV | hU
+          · exact h₁ v hV
+          · exact h₂ v hU
 
-theorem ASto.le_join_left (ρ₁ ρ₂ : ASto) : ρ₁.Le (ρ₁.join ρ₂) :=
-  fun _ => ALocSet.subset_union_left _ _
+theorem ASto.le_join_left (ρ₁ ρ₂ : ASto) : ρ₁.Le (ρ₁.join ρ₂) := by
+  intro _
+  exact ALocSet.subset_union_left _ _
 
-theorem ASto.le_join_right (ρ₁ ρ₂ : ASto) : ρ₂.Le (ρ₁.join ρ₂) :=
-  fun _ => ALocSet.subset_union_right _ _
+theorem ASto.le_join_right (ρ₁ ρ₂ : ASto) : ρ₂.Le (ρ₁.join ρ₂) := by
+  intro _
+  exact ALocSet.subset_union_right _ _
 
 theorem ASto.join_le {ρ₁ ρ₂ ρ : ASto} (h₁ : ρ₁.Le ρ) (h₂ : ρ₂.Le ρ) :
-    (ρ₁.join ρ₂).Le ρ :=
-  fun x => ALocSet.union_subset (h₁ x) (h₂ x)
+    (ρ₁.join ρ₂).Le ρ := by
+  intro x
+  exact ALocSet.union_subset (h₁ x) (h₂ x)
 
-theorem AHeap.le_join_left (h₁ h₂ : AHeap) : h₁.Le (h₁.join h₂) :=
-  ⟨fun _ _ => ALocSet.subset_union_left _ _,
-   fun l => VSet.le_join_left (h₁.val l) (h₂.val l)⟩
+theorem AHeap.le_join_left (h₁ h₂ : AHeap) : h₁.Le (h₁.join h₂) := by
+  -- `AHeap.Le` is a conjunction: one goal for `obj`, one for `val`.
+  refine ⟨?_, ?_⟩
+  · intro _ _
+    exact ALocSet.subset_union_left _ _
+  · intro l
+    exact VSet.le_join_left (h₁.val l) (h₂.val l)
 
-theorem AHeap.le_join_right (h₁ h₂ : AHeap) : h₂.Le (h₁.join h₂) :=
-  ⟨fun _ _ => ALocSet.subset_union_right _ _,
-   fun l => VSet.le_join_right (h₁.val l) (h₂.val l)⟩
+theorem AHeap.le_join_right (h₁ h₂ : AHeap) : h₂.Le (h₁.join h₂) := by
+  refine ⟨?_, ?_⟩
+  · intro _ _
+    exact ALocSet.subset_union_right _ _
+  · intro l
+    exact VSet.le_join_right (h₁.val l) (h₂.val l)
 
 theorem AHeap.join_le {h₁ h₂ h : AHeap} (k₁ : h₁.Le h) (k₂ : h₂.Le h) :
-    (h₁.join h₂).Le h :=
-  ⟨fun l p => ALocSet.union_subset (k₁.1 l p) (k₂.1 l p),
-   fun l => VSet.join_le (h₁.val l) (h₂.val l) (h.val l) (k₁.2 l) (k₂.2 l)⟩
+    (h₁.join h₂).Le h := by
+  refine ⟨?_, ?_⟩
+  · intro l p
+    exact ALocSet.union_subset (k₁.1 l p) (k₂.1 l p)
+  · intro l
+    exact VSet.join_le (h₁.val l) (h₂.val l) (h.val l) (k₁.2 l) (k₂.2 l)
 
-theorem AReg.le_join_left (δ₁ δ₂ : AReg) : δ₁.Le (δ₁.join δ₂) :=
-  ⟨fun _ => ALocSet.subset_union_left _ _,
-   ALocSet.subset_union_left _ _,
-   ALocSet.subset_union_left _ _⟩
+theorem AReg.le_join_left (δ₁ δ₂ : AReg) : δ₁.Le (δ₁.join δ₂) := by
+  -- three goals: `dep`, `ac`, `sk`.
+  refine ⟨?_, ?_, ?_⟩
+  · intro _
+    exact ALocSet.subset_union_left _ _
+  · exact ALocSet.subset_union_left _ _
+  · exact ALocSet.subset_union_left _ _
 
-theorem AReg.le_join_right (δ₁ δ₂ : AReg) : δ₂.Le (δ₁.join δ₂) :=
-  ⟨fun _ => ALocSet.subset_union_right _ _,
-   ALocSet.subset_union_right _ _,
-   ALocSet.subset_union_right _ _⟩
+theorem AReg.le_join_right (δ₁ δ₂ : AReg) : δ₂.Le (δ₁.join δ₂) := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro _
+    exact ALocSet.subset_union_right _ _
+  · exact ALocSet.subset_union_right _ _
+  · exact ALocSet.subset_union_right _ _
 
 theorem AReg.join_le {δ₁ δ₂ δ : AReg} (k₁ : δ₁.Le δ) (k₂ : δ₂.Le δ) :
-    (δ₁.join δ₂).Le δ :=
-  ⟨fun l => ALocSet.union_subset (k₁.1 l) (k₂.1 l),
-   ALocSet.union_subset k₁.2.1 k₂.2.1,
-   ALocSet.union_subset k₁.2.2 k₂.2.2⟩
+    (δ₁.join δ₂).Le δ := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro l
+    exact ALocSet.union_subset (k₁.1 l) (k₂.1 l)
+  · exact ALocSet.union_subset k₁.2.1 k₂.2.1
+  · exact ALocSet.union_subset k₁.2.2 k₂.2.2
 
 /-!
 ## REMARKS
