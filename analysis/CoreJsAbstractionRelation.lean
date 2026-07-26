@@ -37,20 +37,19 @@ it extends `α` at freshly allocated locations (`α' = α[l ↦ l̂]`) and appea
 def AbsFun := Loc → Option ALoc
 
 /-- `α' ≥ α`: `α'` extends `α`. -/
-def AbsFun.Le (α α' : AbsFun) : Prop := ∀ l l̂, α l = some l̂ → α' l = some l̂
+def AbsFun.Le (α α' : AbsFun) : Prop := ∀ l «l̂», α l = some «l̂» → α' l = some «l̂»
 
 /-- `α[l ↦ l̂]`. -/
-def AbsFun.upd (α : AbsFun) (l : Loc) (l̂ : ALoc) : AbsFun :=
-  fun l' => if l' = l then some l̂ else α l'
+def AbsFun.upd (α : AbsFun) (l : Loc) («l̂» : ALoc) : AbsFun :=
+  fun l' => if l' = l then some «l̂» else α l'
 
 /-- `α(l) = l̂`, in the partial reading. -/
-def AbsFun.MapsTo (α : AbsFun) (l : Loc) (l̂ : ALoc) : Prop := α l = some l̂
-
+def AbsFun.MapsTo (α : AbsFun) (l : Loc) («l̂» : ALoc) : Prop := α l = some «l̂»
 /-- `α(l) ∈ L`: the atom out of which every clause of Def. B8 is built.
     Being an existential, it carries the requirement that `α` be defined at
     `l` (REMARK 2). -/
 def AbsFun.In (α : AbsFun) (l : Loc) (L : ALocSet) : Prop :=
-  ∃ l̂, α l = some l̂ ∧ L l̂
+  ∃ «l̂», α l = some «l̂» ∧ L «l̂»
 
 theorem AbsFun.le_refl (α : AbsFun) : α.Le α := fun _ _ h => h
 
