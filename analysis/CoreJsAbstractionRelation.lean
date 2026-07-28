@@ -18,6 +18,15 @@
   Theorem B15 is deliberately left out.
 
   Deviations from the paper are tagged `REMARK n` and collected at the end.
+
+  ## Notation
+
+  Prose and docstrings use the paper's hats (`l̂`, `ρ̂`, `δ̂`, `t̂`); code writes
+  them `lₐ`, `ρₐ`, `δₐ`, `tₐ`.  A hat is not a Lean identifier character: only
+  those few letters with a *precomposed* codepoint (`ĥ`, `â`, `ô`, `ĉ`) could be
+  spelled that way at all, and `l`, `ρ`, `δ`, `t`, `r`, `L`, `ε` have none — the
+  `\hat` of the editor produces a combining U+0302, which fails to lex.  The
+  subscript convention applies to every abstract variable, precomposed or not.
 -/
 
 import CoreJsAbstractSemantics
@@ -37,39 +46,39 @@ it extends `α` at freshly allocated locations (`α' = α[l ↦ l̂]`) and appea
 def AbsFun := Loc → Option ALoc
 
 /-- `α' ≥ α`: `α'` extends `α`. -/
-def AbsFun.Le (α α' : AbsFun) : Prop := ∀ l «l̂», α l = some «l̂» → α' l = some «l̂»
+def AbsFun.Le (α α' : AbsFun) : Prop := ∀ l lₐ, α l = some lₐ → α' l = some lₐ
 
 /-- `α[l ↦ l̂]`. -/
-def AbsFun.upd (α : AbsFun) (l : Loc) («l̂» : ALoc) : AbsFun :=
-  fun l' => if l' = l then some «l̂» else α l'
+def AbsFun.upd (α : AbsFun) (l : Loc) (lₐ : ALoc) : AbsFun :=
+  fun l' => if l' = l then some lₐ else α l'
 
 /-- `α(l) = l̂`, in the partial reading. -/
-def AbsFun.MapsTo (α : AbsFun) (l : Loc) («l̂» : ALoc) : Prop := α l = some «l̂»
+def AbsFun.MapsTo (α : AbsFun) (l : Loc) (lₐ : ALoc) : Prop := α l = some lₐ
 /-- `α(l) ∈ L`: the atom out of which every clause of Def. B8 is built.
     Being an existential, it carries the requirement that `α` be defined at
     `l` (REMARK 2). -/
 def AbsFun.In (α : AbsFun) (l : Loc) (L : ALocSet) : Prop :=
-  ∃ «l̂», α l = some «l̂» ∧ L «l̂»
+  ∃ lₐ, α l = some lₐ ∧ L lₐ
 
 theorem AbsFun.le_refl (α : AbsFun) : α.Le α := fun _ _ h => h
 
 theorem AbsFun.le_trans {α α' α'' : AbsFun} (h₁ : α.Le α') (h₂ : α'.Le α'') :
-    α.Le α'' := fun l l̂ h => h₂ l l̂ (h₁ l l̂ h)
+    α.Le α'' := fun l lₐ h => h₂ l lₐ (h₁ l lₐ h)
 
 theorem AbsFun.In.mono {α α' : AbsFun} {l : Loc} {L : ALocSet}
     (h : α.In l L) (hle : α.Le α') : α'.In l L := by
-  obtain ⟨l̂, h₁, h₂⟩ := h
-  exact ⟨l̂, hle l l̂ h₁, h₂⟩
+  obtain ⟨lₐ, h₁, h₂⟩ := h
+  exact ⟨lₐ, hle l lₐ h₁, h₂⟩
 
 theorem AbsFun.In.mono_subset {α : AbsFun} {l : Loc} {L M : ALocSet}
     (h : α.In l L) (hsub : L ⊆ M) : α.In l M := by
-  obtain ⟨l̂, h₁, h₂⟩ := h
-  exact ⟨l̂, h₁, hsub l̂ h₂⟩
+  obtain ⟨lₐ, h₁, h₂⟩ := h
+  exact ⟨lₐ, h₁, hsub lₐ h₂⟩
 
 /-- The invariant that literal locations are abstracted by their abstract
     counterparts.  Implicitly assumed by the proof of Lemma B9 (REMARK 6). -/
 def AbsFun.RespectsLits [Concrete] [Abstract] (α : AbsFun) : Prop :=
-  ∀ v l̂, α (litLoc v) = some l̂ → l̂ = litLocA v
+  ∀ v lₐ, α (litLoc v) = some lₐ → lₐ = litLocA v
 
 /-- The extension performed in case 1 of the proof of Lemma B9 preserves the
     invariant, provided literal locations are pairwise distinct
@@ -78,14 +87,14 @@ theorem AbsFun.RespectsLits.upd_lit [Concrete] [Abstract] {α : AbsFun}
     (hinj : ∀ v w : Val, litLoc v = litLoc w → v = w)
     (h : α.RespectsLits) (v : Val) :
     (α.upd (litLoc v) (litLocA v)).RespectsLits := by
-  intro w l̂ hw
+  intro w lₐ hw
   by_cases hc : litLoc w = litLoc v
   · have hvw : w = v := hinj w v hc
     subst hvw
     simp [AbsFun.upd] at hw
     exact hw.symm
   · simp [AbsFun.upd, hc] at hw
-    exact h w l̂ hw
+    exact h w lₐ hw
 
 /-! ## The abstraction relation (Definition B8)
 
@@ -94,27 +103,27 @@ mentions, which is what makes the relation meaningful for a partial `α`
 (REMARK 2). -/
 
 /-- Def. B8.1.a: `∀ (l, p) ∈ dom(h.obj). α(h.obj(l, p)) ∈ ĥ.obj(α(l), p)`. -/
-def AHeap.RelObj (α : AbsFun) (h : Heap) (ĥ : AHeap) : Prop :=
+def AHeap.RelObj (α : AbsFun) (h : Heap) (hₐ : AHeap) : Prop :=
   ∀ l p l₂, h.obj l p = some l₂ →
-    ∃ l̂ l̂₂, α l = some l̂ ∧ α l₂ = some l̂₂ ∧ ĥ.obj l̂ p l̂₂
+    ∃ lₐ lₐ₂, α l = some lₐ ∧ α l₂ = some lₐ₂ ∧ hₐ.obj lₐ p lₐ₂
 
 /-- Def. B8.1.b: `∀ l ∈ dom(h.val). h.val(l) ∈ ĥ.val(α(l))`. -/
-def AHeap.RelVal (α : AbsFun) (h : Heap) (ĥ : AHeap) : Prop :=
-  ∀ l v, h.val l = some v → ∃ l̂, α l = some l̂ ∧ (ĥ.val l̂).Mem v
+def AHeap.RelVal (α : AbsFun) (h : Heap) (hₐ : AHeap) : Prop :=
+  ∀ l v, h.val l = some v → ∃ lₐ, α l = some lₐ ∧ (hₐ.val lₐ).Mem v
 
 /-- Def. B8.1: `h ∼α ĥ`. -/
-def AHeap.Rel (α : AbsFun) (h : Heap) (ĥ : AHeap) : Prop :=
-  AHeap.RelObj α h ĥ ∧ AHeap.RelVal α h ĥ
+def AHeap.Rel (α : AbsFun) (h : Heap) (hₐ : AHeap) : Prop :=
+  AHeap.RelObj α h hₐ ∧ AHeap.RelVal α h hₐ
 
 /-- Def. B8.2: `ρ ∼α ρ̂`. -/
-def ASto.Rel (α : AbsFun) (ρ : Sto) (ρ̂ : ASto) : Prop :=
-  ∀ x l, ρ x = some l → α.In l (ρ̂ x)
+def ASto.Rel (α : AbsFun) (ρ : Sto) (ρₐ : ASto) : Prop :=
+  ∀ x l, ρ x = some l → α.In l (ρₐ x)
 
 /-- Def. B8.3 (with B8.3.a–c): `δ ∼α δ̂`. -/
-def AReg.Rel (α : AbsFun) (δ : Reg) (δ̂ : AReg) : Prop :=
-  (∀ l₁ l₂, δ.dep l₁ l₂ → ∃ l̂₁, α l₁ = some l̂₁ ∧ α.In l₂ (δ̂.dep l̂₁)) ∧
-  (∀ l, δ.ac l → α.In l δ̂.ac) ∧
-  (∀ l, δ.sk l → α.In l δ̂.sk)
+def AReg.Rel (α : AbsFun) (δ : Reg) (δₐ : AReg) : Prop :=
+  (∀ l₁ l₂, δ.dep l₁ l₂ → ∃ lₐ₁, α l₁ = some lₐ₁ ∧ α.In l₂ (δₐ.dep lₐ₁)) ∧
+  (∀ l, δ.ac l → α.In l δₐ.ac) ∧
+  (∀ l, δ.sk l → α.In l δₐ.sk)
 
 /-- Def. B8.4 (with B8.4.a–b): `o ∼α ô`. -/
 def AOut.Rel (α : AbsFun) : Out → AOut → Prop
@@ -135,8 +144,8 @@ def AAct.Rel (α : AbsFun) : Act → AAct → Prop
       α.In l₁ L₁ ∧ α.In l₂ L₂ ∧ α.In l₃ L₃
   | .update l₁ l₂ l₃, .update L₁ L₂ L₃ =>
       α.In l₁ L₁ ∧ α.In l₂ L₂ ∧ α.In l₃ L₃
-  | .call lf ls,      .call l̂f Ls     => α lf = some l̂f ∧ ALocs.Rel α ls Ls
-  | .ret lf l,        .ret l̂f L       => α lf = some l̂f ∧ α.In l L
+  | .call lf ls,      .call lₐf Ls     => α lf = some lₐf ∧ ALocs.Rel α ls Ls
+  | .ret lf l,        .ret lₐf L       => α lf = some lₐf ∧ α.In l L
   | _,                _               => False
 
 /-- Def. B8.6 (with B8.6.a–e): `t ∼α t̂`.
@@ -148,7 +157,7 @@ inductive ATrc.Rel (α : AbsFun) : Trc → ATrc → Prop where
   /-- B8.6.a -/
   | emp : ATrc.Rel α .emp .emp
   /-- Missing from B8.6 (REMARK 4). -/
-  | act {a â} : AAct.Rel α a â → ATrc.Rel α (.act a) (.act â)
+  | act {a aₐ} : AAct.Rel α a aₐ → ATrc.Rel α (.act a) (.act aₐ)
   /-- B8.6.b -/
   | seq {t₁ t₂ u₁ u₂} : ATrc.Rel α t₁ u₁ → ATrc.Rel α t₂ u₂ →
       ATrc.Rel α (.seq t₁ t₂) (.seq u₁ u₂)
@@ -163,18 +172,18 @@ inductive ATrc.Rel (α : AbsFun) : Trc → ATrc → Prop where
       ATrc.Rel α (.seq t t') (.star u)
 
 /-- `h, ρ, δ ∼α ĥ, ρ̂, δ̂`. -/
-structure ConfRel (α : AbsFun) (c : Conf) (ĉ : AConf) : Prop where
-  heap : AHeap.Rel α c.heap ĉ.heap
-  sto  : ASto.Rel α c.sto ĉ.sto
-  reg  : AReg.Rel α c.reg ĉ.reg
+structure ConfRel (α : AbsFun) (c : Conf) (cₐ : AConf) : Prop where
+  heap : AHeap.Rel α c.heap cₐ.heap
+  sto  : ASto.Rel α c.sto cₐ.sto
+  reg  : AReg.Rel α c.reg cₐ.reg
 
 /-- `h', ρ', δ', t, o ∼α ĥ', ρ̂', δ̂', t̂, ô`. -/
-structure ResRel (α : AbsFun) (r : Res) (r̂ : ARes) : Prop where
-  heap : AHeap.Rel α r.heap r̂.heap
-  sto  : ASto.Rel α r.sto r̂.sto
-  reg  : AReg.Rel α r.reg r̂.reg
-  trc  : ATrc.Rel α r.trc r̂.trc
-  out  : AOut.Rel α r.out r̂.out
+structure ResRel (α : AbsFun) (r : Res) (rₐ : ARes) : Prop where
+  heap : AHeap.Rel α r.heap rₐ.heap
+  sto  : ASto.Rel α r.sto rₐ.sto
+  reg  : AReg.Rel α r.reg rₐ.reg
+  trc  : ATrc.Rel α r.trc rₐ.trc
+  out  : AOut.Rel α r.out rₐ.out
 
 /-! ## Lemma B9 — Expression Evaluation Lemma
 
@@ -185,20 +194,20 @@ concrete evaluation is partial, so `⟦e⟧ρ = l` is a hypothesis; and the
 invariant `RespectsLits` is both assumed and re-established, without which the
 `α' = α[l_v ↦ l̂_v]` of case 1 need not extend `α` (REMARK 6). -/
 
-theorem exprEval [Concrete] [Abstract] {α : AbsFun} {ρ : Sto} {ρ̂ : ASto}
+theorem exprEval [Concrete] [Abstract] {α : AbsFun} {ρ : Sto} {ρₐ : ASto}
     {e : Expr} {l : Loc}
     (hinj : ∀ v w : Val, litLoc v = litLoc w → v = w)
-    (hlit : α.RespectsLits) (hρ : ASto.Rel α ρ ρ̂) (he : evalE ρ e = some l) :
-    ∃ α', α.Le α' ∧ α'.RespectsLits ∧ α'.In l (aevalE ρ̂ e) := by
+    (hlit : α.RespectsLits) (hρ : ASto.Rel α ρ ρₐ) (he : evalE ρ e = some l) :
+    ∃ α', α.Le α' ∧ α'.RespectsLits ∧ α'.In l (aevalE ρₐ e) := by
   cases e with
   | val v =>
       simp [evalE] at he
       subst he
       refine ⟨α.upd (litLoc v) (litLocA v), ?_, hlit.upd_lit hinj v, ?_⟩
-      · intro l₀ l̂₀ h₀
+      · intro l₀ lₐ₀ h₀
         by_cases hc : l₀ = litLoc v
         · subst hc
-          have hv : l̂₀ = litLocA v := hlit v l̂₀ h₀
+          have hv : lₐ₀ = litLocA v := hlit v lₐ₀ h₀
           subst hv
           simp [AbsFun.upd]
         · simp [AbsFun.upd, hc, h₀]
@@ -212,36 +221,42 @@ theorem exprEval [Concrete] [Abstract] {α : AbsFun} {ρ : Sto} {ρ̂ : ASto}
 
 Every clause of Def. B8 is monotone in `α`. -/
 
-theorem AHeap.Rel.mono {α α' : AbsFun} {h : Heap} {ĥ : AHeap}
-    (hr : AHeap.Rel α h ĥ) (hle : α.Le α') : AHeap.Rel α' h ĥ := by
+theorem AHeap.Rel.mono {α α' : AbsFun} {h : Heap} {hₐ : AHeap}
+    (hr : AHeap.Rel α h hₐ) (hle : α.Le α') : AHeap.Rel α' h hₐ := by
   obtain ⟨hobj, hval⟩ := hr
   refine ⟨?_, ?_⟩
   · intro l p l₂ hp
-    obtain ⟨l̂, l̂₂, h₁, h₂, h₃⟩ := hobj l p l₂ hp
-    exact ⟨l̂, l̂₂, hle l l̂ h₁, hle l₂ l̂₂ h₂, h₃⟩
+    obtain ⟨lₐ, lₐ₂, h₁, h₂, h₃⟩ := hobj l p l₂ hp
+    exact ⟨lₐ, lₐ₂, hle l lₐ h₁, hle l₂ lₐ₂ h₂, h₃⟩
   · intro l v hv
-    obtain ⟨l̂, h₁, h₂⟩ := hval l v hv
-    exact ⟨l̂, hle l l̂ h₁, h₂⟩
+    obtain ⟨lₐ, h₁, h₂⟩ := hval l v hv
+    exact ⟨lₐ, hle l lₐ h₁, h₂⟩
 
-theorem ASto.Rel.mono {α α' : AbsFun} {ρ : Sto} {ρ̂ : ASto}
-    (hr : ASto.Rel α ρ ρ̂) (hle : α.Le α') : ASto.Rel α' ρ ρ̂ :=
+theorem ASto.Rel.mono {α α' : AbsFun} {ρ : Sto} {ρₐ : ASto}
+    (hr : ASto.Rel α ρ ρₐ) (hle : α.Le α') : ASto.Rel α' ρ ρₐ :=
   fun x l hx => (hr x l hx).mono hle
 
-theorem AReg.Rel.mono {α α' : AbsFun} {δ : Reg} {δ̂ : AReg}
-    (hr : AReg.Rel α δ δ̂) (hle : α.Le α') : AReg.Rel α' δ δ̂ := by
+theorem AReg.Rel.mono {α α' : AbsFun} {δ : Reg} {δₐ : AReg}
+    (hr : AReg.Rel α δ δₐ) (hle : α.Le α') : AReg.Rel α' δ δₐ := by
   obtain ⟨hdep, hac, hsk⟩ := hr
   refine ⟨?_, ?_, ?_⟩
   · intro l₁ l₂ hd
-    obtain ⟨l̂₁, h₁, h₂⟩ := hdep l₁ l₂ hd
-    exact ⟨l̂₁, hle l₁ l̂₁ h₁, h₂.mono hle⟩
+    obtain ⟨lₐ₁, h₁, h₂⟩ := hdep l₁ l₂ hd
+    exact ⟨lₐ₁, hle l₁ lₐ₁ h₁, h₂.mono hle⟩
   · intro l hl; exact (hac l hl).mono hle
   · intro l hl; exact (hsk l hl).mono hle
 
+/-- The mismatched cases must be spelled out constructor by constructor:
+    a wildcard clause leaves the discriminants as variables, and
+    `AOut.Rel α o oₐ` then does not reduce to `False`.  For the same reason
+    `h.mono hle` cannot be used below: dot notation resolves `.mono` against the
+    *syntactic* head `AOut.Rel`, i.e. to this very theorem. -/
 theorem AOut.Rel.mono {α α' : AbsFun} (hle : α.Le α') :
-    ∀ (o : Out) (ô : AOut), AOut.Rel α o ô → AOut.Rel α' o ô
+    ∀ (o : Out) (oₐ : AOut), AOut.Rel α o oₐ → AOut.Rel α' o oₐ
   | .cont,  .cont,  _ => trivial
-  | .ret _, .ret _, h => h.mono hle
-  | _,      _,      h => False.elim h
+  | .ret _, .ret _, h => AbsFun.In.mono h hle
+  | .cont,  .ret _, h => False.elim h
+  | .ret _, .cont,  h => False.elim h
 
 theorem ALocs.Rel.mono {α α' : AbsFun} (hle : α.Le α') :
     ∀ (ls : List Loc) (Ls : List ALocSet), ALocs.Rel α ls Ls →
@@ -250,23 +265,20 @@ theorem ALocs.Rel.mono {α α' : AbsFun} (hle : α.Le α') :
   | _ :: ls, _ :: Ls, h => by
       obtain ⟨h₁, h₂⟩ := h
       exact ⟨h₁.mono hle, ALocs.Rel.mono hle ls Ls h₂⟩
-  | _,       _,       h => False.elim h
+  | [],      _ :: _,  h => False.elim h
+  | _ :: _,  [],      h => False.elim h
 
 theorem AAct.Rel.mono {α α' : AbsFun} (hle : α.Le α') :
-    ∀ (a : Act) (â : AAct), AAct.Rel α a â → AAct.Rel α' a â
-  | .lookup _ _ _, .lookup _ _ _, h => by
-      obtain ⟨h₁, h₂, h₃⟩ := h
-      exact ⟨h₁.mono hle, h₂.mono hle, h₃.mono hle⟩
-  | .update _ _ _, .update _ _ _, h => by
-      obtain ⟨h₁, h₂, h₃⟩ := h
-      exact ⟨h₁.mono hle, h₂.mono hle, h₃.mono hle⟩
-  | .call lf ls,   .call l̂f Ls,   h => by
-      obtain ⟨h₁, h₂⟩ := h
-      exact ⟨hle lf l̂f h₁, ALocs.Rel.mono hle ls Ls h₂⟩
-  | .ret lf _,     .ret l̂f _,     h => by
-      obtain ⟨h₁, h₂⟩ := h
-      exact ⟨hle lf l̂f h₁, h₂.mono hle⟩
-  | _,             _,             h => False.elim h
+    ∀ (a : Act) (aₐ : AAct), AAct.Rel α a aₐ → AAct.Rel α' a aₐ := by
+  intro a aₐ h
+  cases a <;> cases aₐ <;> first
+    | exact False.elim h
+    | (obtain ⟨h₁, h₂, h₃⟩ := h
+       exact ⟨h₁.mono hle, h₂.mono hle, h₃.mono hle⟩)
+    | (obtain ⟨h₁, h₂⟩ := h
+       exact ⟨hle _ _ h₁, ALocs.Rel.mono hle _ _ h₂⟩)
+    | (obtain ⟨h₁, h₂⟩ := h
+       exact ⟨hle _ _ h₁, h₂.mono hle⟩)
 
 theorem ATrc.Rel.mono {α α' : AbsFun} {t : Trc} {u : ATrc}
     (hr : ATrc.Rel α t u) (hle : α.Le α') : ATrc.Rel α' t u := by
@@ -280,13 +292,13 @@ theorem ATrc.Rel.mono {α α' : AbsFun} {t : Trc} {u : ATrc}
   | starCons _ _ ih₁ ih₂ => exact .starCons ih₁ ih₂
 
 /-- Lemma B10 on configurations. -/
-theorem ConfRel.mono {α α' : AbsFun} {c : Conf} {ĉ : AConf}
-    (hr : ConfRel α c ĉ) (hle : α.Le α') : ConfRel α' c ĉ :=
+theorem ConfRel.mono {α α' : AbsFun} {c : Conf} {cₐ : AConf}
+    (hr : ConfRel α c cₐ) (hle : α.Le α') : ConfRel α' c cₐ :=
   ⟨hr.heap.mono hle, hr.sto.mono hle, hr.reg.mono hle⟩
 
 /-- Lemma B10 on results. -/
-theorem ResRel.mono {α α' : AbsFun} {r : Res} {r̂ : ARes}
-    (hr : ResRel α r r̂) (hle : α.Le α') : ResRel α' r r̂ :=
+theorem ResRel.mono {α α' : AbsFun} {r : Res} {rₐ : ARes}
+    (hr : ResRel α r rₐ) (hle : α.Le α') : ResRel α' r rₐ :=
   ⟨hr.heap.mono hle, hr.sto.mono hle, hr.reg.mono hle,
    hr.trc.mono hle, AOut.Rel.mono hle _ _ hr.out⟩
 
@@ -294,9 +306,9 @@ theorem ResRel.mono {α α' : AbsFun} {r : Res} {r̂ : ARes}
 
 `ρ ∼α ρ̂ ∧ α(l) ∈ L ⟹ ρ[x ↦ l] ∼α ρ̂[x ↦ L]`. -/
 
-theorem ASto.Rel.upd {α : AbsFun} {ρ : Sto} {ρ̂ : ASto} {x : Var} {l : Loc}
-    {L : ALocSet} (hr : ASto.Rel α ρ ρ̂) (hl : α.In l L) :
-    ASto.Rel α (ρ.upd x l) (ρ̂.upd x L) := by
+theorem ASto.Rel.upd {α : AbsFun} {ρ : Sto} {ρₐ : ASto} {x : Var} {l : Loc}
+    {L : ALocSet} (hr : ASto.Rel α ρ ρₐ) (hl : α.In l L) :
+    ASto.Rel α (ρ.upd x l) (ρₐ.upd x L) := by
   intro y l₀ hy
   by_cases hc : y = x
   · subst hc
@@ -327,42 +339,42 @@ and traces do hold, and are proved the same way. -/
 theorem VSet.Mem.mono_le {V W : VSet} {v : Val} (h : V.Mem v) (hle : V.Le W) :
     W.Mem v := hle v h
 
-theorem AHeap.Rel.mono_le {α : AbsFun} {h : Heap} {ĥ₁ ĥ₂ : AHeap}
-    (hr : AHeap.Rel α h ĥ₁) (hle : AHeap.Le ĥ₁ ĥ₂) : AHeap.Rel α h ĥ₂ := by
+theorem AHeap.Rel.mono_le {α : AbsFun} {h : Heap} {hₐ₁ hₐ₂ : AHeap}
+    (hr : AHeap.Rel α h hₐ₁) (hle : AHeap.Le hₐ₁ hₐ₂) : AHeap.Rel α h hₐ₂ := by
   obtain ⟨hobj, hval⟩ := hr
   obtain ⟨kobj, kval⟩ := hle
   refine ⟨?_, ?_⟩
   · intro l p l₂ hp
-    obtain ⟨l̂, l̂₂, h₁, h₂, h₃⟩ := hobj l p l₂ hp
-    exact ⟨l̂, l̂₂, h₁, h₂, kobj l̂ p l̂₂ h₃⟩
+    obtain ⟨lₐ, lₐ₂, h₁, h₂, h₃⟩ := hobj l p l₂ hp
+    exact ⟨lₐ, lₐ₂, h₁, h₂, kobj lₐ p lₐ₂ h₃⟩
   · intro l v hv
-    obtain ⟨l̂, h₁, h₂⟩ := hval l v hv
-    exact ⟨l̂, h₁, kval l̂ v h₂⟩
+    obtain ⟨lₐ, h₁, h₂⟩ := hval l v hv
+    exact ⟨lₐ, h₁, kval lₐ v h₂⟩
 
-theorem ASto.Rel.mono_le {α : AbsFun} {ρ : Sto} {ρ̂₁ ρ̂₂ : ASto}
-    (hr : ASto.Rel α ρ ρ̂₁) (hle : ASto.Le ρ̂₁ ρ̂₂) : ASto.Rel α ρ ρ̂₂ :=
+theorem ASto.Rel.mono_le {α : AbsFun} {ρ : Sto} {ρₐ₁ ρₐ₂ : ASto}
+    (hr : ASto.Rel α ρ ρₐ₁) (hle : ASto.Le ρₐ₁ ρₐ₂) : ASto.Rel α ρ ρₐ₂ :=
   fun x l hx => (hr x l hx).mono_subset (hle x)
 
-theorem AReg.Rel.mono_le {α : AbsFun} {δ : Reg} {δ̂₁ δ̂₂ : AReg}
-    (hr : AReg.Rel α δ δ̂₁) (hle : AReg.Le δ̂₁ δ̂₂) : AReg.Rel α δ δ̂₂ := by
+theorem AReg.Rel.mono_le {α : AbsFun} {δ : Reg} {δₐ₁ δₐ₂ : AReg}
+    (hr : AReg.Rel α δ δₐ₁) (hle : AReg.Le δₐ₁ δₐ₂) : AReg.Rel α δ δₐ₂ := by
   obtain ⟨hdep, hac, hsk⟩ := hr
   obtain ⟨kdep, kac, ksk⟩ := hle
   refine ⟨?_, ?_, ?_⟩
   · intro l₁ l₂ hd
-    obtain ⟨l̂₁, h₁, h₂⟩ := hdep l₁ l₂ hd
-    exact ⟨l̂₁, h₁, h₂.mono_subset (kdep l̂₁)⟩
+    obtain ⟨lₐ₁, h₁, h₂⟩ := hdep l₁ l₂ hd
+    exact ⟨lₐ₁, h₁, h₂.mono_subset (kdep lₐ₁)⟩
   · intro l hl; exact (hac l hl).mono_subset kac
   · intro l hl; exact (hsk l hl).mono_subset ksk
 
 theorem AOut.Rel.mono_le {α : AbsFun} :
-    ∀ (o : Out) (ô₁ ô₂ : AOut), AOut.Rel α o ô₁ → AOut.Le ô₁ ô₂ →
-      AOut.Rel α o ô₂
-  | .cont,  .cont,  .cont,  _,  _   => trivial
-  | .ret _, .ret _, .ret _, hr, hle => hr.mono_subset hle
-  | _,      _,      _,      hr, hle => by
-      first
-        | exact False.elim hr
-        | exact False.elim hle
+    ∀ (o : Out) (oₐ₁ oₐ₂ : AOut), AOut.Rel α o oₐ₁ → AOut.Le oₐ₁ oₐ₂ →
+      AOut.Rel α o oₐ₂ := by
+  intro o oₐ₁ oₐ₂ hr hle
+  cases o <;> cases oₐ₁ <;> cases oₐ₂ <;> first
+    | exact False.elim hr
+    | exact False.elim hle
+    | exact trivial
+    | exact hr.mono_subset hle
 
 /-! ## Lemma B14 — the missing lemma
 
