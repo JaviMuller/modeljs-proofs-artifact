@@ -5,7 +5,7 @@
   "Model Checking Security Properties of Node.js Packages":
 
   * Fig. A2  — semantic domains
-  * Fig. A3  — expression evaluation `⟦e⟧ρ`
+  * Fig. A3  — expression evaluation `⟦e⟧ᵨ`
   * Def. A4  — well-formedness of concrete heaps w.r.t. a statement
   * Fig. A5/A6 — the big-step judgement `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`
 
@@ -166,14 +166,14 @@ structure ConcreteSpec [Concrete] : Prop where
 
 /-! ## Expression evaluation (Fig. A3)
 
-`⟦e⟧ρ ≜ l`, with `⟦v⟧ρ ≜ l_v` and `⟦x⟧ρ ≜ ρ(x)`.  Partial, as `ρ` is. -/
+`⟦e⟧ᵨ ≜ l`, with `⟦v⟧ᵨ ≜ l_v` and `⟦x⟧ᵨ ≜ ρ(x)`.  Partial, as `ρ` is. -/
 
-/-- `⟦e⟧ρ`. -/
+/-- `⟦e⟧ᵨ`. -/
 def evalE [Concrete] (ρ : Sto) : Expr → Option Loc
   | .val v => some (litLoc v)
   | .var x => ρ x
 
-/-- `⟦e₁⟧ρ, ..., ⟦eₙ⟧ρ`, pointwise. -/
+/-- `⟦e₁⟧ᵨ, ..., ⟦eₙ⟧ᵨ`, pointwise. -/
 def evalEs [Concrete] (ρ : Sto) : List Expr → Option (List Loc)
   | []      => some []
   | e :: es => do
@@ -184,9 +184,16 @@ def evalEs [Concrete] (ρ : Sto) : List Expr → Option (List Loc)
 /-! ## Well-formedness (Definition A4) -/
 
 /-- A concrete heap `h` is well formed w.r.t. a statement `s` iff every
-    literal value `v` occurring in `s` satisfies `h.val(l_v) = v`. -/
+    literal value `v` occurring in `s` satisfies `h.val(l_v) = v`, and the
+    global `undefined` cell holds `undefined`.
+
+    The second conjunct is unconditional rather than gated on `s.lits`: no
+    source statement need mention `undefined` syntactically, yet the
+    [Function Call] rule below reads `l_undef` whenever a callee body falls
+    through without an explicit `return`. -/
 def Heap.WF [Concrete] (h : Heap) (s : Stmt) : Prop :=
-  ∀ v ∈ s.lits, h.val (litLoc v) = some v
+  (∀ v ∈ s.lits, h.val (litLoc v) = some v) ∧
+  h.val (litLoc .undef) = some .undef
 
 /-! ## Big-step semantics (Figs. A5 and A6)
 
@@ -280,8 +287,9 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
       BigStep Γ ⟨h', ρ', δ'⟩ s₂ ⟨h'', ρ'', δ'', t₂, o⟩ →
       BigStep Γ ⟨h, ρ, δ⟩ (.seq s₁ s₂) ⟨h'', ρ'', δ'', .seq t₁ t₂, o⟩
 
-  /-- [Function Call] -/
-  | call {h h' ρ ρ' ρf' δ δ' x e es lf f params body ls l t} :
+  /-- [Function Call], explicit return: the callee body terminates with
+      `r⟨l⟩` and `l` is what the call evaluates to. -/
+  | callRet {h h' ρ ρ' ρf' δ δ' x e es lf f params body ls l t} :
       evalE ρ e = some lf →
       h.val lf = some (.fid f) →
       Γ f = some (params, body) →
@@ -292,6 +300,23 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
       BigStep Γ ⟨h, ρ, δ⟩ (.call x e es)
         ⟨h', ρ', δ',
          .seq (.act (.call lf ls)) (.seq t (.act (.ret lf l))), .cont⟩
+
+  /-- [Function Call], implicit return: the callee body falls through with
+      outcome `·`, and the call evaluates to `undefined` (JavaScript's
+      behaviour for a function that returns no value).  The emitted `Ret`
+      action mentions `l_undef`, so the trace records a return either way. -/
+  | callCont {h h' ρ ρ' ρf' δ δ' x e es lf f params body ls t} :
+      evalE ρ e = some lf →
+      h.val lf = some (.fid f) →
+      Γ f = some (params, body) →
+      evalEs ρ es = some ls →
+      params.length = ls.length →
+      BigStep Γ ⟨h, Sto.ofParams params ls, δ⟩ body ⟨h', ρf', δ', t, .cont⟩ →
+      ρ' = ρ.upd x (litLoc .undef) →
+      BigStep Γ ⟨h, ρ, δ⟩ (.call x e es)
+        ⟨h', ρ', δ',
+         .seq (.act (.call lf ls))
+              (.seq t (.act (.ret lf (litLoc .undef)))), .cont⟩
 
   /-- [If True] -/
   | ifTrue {h ρ δ e s₁ s₂ l r} :
@@ -328,6 +353,260 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
       evalE ρ e = some l →
       δ' = { δ with sk := {l} ∪ δ.sk } →
       BigStep Γ ⟨h, ρ, δ⟩ (.setSink e) ⟨h, ρ, δ', .emp, .cont⟩
+
+
+/-! ## Height-indexed derivations
+
+`BigStep` lives in `Prop`, so Lean generates no `sizeOf` for it and its
+recursor eliminates only into `Prop`: there is no derivation height available
+to recurse on.  The soundness proof needs one — `[Call-Fix]` extends `Σ` with
+a summary whose validity quantifies over *all* concrete executions of the
+callee body, not merely over sub-derivations of the derivation being inducted
+on, so structural induction does not reach it.
+
+`BigStepN Γ n` is the same relation with an explicit bound on derivation
+height: every rule concludes at `n+1` with its recursive premises at `n`.
+`BigStep.toN` and `BigStepN.toBigStep` establish that the two agree, so
+soundness may be proved by strong induction on `n` and then transported back. -/
+
+inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Prop where
+
+  /-- [Skip] -/
+  | skip {n h ρ δ} :
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ .skip ⟨h, ρ, δ, .emp, .cont⟩
+
+  /-- [Assignment] -/
+  | assign {n h ρ ρ' δ x e l} :
+      evalE ρ e = some l →
+      ρ' = ρ.upd x l →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.assign x e) ⟨h, ρ', δ, .emp, .cont⟩
+
+  /-- [Binary Operation] -/
+  | binOp {n h h' ρ ρ' δ δ' x κ op e₁ e₂ l₁ l₂ v₁ v₂ l v d} :
+      evalE ρ e₁ = some l₁ →
+      evalE ρ e₂ = some l₂ →
+      h.val l₁ = some v₁ →
+      h.val l₂ = some v₂ →
+      l = allocC h κ →
+      v = opSem op v₁ v₂ →
+      h' = h.setVal l v →
+      ρ' = ρ.upd x l →
+      d = δ.dep l₁ ∪ δ.dep l₂ ∪ {l₁, l₂} →
+      δ' = δ.setDep l d →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.binOp x κ op e₁ e₂) ⟨h', ρ', δ', .emp, .cont⟩
+
+  /-- [Object Initialization] -/
+  | objLit {n h h' ρ ρ' δ δ' x κ fs ls l} :
+      evalEs ρ (fs.map Prod.snd) = some ls →
+      l = allocC h κ →
+      h' = h.setObjs l ((fs.map Prod.fst).zip ls) →
+      ρ' = ρ.upd x l →
+      δ' = δ.setDep l ∅ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.objLit x κ fs) ⟨h', ρ', δ', .emp, .cont⟩
+
+  /-- [Static Property Lookup] -/
+  | lookupS {n h ρ ρ' δ x e p l₁ l₂} :
+      evalE ρ e = some l₁ →
+      h.obj l₁ p = some l₂ →
+      ρ' = ρ.upd x l₂ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupS x e p)
+        ⟨h, ρ', δ, .act (.lookup l₂ l₁ (litLoc (.str p))), .cont⟩
+
+  /-- [Dynamic Property Lookup] -/
+  | lookupD {n h ρ ρ' δ x e₁ e₂ l₁ l₂ l₃ p} :
+      evalE ρ e₁ = some l₁ →
+      evalE ρ e₂ = some l₂ →
+      h.val l₂ = some (.str p) →
+      h.obj l₁ p = some l₃ →
+      ρ' = ρ.upd x l₃ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupD x e₁ e₂)
+        ⟨h, ρ', δ, .act (.lookup l₃ l₁ l₂), .cont⟩
+
+  /-- [Static Property Update] -/
+  | updateS {n h h' ρ δ e₁ p e₂ l₁ l₂} :
+      evalE ρ e₁ = some l₁ →
+      evalE ρ e₂ = some l₂ →
+      h' = h.setObj l₁ p l₂ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.updateS e₁ p e₂)
+        ⟨h', ρ, δ, .act (.update l₁ (litLoc (.str p)) l₂), .cont⟩
+
+  /-- [Dynamic Property Update] -/
+  | updateD {n h h' ρ δ e₁ e₂ e₃ l₁ l₂ l₃ p} :
+      evalE ρ e₁ = some l₁ →
+      evalE ρ e₂ = some l₂ →
+      evalE ρ e₃ = some l₃ →
+      h.val l₂ = some (.str p) →
+      h' = h.setObj l₁ p l₃ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.updateD e₁ e₂ e₃)
+        ⟨h', ρ, δ, .act (.update l₁ l₂ l₃), .cont⟩
+
+  /-- [Sequence Ret] -/
+  | seqRet {n h h' ρ ρ' δ δ' s₁ s₂ t l} :
+      BigStepN Γ n ⟨h, ρ, δ⟩ s₁ ⟨h', ρ', δ', t, .ret l⟩ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.seq s₁ s₂) ⟨h', ρ', δ', t, .ret l⟩
+
+  /-- [Sequence Cont] -/
+  | seqCont {n h h' h'' ρ ρ' ρ'' δ δ' δ'' s₁ s₂ t₁ t₂ o} :
+      BigStepN Γ n ⟨h, ρ, δ⟩ s₁ ⟨h', ρ', δ', t₁, .cont⟩ →
+      BigStepN Γ n ⟨h', ρ', δ'⟩ s₂ ⟨h'', ρ'', δ'', t₂, o⟩ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.seq s₁ s₂) ⟨h'', ρ'', δ'', .seq t₁ t₂, o⟩
+
+  /-- [Function Call], explicit return: the callee body terminates with
+      `r⟨l⟩` and `l` is what the call evaluates to. -/
+  | callRet {n h h' ρ ρ' ρf' δ δ' x e es lf f params body ls l t} :
+      evalE ρ e = some lf →
+      h.val lf = some (.fid f) →
+      Γ f = some (params, body) →
+      evalEs ρ es = some ls →
+      params.length = ls.length →
+      BigStepN Γ n ⟨h, Sto.ofParams params ls, δ⟩ body ⟨h', ρf', δ', t, .ret l⟩ →
+      ρ' = ρ.upd x l →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.call x e es)
+        ⟨h', ρ', δ',
+         .seq (.act (.call lf ls)) (.seq t (.act (.ret lf l))), .cont⟩
+
+  /-- [Function Call], implicit return: the callee body falls through with
+      outcome `·`, and the call evaluates to `undefined` (JavaScript's
+      behaviour for a function that returns no value).  The emitted `Ret`
+      action mentions `l_undef`, so the trace records a return either way. -/
+  | callCont {n h h' ρ ρ' ρf' δ δ' x e es lf f params body ls t} :
+      evalE ρ e = some lf →
+      h.val lf = some (.fid f) →
+      Γ f = some (params, body) →
+      evalEs ρ es = some ls →
+      params.length = ls.length →
+      BigStepN Γ n ⟨h, Sto.ofParams params ls, δ⟩ body ⟨h', ρf', δ', t, .cont⟩ →
+      ρ' = ρ.upd x (litLoc .undef) →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.call x e es)
+        ⟨h', ρ', δ',
+         .seq (.act (.call lf ls))
+              (.seq t (.act (.ret lf (litLoc .undef)))), .cont⟩
+
+  /-- [If True] -/
+  | ifTrue {n h ρ δ e s₁ s₂ l r} :
+      evalE ρ e = some l →
+      h.val l = some (.bool true) →
+      BigStepN Γ n ⟨h, ρ, δ⟩ s₁ r →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.ifElse e s₁ s₂) r
+
+  /-- [If False] -/
+  | ifFalse {n h ρ δ e s₁ s₂ l r} :
+      evalE ρ e = some l →
+      h.val l = some (.bool false) →
+      BigStepN Γ n ⟨h, ρ, δ⟩ s₂ r →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.ifElse e s₁ s₂) r
+
+  /-- [While], by unfolding into a conditional. -/
+  | whileDo {n h ρ δ e s r} :
+      BigStepN Γ n ⟨h, ρ, δ⟩ (.ifElse e (.seq s (.whileDo e s)) .skip) r →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.whileDo e s) r
+
+  /-- [Return] -/
+  | ret {n h ρ δ e l} :
+      evalE ρ e = some l →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.ret e) ⟨h, ρ, δ, .emp, .ret l⟩
+
+  /-- [SetTaint] -/
+  | setTaint {n h ρ δ δ' e l} :
+      evalE ρ e = some l →
+      δ' = { δ with ac := {l} ∪ δ.ac } →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.setTaint e) ⟨h, ρ, δ', .emp, .cont⟩
+
+  /-- [SetSink] -/
+  | setSink {n h ρ δ δ' e l} :
+      evalE ρ e = some l →
+      δ' = { δ with sk := {l} ∪ δ.sk } →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.setSink e) ⟨h, ρ, δ', .emp, .cont⟩
+
+
+
+/-- Raising the height bound preserves derivability. -/
+theorem BigStepN.mono [Concrete] {Γ : Env} :
+    ∀ {n c s r}, BigStepN Γ n c s r → BigStepN Γ (n+1) c s r := by
+  intro n c s r H
+  induction H with
+  | skip => exact .skip
+  | assign h1 h2 => exact .assign h1 h2
+  | binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 => exact .binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
+  | objLit h1 h2 h3 h4 h5 => exact .objLit h1 h2 h3 h4 h5
+  | lookupS h1 h2 h3 => exact .lookupS h1 h2 h3
+  | lookupD h1 h2 h3 h4 h5 => exact .lookupD h1 h2 h3 h4 h5
+  | updateS h1 h2 h3 => exact .updateS h1 h2 h3
+  | updateD h1 h2 h3 h4 h5 => exact .updateD h1 h2 h3 h4 h5
+  | seqRet _ ih => exact .seqRet ih
+  | seqCont _ _ ih1 ih2 => exact .seqCont ih1 ih2
+  | callRet h1 h2 h3 h4 h5 _ h7 ih => exact .callRet h1 h2 h3 h4 h5 ih h7
+  | callCont h1 h2 h3 h4 h5 _ h7 ih => exact .callCont h1 h2 h3 h4 h5 ih h7
+  | ifTrue h1 h2 _ ih => exact .ifTrue h1 h2 ih
+  | ifFalse h1 h2 _ ih => exact .ifFalse h1 h2 ih
+  | whileDo _ ih => exact .whileDo ih
+  | ret h1 => exact .ret h1
+  | setTaint h1 h2 => exact .setTaint h1 h2
+  | setSink h1 h2 => exact .setSink h1 h2
+
+theorem BigStepN.mono_le [Concrete] {Γ : Env} {n c s r} (H : BigStepN Γ n c s r) :
+    ∀ {m}, n ≤ m → BigStepN Γ m c s r := by
+  intro m
+  induction m with
+  | zero => intro hnm; exact (Nat.le_zero.mp hnm) ▸ H
+  | succ k ih =>
+      intro hnm
+      rcases Nat.lt_or_ge n (k+1) with hlt | hge
+      · exact BigStepN.mono (ih (Nat.lt_succ_iff.mp hlt))
+      · exact (Nat.le_antisymm hnm hge) ▸ H
+
+/-- Every plain derivation has a height. -/
+theorem BigStep.toN [Concrete] {Γ : Env} {c s r} (H : BigStep Γ c s r) :
+    ∃ n, BigStepN Γ n c s r := by
+  induction H with
+  | skip => exact ⟨1, .skip⟩
+  | assign h1 h2 => exact ⟨1, .assign h1 h2⟩
+  | binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 => exact ⟨1, .binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10⟩
+  | objLit h1 h2 h3 h4 h5 => exact ⟨1, .objLit h1 h2 h3 h4 h5⟩
+  | lookupS h1 h2 h3 => exact ⟨1, .lookupS h1 h2 h3⟩
+  | lookupD h1 h2 h3 h4 h5 => exact ⟨1, .lookupD h1 h2 h3 h4 h5⟩
+  | updateS h1 h2 h3 => exact ⟨1, .updateS h1 h2 h3⟩
+  | updateD h1 h2 h3 h4 h5 => exact ⟨1, .updateD h1 h2 h3 h4 h5⟩
+  | seqRet _ ih => obtain ⟨n, d⟩ := ih; exact ⟨n+1, .seqRet d⟩
+  | seqCont _ _ ih1 ih2 =>
+      obtain ⟨n1, d1⟩ := ih1
+      obtain ⟨n2, d2⟩ := ih2
+      exact ⟨max n1 n2 + 1,
+             .seqCont (d1.mono_le (Nat.le_max_left _ _)) (d2.mono_le (Nat.le_max_right _ _))⟩
+  | callRet h1 h2 h3 h4 h5 _ h7 ih =>
+      obtain ⟨n, d⟩ := ih; exact ⟨n+1, .callRet h1 h2 h3 h4 h5 d h7⟩
+  | callCont h1 h2 h3 h4 h5 _ h7 ih =>
+      obtain ⟨n, d⟩ := ih; exact ⟨n+1, .callCont h1 h2 h3 h4 h5 d h7⟩
+  | ifTrue h1 h2 _ ih => obtain ⟨n, d⟩ := ih; exact ⟨n+1, .ifTrue h1 h2 d⟩
+  | ifFalse h1 h2 _ ih => obtain ⟨n, d⟩ := ih; exact ⟨n+1, .ifFalse h1 h2 d⟩
+  | whileDo _ ih => obtain ⟨n, d⟩ := ih; exact ⟨n+1, .whileDo d⟩
+  | ret h1 => exact ⟨1, .ret h1⟩
+  | setTaint h1 h2 => exact ⟨1, .setTaint h1 h2⟩
+  | setSink h1 h2 => exact ⟨1, .setSink h1 h2⟩
+
+/-- ... and a bounded derivation is a derivation. -/
+theorem BigStepN.toBigStep [Concrete] {Γ : Env} :
+    ∀ {n c s r}, BigStepN Γ n c s r → BigStep Γ c s r := by
+  intro n c s r H
+  induction H with
+  | skip => exact .skip
+  | assign h1 h2 => exact .assign h1 h2
+  | binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 => exact .binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
+  | objLit h1 h2 h3 h4 h5 => exact .objLit h1 h2 h3 h4 h5
+  | lookupS h1 h2 h3 => exact .lookupS h1 h2 h3
+  | lookupD h1 h2 h3 h4 h5 => exact .lookupD h1 h2 h3 h4 h5
+  | updateS h1 h2 h3 => exact .updateS h1 h2 h3
+  | updateD h1 h2 h3 h4 h5 => exact .updateD h1 h2 h3 h4 h5
+  | seqRet _ ih => exact .seqRet ih
+  | seqCont _ _ ih1 ih2 => exact .seqCont ih1 ih2
+  | callRet h1 h2 h3 h4 h5 _ h7 ih => exact .callRet h1 h2 h3 h4 h5 ih h7
+  | callCont h1 h2 h3 h4 h5 _ h7 ih => exact .callCont h1 h2 h3 h4 h5 ih h7
+  | ifTrue h1 h2 _ ih => exact .ifTrue h1 h2 ih
+  | ifFalse h1 h2 _ ih => exact .ifFalse h1 h2 ih
+  | whileDo _ ih => exact .whileDo ih
+  | ret h1 => exact .ret h1
+  | setTaint h1 h2 => exact .setTaint h1 h2
+  | setSink h1 h2 => exact .setSink h1 h2
 
 /-- Notation for the big-step judgement:
     `Γ ⊢ c ⇓[s] r` is `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`. -/

@@ -44,6 +44,10 @@ inductive Val where
   | bool (b : Bool)
   | fid  (f : Fid)
   | loc  (l : Loc)
+  /-- `undefined`.  Introduced by the semantics as the implicit return value of
+      a function body that falls through without an explicit `return`, and
+      also writable directly in source text as an ordinary literal. -/
+  | undef
   deriving DecidableEq, Repr, Inhabited
 
 /-- Expressions `e ∈ Exp ::= v | x ∈ Var`. -/
