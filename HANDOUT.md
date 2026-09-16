@@ -61,13 +61,54 @@ This fix:
 - Is what `main` should actually implement. **This branch is not about that
   fix** — it is a separate, larger exploration of a different problem (below).
 
-A rejected alternative (option B, "restrict `return` to tail position of the
-function body," possibly via a `returned`/`retval` flag-variable transform):
-does not actually eliminate the problem, it relocates it. `[If-Then-Else]`
-explores both branches unconditionally regardless of the guard ("the guard is
-not inspected," per its own doc comment), so `if (!returned) { retval := y }`
-still gets spuriously explored when `returned` is abstractly imprecise, and
-`retval := y` is still a strong store write. Rejected.
+Two alternatives were considered and rejected — both fail for the *same*
+underlying reason, which is worth recording so no one re-proposes either:
+
+**Option B** — restrict `return` to tail position of the function body,
+possibly via a `returned`/`retval` flag-variable transform (guarding every
+statement after a potential early return in `if (!returned) { ... }`).
+Rejected twice, for two different reasons. First: `[If-Then-Else]` explores
+both branches unconditionally regardless of the guard ("the guard is not
+inspected," per its own doc comment), so the guard doesn't actually suppress
+anything at the abstract level. Second, and more fundamental, once you notice
+that `⊔` preserves the "guard false" alternative's value rather than
+discarding it (this is true, and is *why* `ifElse` itself never had this
+problem) — wrapping *every* subsequent statement in its own `if (!returned)`
+means *every* one of them now joins its own effect with whatever was true
+immediately before it. Chain that across a whole function body and every
+variable's abstract value becomes the union of every value it was ever
+assigned, anywhere in the function — not "some precision lost," but the
+strong/precise character of `ASto.upd` defeated almost entirely. Rejected.
+
+**Option D** (proposed and then withdrawn in this session) — instead of
+transforming the source, change `[Sequence Cont]`'s *abstract rule itself* to
+join its heap/store/reg result with the pre-`s2` (post-`s1`) state as a
+built-in safety net, and widen the trace to an alternation between "just
+`s1`" and "`s1` followed by `s2`." This looked promising component-by-component
+(heap/store/reg transport through the join's upper-bound property directly,
+sidestepping `r2` entirely; the trace alternation and outcome relation both
+check out) — but it has *exactly* the same fatal flaw as option B, for the
+same reason: `s1 ;; s2 ;; s3` associates as `s1 ;; (s2 ;; s3)`, so the safety
+net fires at *every* `[Sequence Cont]` application in a chain, with nothing
+in `AOut.mk .cont L` able to distinguish "this `.cont` is safe" from "this
+`.cont` is hiding a joined-away return" to apply it selectively. `w := 1; w
+:= 2; w := 3` would abstractly yield `w ↦ {1,2,3}`, not `{3}`. Withdrawn.
+
+**The reason option A avoids this entirely**: it changes *nothing* about
+`CoreJsAbstractSemantics.lean` — `SA` computes exactly the same heap/store/
+reg/trace it always did, at exactly the same precision. Only the *theorem's*
+bookkeeping changes (what we claim to prove about the relationship between
+that unchanged computation and the concrete semantics), and only in the one
+case (`.ret` outcome) where the store claim is neither true nor needed.
+That's what makes it different from B/D: those tried to fix the *analysis*
+(or a *transform* feeding it) to make the stronger claim true; A instead
+notices the stronger claim was never the right thing to ask for in the first
+place.
+
+**Decision (this session): implement option A on `main`, fully, until no
+`sorry` remains in `CoreJsAbstractionSoundness.lean`.** This branch's
+automaton exploration continues separately, for the finiteness/decidability
+goal in §3 — it is not blocking, and not required for A.
 
 ## 3. What this branch is actually about: a finite, decidable automaton
 
@@ -278,12 +319,24 @@ implement for this on `main`; it does not require anything in this handout.
    check every constructor against §4.1's table and the worked examples
    before trusting it.
 
-3. **§3.1's mutual-recursion fix** (named/simultaneous summaries) needs to
-   happen for `[Call-Fix]`/`[Call-Assume]` regardless of this branch's fate.
-   Whether the automaton's per-function-entry sharing (§4.1) *is* that fix in
-   disguise, or a related-but-separate mechanism, has not been worked out —
-   worth checking whether formalizing the automaton naturally subsumes §3.1,
-   since both are about simultaneous handling of a recursive group.
+3. **§3.1's mutual-recursion fix (named/simultaneous `mu`-summaries) is
+   `main`-only — it does NOT apply to, and is not needed by, the automaton.**
+   This was checked explicitly with the user and is worth over-stating so it
+   doesn't get re-confused later: named/nested `mu`-variables are *still*
+   the same non-regular, stack-needing construct as the balanced system in
+   §3.2 (that's what a "named" version of it would literally be, if built
+   the same way) — fine for `main`'s `Prop`-valued `Trc.Alpha`, which was
+   never trying to be finite/decidable, but exactly what the automaton
+   exists to avoid. The automaton's own answer to mutual recursion is
+   entirely different and has no version of the §3.1 bug to begin with: one
+   *shared* entry state per function (not "per assumed variable"), reached
+   the same way regardless of who's calling, with return-sites
+   cross-producted to every continuation (§4.1/§4.3). There is no binder to
+   mis-scope, because there is no binder — just a bounded set of graph nodes
+   and edges. Do not try to build the automaton's recursion handling out of
+   named `mu`/`tvar`; that would silently reintroduce the exact
+   non-regularity §3.2 rules out. Treat §3.1 as a separate, `main`-only
+   fix, unrelated to this branch's actual design (§4).
 
 4. **Relationship to `main`.** This branch's automaton work is additional,
    parallel work motivated by finiteness/decidability for the downstream
