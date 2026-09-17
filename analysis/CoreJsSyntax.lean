@@ -89,22 +89,22 @@ inductive Stmt where
   | binOp    (x : Var) (κ : Idx) (op : BinOp) (e₁ e₂ : Expr)
   /-- `x :=κ {pᵢ : eᵢ}` -/
   | objLit   (x : Var) (κ : Idx) (fs : List (PropName × Expr))
-  /-- `x := e.p` (static property lookup) -/
-  | lookupS  (x : Var) (e : Expr) (p : PropName)
-  /-- `x := e₁[e₂]` (dynamic property lookup) -/
-  | lookupD  (x : Var) (e₁ e₂ : Expr)
-  /-- `e₁.p := e₂` (static property update) -/
-  | updateS  (e₁ : Expr) (p : PropName) (e₂ : Expr)
-  /-- `e₁[e₂] := e₃` (dynamic property update) -/
-  | updateD  (e₁ e₂ e₃ : Expr)
-  /-- `x := e(e₁, ..., eₙ)` -/
-  | call     (x : Var) (e : Expr) (es : List Expr)
+  /-- `x :=κ e.p` (static property lookup) -/
+  | lookupS  (x : Var) (κ : Idx) (e : Expr) (p : PropName)
+  /-- `x :=κ e₁[e₂]` (dynamic property lookup) -/
+  | lookupD  (x : Var) (κ : Idx) (e₁ e₂ : Expr)
+  /-- `e₁.p :=κ e₂` (static property update) -/
+  | updateS  (κ : Idx) (e₁ : Expr) (p : PropName) (e₂ : Expr)
+  /-- `e₁[e₂] :=κ e₃` (dynamic property update) -/
+  | updateD  (κ : Idx) (e₁ e₂ e₃ : Expr)
+  /-- `x :=κ e(e₁, ..., eₙ)` -/
+  | call     (x : Var) (κ : Idx) (e : Expr) (es : List Expr)
   /-- `s₁; s₂` -/
   | seq      (s₁ s₂ : Stmt)
-  /-- `if(e) {s₁} else {s₂}` -/
-  | ifElse   (e : Expr) (s₁ s₂ : Stmt)
-  /-- `while(e) {s}` -/
-  | whileDo  (e : Expr) (s : Stmt)
+  /-- `ifκ(e) {s₁} else {s₂}` -/
+  | ifElse   (κ : Idx) (e : Expr) (s₁ s₂ : Stmt)
+  /-- `whileκ(e) {s}` -/
+  | whileDo  (κ : Idx) (e : Expr) (s : Stmt)
   /-- `return e` -/
   | ret      (e : Expr)
   /-- `setTaint e` -/
@@ -140,16 +140,57 @@ def Stmt.lits : Stmt → List Val
   | .assign _ e        => e.lits
   | .binOp _ _ _ e₁ e₂ => e₁.lits ++ e₂.lits
   | .objLit _ _ fs     => litsOfExprs (fs.map Prod.snd)
-  | .lookupS _ e p     => .str p :: e.lits
-  | .lookupD _ e₁ e₂   => e₁.lits ++ e₂.lits
-  | .updateS e₁ p e₂   => .str p :: (e₁.lits ++ e₂.lits)
-  | .updateD e₁ e₂ e₃  => e₁.lits ++ e₂.lits ++ e₃.lits
-  | .call _ e es       => e.lits ++ litsOfExprs es
+  | .lookupS _ _ e p   => .str p :: e.lits
+  | .lookupD _ _ e₁ e₂ => e₁.lits ++ e₂.lits
+  | .updateS _ e₁ p e₂ => .str p :: (e₁.lits ++ e₂.lits)
+  | .updateD _ e₁ e₂ e₃ => e₁.lits ++ e₂.lits ++ e₃.lits
+  | .call _ _ e es     => e.lits ++ litsOfExprs es
   | .seq s₁ s₂         => s₁.lits ++ s₂.lits
-  | .ifElse e s₁ s₂    => e.lits ++ s₁.lits ++ s₂.lits
-  | .whileDo e s       => e.lits ++ s.lits
+  | .ifElse _ e s₁ s₂  => e.lits ++ s₁.lits ++ s₂.lits
+  | .whileDo _ e s     => e.lits ++ s.lits
   | .ret e             => e.lits
   | .setTaint e        => e.lits
   | .setSink e         => e.lits
+
+/-! ## Site identifiers occurring in a statement
+
+REMARK.  Fig. A1 gives `call`/`lookupS`/`lookupD`/`updateS`/`updateD`/`ifElse`/
+`whileDo` no syntactic identity of their own, unlike `binOp`/`objLit`'s `κ`.
+The automaton-based analysis (`CoreJsAutomatonSyntax.lean`) needs every one of
+these constructs to carry a unique per-occurrence index too — a call site's
+identity (combined with a call-string) is what the automaton's states are
+built from, and an `ifElse`/`whileDo` occurrence's index is what names its
+allocated branch/loop states. This is a deliberate deviation from the paper's
+literal syntax, added here (rather than derived structurally from AST
+position) because call sites need to *compose* their index with a call-string,
+which a bare derived path type would not do any more simply.
+
+Well-formedness (`Stmt.SitesWF`) requires all such indices, together with the
+pre-existing `binOp`/`objLit` `κ`s, to be pairwise distinct across a program —
+analogous to `EnvSpec`/`ConcreteSpec`'s side conditions elsewhere in this
+development. -/
+
+/-- Every site index occurring in a statement: the existing `binOp`/`objLit`
+    `κ`s, together with the new `Idx` fields of `call`/`lookupS`/`lookupD`/
+    `updateS`/`updateD`/`ifElse`/`whileDo`. -/
+def Stmt.sites : Stmt → List Idx
+  | .skip                 => []
+  | .assign _ _           => []
+  | .binOp _ κ _ _ _       => [κ]
+  | .objLit _ κ _          => [κ]
+  | .lookupS _ κ _ _       => [κ]
+  | .lookupD _ κ _ _       => [κ]
+  | .updateS κ _ _ _       => [κ]
+  | .updateD κ _ _ _       => [κ]
+  | .call _ κ _ _          => [κ]
+  | .seq s₁ s₂             => s₁.sites ++ s₂.sites
+  | .ifElse κ _ s₁ s₂      => κ :: (s₁.sites ++ s₂.sites)
+  | .whileDo κ _ s         => κ :: s.sites
+  | .ret _                 => []
+  | .setTaint _            => []
+  | .setSink _             => []
+
+/-- Well-formedness: every site index occurring in `s` is pairwise distinct. -/
+def Stmt.SitesWF (s : Stmt) : Prop := s.sites.Nodup
 
 end CoreJS

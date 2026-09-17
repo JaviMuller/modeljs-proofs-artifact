@@ -241,39 +241,39 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
       BigStep Γ ⟨h, ρ, δ⟩ (.objLit x κ fs) ⟨h', ρ', δ', .emp, .cont⟩
 
   /-- [Static Property Lookup] -/
-  | lookupS {h ρ ρ' δ x e p l₁ l₂} :
+  | lookupS {h ρ ρ' δ x κ e p l₁ l₂} :
       evalE ρ e = some l₁ →
       h.obj l₁ p = some l₂ →
       ρ' = ρ.upd x l₂ →
-      BigStep Γ ⟨h, ρ, δ⟩ (.lookupS x e p)
+      BigStep Γ ⟨h, ρ, δ⟩ (.lookupS x κ e p)
         ⟨h, ρ', δ, .act (.lookup l₂ l₁ (litLoc (.str p))), .cont⟩
 
   /-- [Dynamic Property Lookup] -/
-  | lookupD {h ρ ρ' δ x e₁ e₂ l₁ l₂ l₃ p} :
+  | lookupD {h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
       h.val l₂ = some (.str p) →
       h.obj l₁ p = some l₃ →
       ρ' = ρ.upd x l₃ →
-      BigStep Γ ⟨h, ρ, δ⟩ (.lookupD x e₁ e₂)
+      BigStep Γ ⟨h, ρ, δ⟩ (.lookupD x κ e₁ e₂)
         ⟨h, ρ', δ, .act (.lookup l₃ l₁ l₂), .cont⟩
 
   /-- [Static Property Update] -/
-  | updateS {h h' ρ δ e₁ p e₂ l₁ l₂} :
+  | updateS {h h' ρ δ κ e₁ p e₂ l₁ l₂} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
       h' = h.setObj l₁ p l₂ →
-      BigStep Γ ⟨h, ρ, δ⟩ (.updateS e₁ p e₂)
+      BigStep Γ ⟨h, ρ, δ⟩ (.updateS κ e₁ p e₂)
         ⟨h', ρ, δ, .act (.update l₁ (litLoc (.str p)) l₂), .cont⟩
 
   /-- [Dynamic Property Update] -/
-  | updateD {h h' ρ δ e₁ e₂ e₃ l₁ l₂ l₃ p} :
+  | updateD {h h' ρ δ κ e₁ e₂ e₃ l₁ l₂ l₃ p} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
       evalE ρ e₃ = some l₃ →
       h.val l₂ = some (.str p) →
       h' = h.setObj l₁ p l₃ →
-      BigStep Γ ⟨h, ρ, δ⟩ (.updateD e₁ e₂ e₃)
+      BigStep Γ ⟨h, ρ, δ⟩ (.updateD κ e₁ e₂ e₃)
         ⟨h', ρ, δ, .act (.update l₁ l₂ l₃), .cont⟩
 
   /-- [Sequence Ret] -/
@@ -289,7 +289,7 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
 
   /-- [Function Call], explicit return: the callee body terminates with
       `r⟨l⟩` and `l` is what the call evaluates to. -/
-  | callRet {h h' ρ ρ' ρf' δ δ' x e es lf f params body ls l t} :
+  | callRet {h h' ρ ρ' ρf' δ δ' x κ e es lf f params body ls l t} :
       evalE ρ e = some lf →
       h.val lf = some (.fid f) →
       Γ f = some (params, body) →
@@ -297,7 +297,7 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
       params.length = ls.length →
       BigStep Γ ⟨h, Sto.ofParams params ls, δ⟩ body ⟨h', ρf', δ', t, .ret l⟩ →
       ρ' = ρ.upd x l →
-      BigStep Γ ⟨h, ρ, δ⟩ (.call x e es)
+      BigStep Γ ⟨h, ρ, δ⟩ (.call x κ e es)
         ⟨h', ρ', δ',
          .seq (.act (.call lf ls)) (.seq t (.act (.ret lf l))), .cont⟩
 
@@ -305,7 +305,7 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
       outcome `·`, and the call evaluates to `undefined` (JavaScript's
       behaviour for a function that returns no value).  The emitted `Ret`
       action mentions `l_undef`, so the trace records a return either way. -/
-  | callCont {h h' ρ ρ' ρf' δ δ' x e es lf f params body ls t} :
+  | callCont {h h' ρ ρ' ρf' δ δ' x κ e es lf f params body ls t} :
       evalE ρ e = some lf →
       h.val lf = some (.fid f) →
       Γ f = some (params, body) →
@@ -313,29 +313,29 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
       params.length = ls.length →
       BigStep Γ ⟨h, Sto.ofParams params ls, δ⟩ body ⟨h', ρf', δ', t, .cont⟩ →
       ρ' = ρ.upd x (litLoc .undef) →
-      BigStep Γ ⟨h, ρ, δ⟩ (.call x e es)
+      BigStep Γ ⟨h, ρ, δ⟩ (.call x κ e es)
         ⟨h', ρ', δ',
          .seq (.act (.call lf ls))
               (.seq t (.act (.ret lf (litLoc .undef)))), .cont⟩
 
   /-- [If True] -/
-  | ifTrue {h ρ δ e s₁ s₂ l r} :
+  | ifTrue {h ρ δ κ e s₁ s₂ l r} :
       evalE ρ e = some l →
       h.val l = some (.bool true) →
       BigStep Γ ⟨h, ρ, δ⟩ s₁ r →
-      BigStep Γ ⟨h, ρ, δ⟩ (.ifElse e s₁ s₂) r
+      BigStep Γ ⟨h, ρ, δ⟩ (.ifElse κ e s₁ s₂) r
 
   /-- [If False] -/
-  | ifFalse {h ρ δ e s₁ s₂ l r} :
+  | ifFalse {h ρ δ κ e s₁ s₂ l r} :
       evalE ρ e = some l →
       h.val l = some (.bool false) →
       BigStep Γ ⟨h, ρ, δ⟩ s₂ r →
-      BigStep Γ ⟨h, ρ, δ⟩ (.ifElse e s₁ s₂) r
+      BigStep Γ ⟨h, ρ, δ⟩ (.ifElse κ e s₁ s₂) r
 
   /-- [While], by unfolding into a conditional. -/
-  | whileDo {h ρ δ e s r} :
-      BigStep Γ ⟨h, ρ, δ⟩ (.ifElse e (.seq s (.whileDo e s)) .skip) r →
-      BigStep Γ ⟨h, ρ, δ⟩ (.whileDo e s) r
+  | whileDo {h ρ δ κ e s r} :
+      BigStep Γ ⟨h, ρ, δ⟩ (.ifElse κ e (.seq s (.whileDo κ e s)) .skip) r →
+      BigStep Γ ⟨h, ρ, δ⟩ (.whileDo κ e s) r
 
   /-- [Return] -/
   | ret {h ρ δ e l} :
@@ -405,39 +405,39 @@ inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Pro
       BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.objLit x κ fs) ⟨h', ρ', δ', .emp, .cont⟩
 
   /-- [Static Property Lookup] -/
-  | lookupS {n h ρ ρ' δ x e p l₁ l₂} :
+  | lookupS {n h ρ ρ' δ x κ e p l₁ l₂} :
       evalE ρ e = some l₁ →
       h.obj l₁ p = some l₂ →
       ρ' = ρ.upd x l₂ →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupS x e p)
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupS x κ e p)
         ⟨h, ρ', δ, .act (.lookup l₂ l₁ (litLoc (.str p))), .cont⟩
 
   /-- [Dynamic Property Lookup] -/
-  | lookupD {n h ρ ρ' δ x e₁ e₂ l₁ l₂ l₃ p} :
+  | lookupD {n h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
       h.val l₂ = some (.str p) →
       h.obj l₁ p = some l₃ →
       ρ' = ρ.upd x l₃ →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupD x e₁ e₂)
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupD x κ e₁ e₂)
         ⟨h, ρ', δ, .act (.lookup l₃ l₁ l₂), .cont⟩
 
   /-- [Static Property Update] -/
-  | updateS {n h h' ρ δ e₁ p e₂ l₁ l₂} :
+  | updateS {n h h' ρ δ κ e₁ p e₂ l₁ l₂} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
       h' = h.setObj l₁ p l₂ →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.updateS e₁ p e₂)
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.updateS κ e₁ p e₂)
         ⟨h', ρ, δ, .act (.update l₁ (litLoc (.str p)) l₂), .cont⟩
 
   /-- [Dynamic Property Update] -/
-  | updateD {n h h' ρ δ e₁ e₂ e₃ l₁ l₂ l₃ p} :
+  | updateD {n h h' ρ δ κ e₁ e₂ e₃ l₁ l₂ l₃ p} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
       evalE ρ e₃ = some l₃ →
       h.val l₂ = some (.str p) →
       h' = h.setObj l₁ p l₃ →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.updateD e₁ e₂ e₃)
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.updateD κ e₁ e₂ e₃)
         ⟨h', ρ, δ, .act (.update l₁ l₂ l₃), .cont⟩
 
   /-- [Sequence Ret] -/
@@ -453,7 +453,7 @@ inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Pro
 
   /-- [Function Call], explicit return: the callee body terminates with
       `r⟨l⟩` and `l` is what the call evaluates to. -/
-  | callRet {n h h' ρ ρ' ρf' δ δ' x e es lf f params body ls l t} :
+  | callRet {n h h' ρ ρ' ρf' δ δ' x κ e es lf f params body ls l t} :
       evalE ρ e = some lf →
       h.val lf = some (.fid f) →
       Γ f = some (params, body) →
@@ -461,7 +461,7 @@ inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Pro
       params.length = ls.length →
       BigStepN Γ n ⟨h, Sto.ofParams params ls, δ⟩ body ⟨h', ρf', δ', t, .ret l⟩ →
       ρ' = ρ.upd x l →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.call x e es)
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.call x κ e es)
         ⟨h', ρ', δ',
          .seq (.act (.call lf ls)) (.seq t (.act (.ret lf l))), .cont⟩
 
@@ -469,7 +469,7 @@ inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Pro
       outcome `·`, and the call evaluates to `undefined` (JavaScript's
       behaviour for a function that returns no value).  The emitted `Ret`
       action mentions `l_undef`, so the trace records a return either way. -/
-  | callCont {n h h' ρ ρ' ρf' δ δ' x e es lf f params body ls t} :
+  | callCont {n h h' ρ ρ' ρf' δ δ' x κ e es lf f params body ls t} :
       evalE ρ e = some lf →
       h.val lf = some (.fid f) →
       Γ f = some (params, body) →
@@ -477,29 +477,29 @@ inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Pro
       params.length = ls.length →
       BigStepN Γ n ⟨h, Sto.ofParams params ls, δ⟩ body ⟨h', ρf', δ', t, .cont⟩ →
       ρ' = ρ.upd x (litLoc .undef) →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.call x e es)
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.call x κ e es)
         ⟨h', ρ', δ',
          .seq (.act (.call lf ls))
               (.seq t (.act (.ret lf (litLoc .undef)))), .cont⟩
 
   /-- [If True] -/
-  | ifTrue {n h ρ δ e s₁ s₂ l r} :
+  | ifTrue {n h ρ δ κ e s₁ s₂ l r} :
       evalE ρ e = some l →
       h.val l = some (.bool true) →
       BigStepN Γ n ⟨h, ρ, δ⟩ s₁ r →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.ifElse e s₁ s₂) r
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.ifElse κ e s₁ s₂) r
 
   /-- [If False] -/
-  | ifFalse {n h ρ δ e s₁ s₂ l r} :
+  | ifFalse {n h ρ δ κ e s₁ s₂ l r} :
       evalE ρ e = some l →
       h.val l = some (.bool false) →
       BigStepN Γ n ⟨h, ρ, δ⟩ s₂ r →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.ifElse e s₁ s₂) r
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.ifElse κ e s₁ s₂) r
 
   /-- [While], by unfolding into a conditional. -/
-  | whileDo {n h ρ δ e s r} :
-      BigStepN Γ n ⟨h, ρ, δ⟩ (.ifElse e (.seq s (.whileDo e s)) .skip) r →
-      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.whileDo e s) r
+  | whileDo {n h ρ δ κ e s r} :
+      BigStepN Γ n ⟨h, ρ, δ⟩ (.ifElse κ e (.seq s (.whileDo κ e s)) .skip) r →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.whileDo κ e s) r
 
   /-- [Return] -/
   | ret {n h ρ δ e l} :
