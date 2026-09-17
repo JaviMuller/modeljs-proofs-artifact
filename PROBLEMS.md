@@ -279,6 +279,85 @@ pattern as decision 3.
 
 ---
 
+## Decision 8 (open — not resolved) — `whileDo`'s use of `pending` may be unsound across loop iterations
+
+**Where:** `CoreJsAutomatonSemantics.lean`, `AEdge.whileHeaderIn`/
+`.whileHeaderOut`; `Labeling.Valid`. Surfaced while attempting the `whileDo`
+case of `step_sound`, which is why it is still `sorry` rather than a
+completed proof or a completed fix.
+
+**The suspected gap.** `AEdge.whileHeaderIn`/`.whileHeaderOut` give the
+epsilon edges out of a `whileDo`'s `entry` state contribution `pending` —
+literally transcribing `DESIGN_AND_PLAN.md`'s table ("epsilon from current
+state to both `whileIn`/`whileOut`"). `pending` is the accumulated effect of
+every flat statement (`skip`/`assign`/`binOp`/`objLit`/`setTaint`/
+`setSink`) since the last real automaton state — e.g. for `x := 1; while
+(...) { ... }`, `entry` is whatever real state precedes the whole
+`x := 1; while ...` fragment, and `pending = doAssign x 1`.
+
+The back-edge (`AEdge.whileBack`) targets that *same* `entry`, contributing
+`xpending` (the loop body's own accumulated effect for one iteration). So
+after one iteration, a concrete configuration relates to `L entry` directly
+(via `xpending (L x) ⊑ L entry`, Lemma-B13-style lifting) — *not* to
+`pending (L entry)`. To justify a *second* iteration (or exiting after one),
+the proof needs to route that same configuration back out through
+`whileHeaderIn`/`.whileHeaderOut` again — but those edges' validated
+inequality is stated for `pending (L entry)`, and `L entry ⊑ pending (L
+entry)` is **not** implied by `Labeling.Valid` as currently defined. For
+`doAssign`, whether it happens to hold depends on what `L entry`'s own
+`.sto x` slot already contains, which nothing pins down.
+
+Concretely: `Labeling.Valid` does not rule out a labeling `L` that satisfies
+every stated inequality (`whileHeaderIn`, `whileHeaderOut`, `whileBody`,
+`whileBack`, and everything else) while assigning `L entry` a value for
+which `pending (L entry) ⋢ L entry` — hunting for a second-iteration
+witness. If such an `L` exists, `step_sound`'s statement is **false** for a
+`whileDo` preceded by non-trivial `pending`, not merely unproved.
+
+**Why this wasn't caught during design or in the worked examples.** None of
+`DESIGN_AND_PLAN.md` §6's worked traces have a `while` loop preceded by a
+flat statement in the same straight-line run (`6.1`'s function bodies start
+their `if`/`return` immediately; there is no `while` example at all in §6).
+A `while` loop as the very first thing in a function body has `pending =
+id`, for which `L entry ⊑ id (L entry)` is trivially true — so this gap has
+no worked trace exercising it either, continuing the pattern of decisions 3
+and 7.
+
+**Candidate fixes, not yet chosen between:**
+
+1. **Strengthen `Labeling.Valid`** with an extra clause specific to
+   `whileDo` sites: `pending (L entry) ⊑ L entry` (equivalently, require
+   `entry`'s label to already be a post-fixed point of its own incoming
+   `pending`, for every `whileDo` occurring right after it). This keeps
+   `AEdge` unchanged but makes `Valid` shape-aware in a way nothing else
+   requires it to be — a wart, and it is not obvious this is even always
+   satisfiable together with the *other* constraints on `L entry` (e.g. if
+   `entry` is shared by several different continuations, not just this one
+   `while`).
+2. **Redefine `whileHeaderIn`/`.whileHeaderOut`** to fan out with `id`
+   instead of `pending`, and separately require whatever `pending` was
+   accumulated *before* the loop to have already been "materialized" — which
+   runs into the same problem this branch's whole `pending`-accumulator
+   design was built to avoid (giving flat statements their own state), so
+   this likely means `whileDo` sites specifically need their own dedicated
+   state after all, contradicting `DESIGN_AND_PLAN.md`'s explicit "0 states
+   beyond `whileIn`/`whileOut`" for this construct.
+3. **Restrict which `pending` a `whileDo` can be reached with** at the
+   point `AExit`/`AEdge` are *defined* (a well-formedness side condition on
+   programs, analogous to `SitesWF`) — e.g. require every `whileDo` occurrence
+   to be reached only with `pending = id` (i.e. ban a flat statement
+   immediately preceding a `while` in the same straight-line run without an
+   intervening real site). This sidesteps the problem rather than solving it
+   in general, and changes what programs this analysis accepts.
+
+None of these has been attempted. This is exactly the kind of decision this
+document exists to flag rather than resolve unilaterally — it changes either
+`Labeling.Valid`'s statement (option 1), the edge set (option 2), or the
+class of programs covered (option 3), each a substantive, independent
+design choice.
+
+---
+
 ## Current status (end of this session)
 
 `lake build` is green for `CoreJsSyntax`, `CoreJsSemantics`,
@@ -288,28 +367,32 @@ decision 6). No `axiom`s anywhere.
 
 Complete: the state/edge/labeling/validity model `DESIGN_AND_PLAN.md` §2
 scoped (`CoreJsAutomatonSyntax.lean`, `CoreJsAutomatonSemantics.lean`), fixing
-one real design gap along the way (decisions 3, 7) and documenting five
+two real design gaps along the way (decisions 3, 7) and documenting five
 implementation choices the design left open (decisions 1, 2, 4, 5, 6); the
 generalized abstraction relation (`CoreJsAutomatonRelation.lean`, full, no
 `sorry`, including the heap-update lemmas `Heap.Alpha.setObj`/`.setObjV`);
 the soundness theorem's *statement* and its supporting infrastructure
 (`CoreJsAutomatonSoundness.lean`), proved end to end for `skip`, `assign`,
 `setTaint`, `setSink`, `lookupS`, `lookupD`, `updateS`, `updateD`, `ret`,
-`seqRet`, `seqCont`, `ifTrue`, `ifFalse` — 13 of the 19
-`BigStepN`/`BigStep` statement-shape cases; the totality theorem's
+`seqRet`, `seqCont`, `ifTrue`, `ifFalse`, `callRet`, `callCont` — **15 of the
+19** `BigStepN`/`BigStep` statement-shape cases; the totality theorem's
 statement.
 
 Left as `sorry` (see `CoreJsAutomatonSoundness.lean`'s own "Remaining work"
-section for what each specifically needs, in the same order):
-`binOp`/`objLit` (need the `α`-extension-at-a-fresh-location step, an
-invariant this proof doesn't track yet, plus the new `OpSemSound` cross-spec
-this session introduced — the old, pre-automaton proof hit the same wall and
-never got past it either); `whileDo` (needs induction on iteration count,
-not just structural mirroring — the one remaining case that isn't just
-assembling already-built pieces); `callRet`/`callCont` (assembly of pieces
-already in place); and `exists_valid_labeling` (the Kleene-iteration
-construction of decision 12, not attempted — a substantial independent
-piece of work needing `AState` restricted to a finite subtype first).
+section): `binOp`/`objLit` (need the `α`-extension-at-a-fresh-location step,
+an invariant this proof doesn't track yet, plus the new `OpSemSound`
+cross-spec this session introduced — the old, pre-automaton proof hit the
+same wall and never got past it either); and `exists_valid_labeling` (the
+Kleene-iteration construction of decision 12, not attempted — a substantial
+independent piece of work needing `AState` restricted to a finite subtype
+first, and probably best attempted only after decision 8 below is settled).
+
+**`whileDo` is the one genuinely open item**, and it is not a proof-effort
+question: attempting it surfaced decision 8 below, a suspected real gap in
+`Labeling.Valid` itself (not merely in the proof) that needs the user's
+input on which of three fixes to take before any more work goes into that
+case. This is the most important thing for a human to look at before
+trusting this branch's model further.
 
 Not validated against `DESIGN_AND_PLAN.md` §6's worked traces by mechanising
 any of them as an actual example (step 6 of the design document's plan) —

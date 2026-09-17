@@ -8,14 +8,15 @@
   ## Status
 
   **Incomplete**, in the sense the project's `sorry` policy describes (see
-  `CLAUDE.md`): the statement, the supporting infrastructure, and most cases
-  are proved (`skip`/`assign`/`setTaint`/`setSink`/`lookupS`/`lookupD`/
-  `updateS`/`updateD`/`ret`/`seqRet`/`seqCont`/`ifTrue`/`ifFalse`); the
-  harder cases (`binOp`/`objLit`, which need a new cross-spec relating `⊕`
-  to `⊕̂` introduced below *and* an `α`-freshness invariant this proof does
-  not track yet; `whileDo`, which needs induction on iteration count; `call`,
-  which needs the candidate-search/recursion assembly) are `sorry`,
-  documented at each site with what remains. No `axiom`s are used.
+  `CLAUDE.md`): the statement, the supporting infrastructure, and 15 of 19
+  statement-shape cases are proved (`skip`/`assign`/`setTaint`/`setSink`/
+  `lookupS`/`lookupD`/`updateS`/`updateD`/`ret`/`seqRet`/`seqCont`/`ifTrue`/
+  `ifFalse`/`callRet`/`callCont`). Left as `sorry`: `binOp`/`objLit` (need a
+  new cross-spec relating `⊕` to `⊕̂`, introduced below, *and* an
+  `α`-freshness invariant this proof does not track yet); and `whileDo`,
+  which is not merely unfinished — attempting it surfaced a suspected
+  genuine gap in `Labeling.Valid` itself, left as an open design question
+  (`PROBLEMS.md` decision 8) rather than patched over. No `axiom`s are used.
 
   ## Why this proof is *simpler* than the old `soundnessN`, in one respect
 
@@ -109,7 +110,8 @@ string), which is exactly why `Labeling.Valid` has two conjuncts rather than
 one. -/
 
 theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : AbstractSpec)
-    (opspec : OpSemSound) {Γ : Env} {L : Labeling} (hΓ : EnvSpec Γ) :
+    (opspec : OpSemSound) {Γ : Env} {s₀ : Stmt} {L : Labeling} (hΓ : EnvSpec Γ)
+    (hvalid : Labeling.Valid Γ s₀ L) :
     ∀ (n : Nat) {cs : CallString} {entry : AState} {pending : AConf → AConf}
       {s : Stmt} {c : Conf} {r : Res} {α : AlphaFn},
       CallString.WF cs →
@@ -261,46 +263,127 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
           exact Or.inl ⟨.ifEnd cs κ, id, .ifElse, hout, α', hext, hlit', hαres.le hedge_out⟩
         · exact Or.inr ⟨rst, rpending, e', l', .ifElseB hARet2, hout, α', hext, hlit', hαres, hmaps⟩
     | whileDo _ =>
-        -- Unfolds to `ifElse e (seq s (whileDo e s)) skip` concretely
-        -- (`BigStepN.whileDo`), but the *automaton* does not unfold — it has
-        -- a genuine back-edge (`AEdge.whileBack`) and a single pair of
-        -- `whileIn`/`whileOut` states shared across every iteration. Relating
-        -- these needs an argument by induction on the number of concrete
-        -- loop iterations taken (each iteration re-uses the *same*
-        -- `whileIn`/`AEdge.whileBody` facts, validated once), not a direct
-        -- structural mirroring the way every other case here is. Not yet
-        -- done.
+        -- Not just unfinished — attempting it surfaced a suspected genuine
+        -- gap, left unresolved (`PROBLEMS.md` decision 8): after one loop
+        -- iteration, the concrete configuration relates to `L entry`
+        -- directly (via `AEdge.whileBack`'s inequality), but re-entering via
+        -- `AEdge.whileHeaderIn`/`.whileHeaderOut` for a second iteration (or
+        -- to exit) needs it to relate to `pending (L entry)` instead, which
+        -- needs `L entry ⊑ pending (L entry)` — a fact `Labeling.Valid` does
+        -- not currently guarantee for an arbitrary valid labeling. None of
+        -- `DESIGN_AND_PLAN.md`'s worked examples have a `while` loop
+        -- preceded by a flat statement in the same straight-line run, so
+        -- this never had a trace to expose it. Three candidate fixes are
+        -- recorded in `PROBLEMS.md`, none chosen yet — this needs a design
+        -- decision, not just more proof engineering.
         sorry
-    | callRet _ _ _ _ _ _ _ =>
-        -- The main argument sketched in the file header: (1) build the
-        -- `AEdge.callEntry` fact and use `hvalidS`/`IsCandidate` (established
-        -- from `hα` via `Heap.Alpha.valOf`) to relate the callee's initial
-        -- store (`sto_ofParams_alpha` above) up to `L (entry cs_f)`;
-        -- (2) invoke `IH` on the callee body at `cs_f` — using
-        -- `Labeling.Valid`'s *second* conjunct (via `hΓ`/`EnvSpec` to know
-        -- `Γ f` and `targetCallString_wf` for `CallString.WF cs_f`) as the
-        -- fresh `hvalidS`, not a wrapped one; (3) build `AEdge.callRet` from
-        -- the resulting `ARet` fact and use `hvalidS` again to relate the
-        -- return value, bound via `ASto.bot.upd x`, up to `L (cont cs κ)`.
-        -- Not yet done — every ingredient above is in place, this is
-        -- "only" assembly, but nontrivial assembly.
-        sorry
-    | callCont _ _ _ _ _ _ _ =>
-        -- Symmetric to `callRet`, using the newly-added
-        -- `AEdge.callImplicitRet` (`PROBLEMS.md` decision 7, added to
-        -- `CoreJsAutomatonSemantics.lean` once this case exposed the gap):
-        -- the callee falls through with `.cont`, so its own `AExit` fact
-        -- (from `IH`'s `.cont` disjunct) plays the role `ARet`'s fact played
-        -- in `callRet`, and the contribution binds `x` to `{litLocA .undef}`
-        -- instead of an evaluated return expression. Same assembly work as
-        -- `callRet`, not yet done.
-        sorry
+    | @callRet nred h h' ρ ρ' ρf' δ δ' x κ e es lf f params body ls l t he hlf hΓf hes
+        harity Hstep hρ' =>
+        subst hρ'
+        -- (1) the call resolves to `f`: build `IsCandidate` from `hα`.
+        have hval_e := eval_alpha hlit hα.2.1 he
+        have hVmem := hα.1.valOf hval_e hlf
+        have hargs := evals_alpha hlit hα.2.1 es hes
+        have harity' : params.length = es.length := harity.trans (evalEs_length hes)
+        have hΓparams : Γ.params f = params := by simp [Env.params, hΓf]
+        have hcand : IsCandidate Γ (pending (L entry)).heap (aevalE (pending (L entry)).sto e)
+            es.length f :=
+          ⟨hVmem, by simp [hΓf], by rw [hΓparams, harity']⟩
+        -- (2) relate the callee's initial store, and lift it to `L (entry cs_f)`.
+        have hedge_entry := hvalidS _ _ _ (AEdge.callEntry hΓf harity')
+        simp only [hcand, if_pos] at hedge_entry
+        have hcα0 : AConf.Alpha α ⟨h, Sto.ofParams params ls, δ⟩
+            { heap := (pending (L entry)).heap
+              sto := ASto.ofParams params (aevalEs (pending (L entry)).sto es)
+              reg := (pending (L entry)).reg } :=
+          ⟨hα.1, sto_ofParams_alpha hargs params, hα.2.2⟩
+        have hα_entry_f := hcα0.le hedge_entry
+        -- (3) descend into the callee body, at a *fresh* `hvalidS` from `Valid`.
+        have hcsf : CallString.WF (targetCallString cs κ f) := targetCallString_wf hcs κ f
+        have hvalidBody := hvalid.2 f params body (targetCallString cs κ f) hΓf hcsf
+        rcases IH nred (Nat.lt_succ_self _) hcsf hlit hvalidBody Hstep hα_entry_f with
+            ⟨_, _, _, hcont, _⟩
+          | ⟨rst, rpending, e', l', hARet, hout, α', hext, hlit', hαres, hmaps⟩
+        · exact absurd hcont (by simp)
+        · -- (4) build the `ret`-to-`cont` edge and the pass-through edge, and
+          -- combine them componentwise: heap/register come from the callee
+          -- (already transitively includes the caller's, since the callee's
+          -- own initial heap/register *were* the caller's), the returned
+          -- variable `x` from the `ret` edge, every other variable from the
+          -- pass-through edge (decision 3 of `PROBLEMS.md`).
+          have heql : l = l' := by injection hout
+          subst heql
+          have hedge_ret := hvalidS _ _ _ (AEdge.callRet hΓf harity' hARet)
+          have hedge_pass := hvalidS _ _ _ (AEdge.callPassThrough (x := x) (κ := κ) (e := e) (es := es))
+          refine Or.inl ⟨.cont cs κ, id, .call, rfl, α', hext, hlit', ?_, ?_, ?_⟩
+          · exact hαres.1.le hedge_ret.1
+          · intro y ly hy
+            by_cases hxy : y = x
+            · have hlyl : ly = l := by rw [hxy] at hy; simpa [Sto.upd] using hy.symm
+              rw [hxy, hlyl]
+              have hxineq : (aevalE (rpending (L rst)).sto e') ⊆ (L (.cont cs κ)).sto x := by
+                simpa [ASto.upd] using hedge_ret.2.1 x
+              exact hmaps.subset hxineq
+            · have hy' : ρ y = some ly := by simpa [Sto.upd, hxy] using hy
+              have hcaller := hα.2.1 y ly hy'
+              have hpass : (pending (L entry)).sto y ⊆ (L (.cont cs κ)).sto y := by
+                have := hedge_pass.2.1 y
+                simpa [ASto.upd, hxy] using this
+              exact (hcaller.subset hpass).mono hext
+          · exact hαres.2.2.le hedge_ret.2.2
+    | @callCont nred h h' ρ ρ' ρf' δ δ' x κ e es lf f params body ls t he hlf hΓf hes
+        harity Hstep hρ' =>
+        subst hρ'
+        have hval_e := eval_alpha hlit hα.2.1 he
+        have hVmem := hα.1.valOf hval_e hlf
+        have hargs := evals_alpha hlit hα.2.1 es hes
+        have harity' : params.length = es.length := harity.trans (evalEs_length hes)
+        have hΓparams : Γ.params f = params := by simp [Env.params, hΓf]
+        have hcand : IsCandidate Γ (pending (L entry)).heap (aevalE (pending (L entry)).sto e)
+            es.length f :=
+          ⟨hVmem, by simp [hΓf], by rw [hΓparams, harity']⟩
+        have hedge_entry := hvalidS _ _ _ (AEdge.callEntry hΓf harity')
+        simp only [hcand, if_pos] at hedge_entry
+        have hcα0 : AConf.Alpha α ⟨h, Sto.ofParams params ls, δ⟩
+            { heap := (pending (L entry)).heap
+              sto := ASto.ofParams params (aevalEs (pending (L entry)).sto es)
+              reg := (pending (L entry)).reg } :=
+          ⟨hα.1, sto_ofParams_alpha hargs params, hα.2.2⟩
+        have hα_entry_f := hcα0.le hedge_entry
+        have hcsf : CallString.WF (targetCallString cs κ f) := targetCallString_wf hcs κ f
+        have hvalidBody := hvalid.2 f params body (targetCallString cs κ f) hΓf hcsf
+        rcases IH nred (Nat.lt_succ_self _) hcsf hlit hvalidBody Hstep hα_entry_f with
+            ⟨y, ypending, hAExit, hout, α', hext, hlit', hαres⟩
+          | ⟨_, _, _, _, _, hout, _⟩
+        · have hedge_ret := hvalidS _ _ _ (AEdge.callImplicitRet hΓf harity' hAExit)
+          have hedge_pass := hvalidS _ _ _ (AEdge.callPassThrough (x := x) (κ := κ) (e := e) (es := es))
+          refine Or.inl ⟨.cont cs κ, id, .call, rfl, α', hext, hlit', ?_, ?_, ?_⟩
+          · exact hαres.1.le hedge_ret.1
+          · intro z lz hz
+            by_cases hxz : z = x
+            · have hlzl : lz = Concrete.litLoc .undef := by
+                rw [hxz] at hz; simpa [Sto.upd] using hz.symm
+              rw [hxz, hlzl]
+              have hxineq : ({Abstract.litLocA .undef} : ALocSet) ⊆ (L (.cont cs κ)).sto x := by
+                simpa [ASto.upd] using hedge_ret.2.1 x
+              have : α.MapsInto (Concrete.litLoc .undef) ({Abstract.litLocA .undef} : ALocSet) :=
+                ⟨Abstract.litLocA .undef, hlit .undef, rfl⟩
+              exact (this.subset hxineq).mono hext
+            · have hz' : ρ z = some lz := by simpa [Sto.upd, hxz] using hz
+              have hcaller := hα.2.1 z lz hz'
+              have hpass : (pending (L entry)).sto z ⊆ (L (.cont cs κ)).sto z := by
+                have := hedge_pass.2.1 z
+                simpa [ASto.upd, hxz] using this
+              exact (hcaller.subset hpass).mono hext
+          · exact hαres.2.2.le hedge_ret.2.2
+        · exact absurd hout (by simp)
 
 /-- Corollary form, height existentially quantified away — the automaton
     counterpart of the old `soundness`/`soundness_top`. Immediate from
     `step_sound` via `BigStep.toN`, exactly as before. -/
 theorem sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : AbstractSpec)
-    (opspec : OpSemSound) {Γ : Env} {L : Labeling} (hΓ : EnvSpec Γ)
+    (opspec : OpSemSound) {Γ : Env} {s₀ : Stmt} {L : Labeling} (hΓ : EnvSpec Γ)
+    (hvalid : Labeling.Valid Γ s₀ L)
     {cs : CallString} {entry : AState} {pending : AConf → AConf} {s : Stmt}
     {c : Conf} {r : Res} {α : AlphaFn}
     (hcs : CallString.WF cs) (hlit : α.Lits)
@@ -314,7 +397,7 @@ theorem sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : AbstractSpec
            AConf.Alpha α' ⟨r.heap, r.sto, r.reg⟩ (rpending (L rst)) ∧
            α'.MapsInto l (aevalE (rpending (L rst)).sto e')) ) := by
   obtain ⟨n, HN⟩ := H.toN
-  exact step_sound cspec aspec opspec hΓ n hcs hlit hvalidS HN hα
+  exact step_sound cspec aspec opspec hΓ hvalid n hcs hlit hvalidS HN hα
 
 /-- The top-level instance: soundness of the whole program `s₀` against any
     valid labeling, starting from the bottom state (matching `SA`'s old
@@ -336,7 +419,7 @@ theorem sound_top [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstract
          ∃ α', α' ≥α α ∧ α'.Lits ∧
            AConf.Alpha α' ⟨r.heap, r.sto, r.reg⟩ (rpending (L rst)) ∧
            α'.MapsInto l (aevalE (rpending (L rst)).sto e')) ) :=
-  sound cspec aspec opspec hΓ CallString.WF.nil hlit hvalid.1 H (by simpa using hα)
+  sound cspec aspec opspec hΓ hvalid CallString.WF.nil hlit hvalid.1 H (by simpa using hα)
 
 /-!
 ## Totality (deferred, `sorry`)
@@ -378,12 +461,21 @@ totality (`exists_valid_labeling`); the supporting relation infrastructure
 (`CoreJsAutomatonRelation.lean`, including the heap-update lemmas
 `Heap.Alpha.setObj`/`.setObjV`); `skip`, `assign`, `setTaint`, `setSink`,
 `lookupS`, `lookupD`, `updateS`, `updateD`, `ret`, `seqRet`, `seqCont`,
-`ifTrue`, `ifFalse` proved end to end.
+`ifTrue`, `ifFalse`, `callRet`, `callCont` proved end to end — 15 of the 19
+statement-shape cases.
 
-Left, in the order a future session should attack them (each `sorry` above
-has a comment sketching what it specifically needs):
+Left:
 
-1. `binOp`/`objLit` — need the `α`-extension step at a fresh allocation site
+1. `whileDo` — **not just unfinished, but blocked on an open design
+   question** (`PROBLEMS.md` decision 8, unresolved): attempting it exposed
+   that `Labeling.Valid` may not be strong enough to make `step_sound` true
+   as stated for a `while` loop preceded by a non-trivial `pending`, because
+   nothing pins down `L entry ⊑ pending (L entry)` for the second and later
+   iterations. Needs a decision among the three candidate fixes recorded
+   there (strengthen `Labeling.Valid`; redefine the `while` edges to use
+   `id` and give `while` sites their own state after all; or restrict which
+   programs are accepted) before more proof engineering is worthwhile.
+2. `binOp`/`objLit` — need the `α`-extension step at a fresh allocation site
    (`ConcreteSpec.allocC_fresh`/`AbstractSpec.allocA_site`) and, for `binOp`
    only, the new `OpSemSound` cross-spec introduced at the top of this file.
    Genuinely harder than it looks: extending `α` safely requires knowing the
@@ -391,16 +483,11 @@ has a comment sketching what it specifically needs):
    invariant this proof does not currently track (see the `binOp` `sorry`'s
    comment) — the old, pre-automaton proof hit exactly the same wall and
    also left it unstarted.
-2. `whileDo` — needs induction on the number of concrete loop iterations
-   (each iteration reuses the *same* `whileIn`/`AEdge.whileBody` fact,
-   validated once by `Labeling.Valid`), not a direct structural mirroring —
-   the one remaining case that is not just "assemble the pieces already
-   built".
-3. `callRet`/`callCont` — assembly of every piece already in place (see each
-   `sorry`'s comment); the last case needed before `sound_top` is a complete,
-   `sorry`-free soundness proof.
-4. `exists_valid_labeling` — real additional construction (see the section
-   above), independent of 1–3.
+3. `exists_valid_labeling` — real additional construction (see the section
+   above), independent of 1–2, and probably best attempted only after
+   decision 8 is resolved (the construction needs to produce a labeling
+   that actually satisfies whatever `Labeling.Valid` ends up requiring for
+   `while` loops).
 -/
 
 end CoreJS
