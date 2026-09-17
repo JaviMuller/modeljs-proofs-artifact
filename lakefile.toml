@@ -18,4 +18,5 @@ globs = [
     "CoreJsSemantics",
     "CoreJsAutomatonSyntax",
     "CoreJsAutomatonSemantics",
+    "CoreJsAutomatonRelation",
 ]
