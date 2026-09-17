@@ -291,22 +291,25 @@ scoped (`CoreJsAutomatonSyntax.lean`, `CoreJsAutomatonSemantics.lean`), fixing
 one real design gap along the way (decisions 3, 7) and documenting five
 implementation choices the design left open (decisions 1, 2, 4, 5, 6); the
 generalized abstraction relation (`CoreJsAutomatonRelation.lean`, full, no
-`sorry`); the soundness theorem's *statement* and its supporting
-infrastructure (`CoreJsAutomatonSoundness.lean`), proved for `skip`,
-`assign`, `setTaint`, `setSink`, `lookupS`, `lookupD`, `ret`, `seqRet`,
-`seqCont`; the totality theorem's statement.
+`sorry`, including the heap-update lemmas `Heap.Alpha.setObj`/`.setObjV`);
+the soundness theorem's *statement* and its supporting infrastructure
+(`CoreJsAutomatonSoundness.lean`), proved end to end for `skip`, `assign`,
+`setTaint`, `setSink`, `lookupS`, `lookupD`, `updateS`, `updateD`, `ret`,
+`seqRet`, `seqCont`, `ifTrue`, `ifFalse` — 13 of the 19
+`BigStepN`/`BigStep` statement-shape cases; the totality theorem's
+statement.
 
-Left as `sorry`, in order of expected difficulty (see
-`CoreJsAutomatonSoundness.lean`'s own "Remaining work" section for what each
-one specifically needs): `updateS`/`updateD` (a not-yet-proved heap-update
-lemma), `binOp`/`objLit` (the `α`-extension-at-a-fresh-location step, plus
-the new `OpSemSound` cross-spec this session introduced), `ifTrue`/`ifFalse`
-(mechanical, same shape as `seqCont`), `whileDo` (needs induction on
-iteration count, not just structural mirroring), `callRet`/`callCont`
-(assembly of pieces already in place), and `exists_valid_labeling` (the
-Kleene-iteration construction of decision 12, not attempted — a substantial
-independent piece of work needing `AState` restricted to a finite subtype
-first).
+Left as `sorry` (see `CoreJsAutomatonSoundness.lean`'s own "Remaining work"
+section for what each specifically needs, in the same order):
+`binOp`/`objLit` (need the `α`-extension-at-a-fresh-location step, an
+invariant this proof doesn't track yet, plus the new `OpSemSound` cross-spec
+this session introduced — the old, pre-automaton proof hit the same wall and
+never got past it either); `whileDo` (needs induction on iteration count,
+not just structural mirroring — the one remaining case that isn't just
+assembling already-built pieces); `callRet`/`callCont` (assembly of pieces
+already in place); and `exists_valid_labeling` (the Kleene-iteration
+construction of decision 12, not attempted — a substantial independent
+piece of work needing `AState` restricted to a finite subtype first).
 
 Not validated against `DESIGN_AND_PLAN.md` §6's worked traces by mechanising
 any of them as an actual example (step 6 of the design document's plan) —

@@ -210,6 +210,51 @@ theorem Heap.Alpha.objOfV {α : AlphaFn} {h : Heap} {ah : AHeap} {l₁ l₂ : Lo
   cases hal'
   exact ⟨al'', hal'', al, p, hLal, hV, hobj'⟩
 
+/-! ## Heap update soundness (needed by `updateS`/`updateD`)
+
+No counterpart in the old `CoreJsAbstractionRelation.lean` — its generation
+lemmas stopped at `lookupS`/`lookupD` (see its own "Remaining work" notes). -/
+
+theorem Heap.Alpha.setObj {α : AlphaFn} {h : Heap} {ah : AHeap} {l1 l2 : Loc}
+    {p : PropName} {L1 L2 : ALocSet} (k : Heap.Alpha α h ah)
+    (h1 : α.MapsInto l1 L1) (h2 : α.MapsInto l2 L2) :
+    Heap.Alpha α (h.setObj l1 p l2) (ah.weakSetObj L1 p L2) := by
+  refine ⟨?_, k.2⟩
+  intro l q l' hl
+  simp only [Heap.setObj] at hl
+  split at hl
+  case isTrue heq =>
+      obtain ⟨al1, hal1, hL1⟩ := h1
+      obtain ⟨al2, hal2, hL2⟩ := h2
+      obtain ⟨heql, heqq⟩ := heq
+      subst heql; subst heqq
+      have hll2 : l2 = l' := by injection hl
+      subst hll2
+      exact ⟨al1, al2, hal1, hal2, Or.inr ⟨hL1, rfl, hL2⟩⟩
+  case isFalse hne =>
+      obtain ⟨al, al', ha, ha', hobj⟩ := k.1 l q l' hl
+      exact ⟨al, al', ha, ha', Or.inl hobj⟩
+
+theorem Heap.Alpha.setObjV {α : AlphaFn} {h : Heap} {ah : AHeap} {l1 l3 : Loc}
+    {p : PropName} {L1 L3 : ALocSet} {V : VSet} (k : Heap.Alpha α h ah)
+    (h1 : α.MapsInto l1 L1) (hV : V.Mem (.str p)) (h3 : α.MapsInto l3 L3) :
+    Heap.Alpha α (h.setObj l1 p l3) (ah.weakSetObjV L1 V L3) := by
+  refine ⟨?_, k.2⟩
+  intro l q l' hl
+  simp only [Heap.setObj] at hl
+  split at hl
+  case isTrue heq =>
+      obtain ⟨al1, hal1, hL1⟩ := h1
+      obtain ⟨al3, hal3, hL3⟩ := h3
+      obtain ⟨heql, heqq⟩ := heq
+      subst heql; subst heqq
+      have hll3 : l3 = l' := by injection hl
+      subst hll3
+      exact ⟨al1, al3, hal1, hal3, Or.inr ⟨hL1, hV, hL3⟩⟩
+  case isFalse hne =>
+      obtain ⟨al, al', ha, ha', hobj⟩ := k.1 l q l' hl
+      exact ⟨al, al', ha, ha', Or.inl hobj⟩
+
 /-! ## Lemma B13 (α-Monotonicity of the abstract domains) -/
 
 theorem Heap.Alpha.le {α : AlphaFn} {h ah ah'} (k : Heap.Alpha α h ah)

@@ -8,10 +8,13 @@
   ## Status
 
   **Incomplete**, in the sense the project's `sorry` policy describes (see
-  `CLAUDE.md`): the statement, the supporting infrastructure, and several
-  full cases are proved; the harder cases (`binOp`/`objLit`, which need a new
-  cross-spec relating `⊕` to `⊕̂` introduced below, and `ifElse`/`whileDo`/
-  `call`, which need the join/candidate-search reasoning) are `sorry`,
+  `CLAUDE.md`): the statement, the supporting infrastructure, and most cases
+  are proved (`skip`/`assign`/`setTaint`/`setSink`/`lookupS`/`lookupD`/
+  `updateS`/`updateD`/`ret`/`seqRet`/`seqCont`/`ifTrue`/`ifFalse`); the
+  harder cases (`binOp`/`objLit`, which need a new cross-spec relating `⊕`
+  to `⊕̂` introduced below *and* an `α`-freshness invariant this proof does
+  not track yet; `whileDo`, which needs induction on iteration count; `call`,
+  which needs the candidate-search/recursion assembly) are `sorry`,
   documented at each site with what remains. No `axiom`s are used.
 
   ## Why this proof is *simpler* than the old `soundnessN`, in one respect
@@ -211,27 +214,52 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
         -- Same shape as `binOp`: needs the `α`-extension at a fresh
         -- allocation site. Not yet done.
         sorry
-    | updateS _ _ _ =>
-        -- Needs a heap-update counterpart of `Heap.Alpha.objOf` (relating
-        -- `Heap.setObj`/`AHeap.weakSetObj`) that no version of this project
-        -- has proved yet (the old file's generation lemmas stopped at
-        -- `lookupS`/`lookupD`). Not yet done.
-        sorry
-    | updateD _ _ _ _ _ =>
-        -- Same as `updateS`, for the dynamic case. Not yet done.
-        sorry
-    | ifTrue _ _ _ =>
-        -- Needs: (a) the taken branch's own `AExit`/`ARet`/`AEdge` facts,
-        -- obtained via the induction hypothesis with `hvalidS` re-derived
-        -- through `AEdge.ifThenBody`/`.ifThenJoin` exactly as the `seq`
-        -- cases re-derive theirs through `.seqLeft`/`.seqRight`; and
-        -- (b) `Labeling.Valid` says nothing at all about the *untaken*
-        -- branch, which is fine — soundness only ever needs the branch the
-        -- concrete execution actually took. Mechanically similar to `seq`'s
-        -- cases but not yet carried out.
-        sorry
-    | ifFalse _ _ _ =>
-        sorry
+    | @updateS _ h h' ρ δ κ e1 p e2 l1 l2 he1 he2 hh' =>
+        subst hh'
+        have hval1 := eval_alpha hlit hα.2.1 he1
+        have hval2 := eval_alpha hlit hα.2.1 he2
+        have hcα : AConf.Alpha α ⟨h.setObj l1 p l2, ρ, δ⟩
+            (AConf.doUpdateS e1 p e2 (pending (L entry))) :=
+          ⟨hα.1.setObj hval1 hval2, hα.2.1, hα.2.2⟩
+        have hedge : (AConf.doUpdateS e1 p e2 ∘ pending) (L entry) ⊑ L (.action cs κ) :=
+          hvalidS _ _ _ AEdge.updateS
+        exact Or.inl ⟨.action cs κ, id, .updateS, rfl, α, .refl α, hlit, hcα.le hedge⟩
+    | @updateD _ h h' ρ δ κ e1 e2 e3 l1 l2 l3 p he1 he2 he3 hstr hh' =>
+        subst hh'
+        have hval1 := eval_alpha hlit hα.2.1 he1
+        have hval2 := eval_alpha hlit hα.2.1 he2
+        have hval3 := eval_alpha hlit hα.2.1 he3
+        have hVmem := hα.1.valOf hval2 hstr
+        have hcα : AConf.Alpha α ⟨h.setObj l1 p l3, ρ, δ⟩
+            (AConf.doUpdateD e1 e2 e3 (pending (L entry))) :=
+          ⟨hα.1.setObjV hval1 hVmem hval3, hα.2.1, hα.2.2⟩
+        have hedge : (AConf.doUpdateD e1 e2 e3 ∘ pending) (L entry) ⊑ L (.action cs κ) :=
+          hvalidS _ _ _ AEdge.updateD
+        exact Or.inl ⟨.action cs κ, id, .updateD, rfl, α, .refl α, hlit, hcα.le hedge⟩
+    | @ifTrue nred _ ρ δ κ e s1 s2 l r' he hval Hstep1 =>
+        have hedge_in : pending (L entry) ⊑ L (.ifThen cs κ) := hvalidS _ _ _ .ifThen
+        have hα' : AConf.Alpha α _ (L (.ifThen cs κ)) := hα.le hedge_in
+        have hvalidS1 : ∀ a b C, AEdge Γ cs (.ifThen cs κ) id s1 a b C → C (L a) ⊑ L b :=
+          fun a b C he => hvalidS a b C (.ifThenBody he)
+        rcases IH nred (Nat.lt_succ_self _) hcs hlit hvalidS1 Hstep1 hα' with
+            ⟨x, xpending, hAExit1, hout, α', hext, hlit', hαres⟩
+          | ⟨rst, rpending, e', l', hARet1, hout, α', hext, hlit', hαres, hmaps⟩
+        · have hedge_out : xpending (L x) ⊑ L (.ifEnd cs κ) :=
+            hvalidS _ _ _ (.ifThenJoin hAExit1)
+          exact Or.inl ⟨.ifEnd cs κ, id, .ifElse, hout, α', hext, hlit', hαres.le hedge_out⟩
+        · exact Or.inr ⟨rst, rpending, e', l', .ifThen hARet1, hout, α', hext, hlit', hαres, hmaps⟩
+    | @ifFalse nred _ ρ δ κ e s1 s2 l r' he hval Hstep2 =>
+        have hedge_in : pending (L entry) ⊑ L (.ifElseB cs κ) := hvalidS _ _ _ .ifElseB
+        have hα' : AConf.Alpha α _ (L (.ifElseB cs κ)) := hα.le hedge_in
+        have hvalidS2 : ∀ a b C, AEdge Γ cs (.ifElseB cs κ) id s2 a b C → C (L a) ⊑ L b :=
+          fun a b C he => hvalidS a b C (.ifElseBBody he)
+        rcases IH nred (Nat.lt_succ_self _) hcs hlit hvalidS2 Hstep2 hα' with
+            ⟨x, xpending, hAExit2, hout, α', hext, hlit', hαres⟩
+          | ⟨rst, rpending, e', l', hARet2, hout, α', hext, hlit', hαres, hmaps⟩
+        · have hedge_out : xpending (L x) ⊑ L (.ifEnd cs κ) :=
+            hvalidS _ _ _ (.ifElseBJoin hAExit2)
+          exact Or.inl ⟨.ifEnd cs κ, id, .ifElse, hout, α', hext, hlit', hαres.le hedge_out⟩
+        · exact Or.inr ⟨rst, rpending, e', l', .ifElseB hARet2, hout, α', hext, hlit', hαres, hmaps⟩
     | whileDo _ =>
         -- Unfolds to `ifElse e (seq s (whileDo e s)) skip` concretely
         -- (`BigStepN.whileDo`), but the *automaton* does not unfold — it has
@@ -347,31 +375,32 @@ theorem exists_valid_labeling [Concrete] [Abstract] (Γ : Env) (s₀ : Stmt)
 
 Done: the statement of both soundness (`step_sound`/`sound`/`sound_top`) and
 totality (`exists_valid_labeling`); the supporting relation infrastructure
-(`CoreJsAutomatonRelation.lean`); `skip`, `assign`, `setTaint`, `setSink`,
-`lookupS`, `lookupD`, `ret`, `seqRet`, `seqCont` proved end to end.
+(`CoreJsAutomatonRelation.lean`, including the heap-update lemmas
+`Heap.Alpha.setObj`/`.setObjV`); `skip`, `assign`, `setTaint`, `setSink`,
+`lookupS`, `lookupD`, `updateS`, `updateD`, `ret`, `seqRet`, `seqCont`,
+`ifTrue`, `ifFalse` proved end to end.
 
 Left, in the order a future session should attack them (each `sorry` above
 has a comment sketching what it specifically needs):
 
-1. `updateS`/`updateD` — need a heap-update counterpart of `Heap.Alpha.objOf`
-   relating `Heap.setObj`/`AHeap.weakSetObj` (and the dynamic-key version for
-   `updateD`), analogous to but not identical to the lookup-direction lemmas
-   already proved.
-2. `binOp`/`objLit` — need the `α`-extension step at a fresh allocation site
+1. `binOp`/`objLit` — need the `α`-extension step at a fresh allocation site
    (`ConcreteSpec.allocC_fresh`/`AbstractSpec.allocA_site`) and, for `binOp`
    only, the new `OpSemSound` cross-spec introduced at the top of this file.
-3. `ifTrue`/`ifFalse` — mechanically similar to `seqCont`'s two-IH-calls
-   pattern, but through `AEdge.ifThenBody`/`.ifElseBBody`/`.ifThenJoin`/
-   `.ifElseBJoin` instead of `.seqLeft`/`.seqRight`.
-4. `whileDo` — needs induction on the number of concrete loop iterations
+   Genuinely harder than it looks: extending `α` safely requires knowing the
+   fresh concrete location is *not already in `α`'s domain*, which needs an
+   invariant this proof does not currently track (see the `binOp` `sorry`'s
+   comment) — the old, pre-automaton proof hit exactly the same wall and
+   also left it unstarted.
+2. `whileDo` — needs induction on the number of concrete loop iterations
    (each iteration reuses the *same* `whileIn`/`AEdge.whileBody` fact,
    validated once by `Labeling.Valid`), not a direct structural mirroring —
-   the one case here that is not just "assemble the pieces already built".
-5. `callRet`/`callCont` — assembly of every piece already in place (see each
+   the one remaining case that is not just "assemble the pieces already
+   built".
+3. `callRet`/`callCont` — assembly of every piece already in place (see each
    `sorry`'s comment); the last case needed before `sound_top` is a complete,
    `sorry`-free soundness proof.
-6. `exists_valid_labeling` — real additional construction (see the section
-   above), independent of 1–5.
+4. `exists_valid_labeling` — real additional construction (see the section
+   above), independent of 1–3.
 -/
 
 end CoreJS
