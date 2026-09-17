@@ -437,6 +437,24 @@ inductive AEdge [Abstract] (Γ : Env) :
         (fun c =>
           let v := rpending c
           { heap := v.heap, sto := ASto.bot.upd x (aevalE v.sto e'), reg := v.reg })
+  /-- A candidate callee whose body can *fall through* (reach any
+      `.cont`-outcome exit, structurally: any `AExit` fact of its body)
+      implicitly returns `undefined` (matching the concrete `[Function Call],
+      implicit return` rule, `CoreJsSemantics.lean`'s `callCont`) — this is a
+      genuine second source of contribution to `cont`, independent of
+      `callRet`, surfaced only once the soundness proof was attempted (see
+      `PROBLEMS.md` decision 7): without it the model is unsound for any
+      program where a callee can fall through, since `cont`'s label would
+      then omit `undefined` from `x`'s bindings whenever a live candidate's
+      body has no explicit `return` on some path. -/
+  | callImplicitRet {cs entry pending x κ e es f params body y ypending}
+      (hf : Γ f = some (params, body)) (harity : params.length = es.length) :
+      AExit Γ (targetCallString cs κ f) (.entry (targetCallString cs κ f)) id
+        body y ypending →
+      AEdge Γ cs entry pending (.call x κ e es) y (.cont cs κ)
+        (fun c =>
+          let v := ypending c
+          { heap := v.heap, sto := ASto.bot.upd x {litLocA .undef}, reg := v.reg })
 
 inductive ARet [Abstract] (Γ : Env) :
     CallString → AState → (AConf → AConf) → Stmt → AState → (AConf → AConf) → Expr → Prop where

@@ -240,6 +240,82 @@ and no longer need to type-check. `lake build` is green with this set.
 
 ---
 
+## Decision 7 — a callee that falls through must still implicitly return `undefined` to `cont`
+
+**Where:** `CoreJsAutomatonSemantics.lean`, the `call` case of `AEdge`
+(new `callImplicitRet` constructor).
+
+**The gap — surfaced only while attempting the soundness proof, not while
+designing the edges.** The concrete semantics has *two* function-call rules
+(`CoreJsSemantics.lean`): `callRet` (callee ends in `.ret l`, the call
+evaluates to `l`) and `callCont` (callee falls through with `.cont`, the call
+evaluates to `undefined`, and the trace still emits a `Ret` action mentioning
+`l_undef`). The old abstract semantics handled this explicitly —
+`AOut.retLocs` (`CoreJsAbstractSemantics.lean`) unions in `{litLocA .undef}`
+whenever a branch's outcome is `.cont` rather than `.ret`. When `AEdge`'s
+`call` case was designed (`PROBLEMS.md` decisions 3–5), only `ARet` — which
+fires exclusively on a syntactic `ret e` — was wired to `cont`; nothing
+accounted for a callee falling through with no `return` at all. This is a
+real soundness gap in the model as committed, not merely an incomplete
+proof: for any program where a live candidate callee's body can fall
+through, `cont`'s label would omit `undefined` from `x`'s bindings, so a
+concrete execution that takes that path would relate to a labeling that
+under-approximates it.
+
+**Decision.** Add `AEdge.callImplicitRet`, symmetric to `callRet`: for every
+`AExit` fact of a candidate callee's body (i.e., every way its `.cont`-outcome
+exit is structurally reachable — the same fact `callRet` uses `ARet` for),
+emit an edge into `cont cs site` contributing the callee's heap/register at
+that exit together with `ASto.bot.upd x {litLocA .undef}` — same
+store-namespace-safety reasoning as decision 3 (only the `x` slot is ever
+touched). Discovered and fixed while writing `CoreJsAutomatonSoundness.lean`'s
+`callCont` case (left `sorry`, but now referencing the right edge).
+
+**Why this wasn't caught earlier:** none of `DESIGN_AND_PLAN.md`'s worked
+examples (§6) include a function that can fall through without an explicit
+`return` on some path — every example's functions always end in a `return`
+on every path — so the gap had no worked trace to expose it, the same
+pattern as decision 3.
+
+---
+
+## Current status (end of this session)
+
+`lake build` is green for `CoreJsSyntax`, `CoreJsSemantics`,
+`CoreJsAutomatonSyntax`, `CoreJsAutomatonSemantics`, `CoreJsAutomatonRelation`,
+`CoreJsAutomatonSoundness` (the old four files are excluded from the build —
+decision 6). No `axiom`s anywhere.
+
+Complete: the state/edge/labeling/validity model `DESIGN_AND_PLAN.md` §2
+scoped (`CoreJsAutomatonSyntax.lean`, `CoreJsAutomatonSemantics.lean`), fixing
+one real design gap along the way (decisions 3, 7) and documenting five
+implementation choices the design left open (decisions 1, 2, 4, 5, 6); the
+generalized abstraction relation (`CoreJsAutomatonRelation.lean`, full, no
+`sorry`); the soundness theorem's *statement* and its supporting
+infrastructure (`CoreJsAutomatonSoundness.lean`), proved for `skip`,
+`assign`, `setTaint`, `setSink`, `lookupS`, `lookupD`, `ret`, `seqRet`,
+`seqCont`; the totality theorem's statement.
+
+Left as `sorry`, in order of expected difficulty (see
+`CoreJsAutomatonSoundness.lean`'s own "Remaining work" section for what each
+one specifically needs): `updateS`/`updateD` (a not-yet-proved heap-update
+lemma), `binOp`/`objLit` (the `α`-extension-at-a-fresh-location step, plus
+the new `OpSemSound` cross-spec this session introduced), `ifTrue`/`ifFalse`
+(mechanical, same shape as `seqCont`), `whileDo` (needs induction on
+iteration count, not just structural mirroring), `callRet`/`callCont`
+(assembly of pieces already in place), and `exists_valid_labeling` (the
+Kleene-iteration construction of decision 12, not attempted — a substantial
+independent piece of work needing `AState` restricted to a finite subtype
+first).
+
+Not validated against `DESIGN_AND_PLAN.md` §6's worked traces by mechanising
+any of them as an actual example (step 6 of the design document's plan) —
+only by hand, during design, as recorded in decisions 1–7 above. A future
+session picking this up should consider doing at least the simplest one
+(§6.2, `h(x)`) as a concrete Lean example before trusting the model further.
+
+---
+
 *(This document will grow as further decision points are reached —
-particularly once the abstraction-relation and soundness/totality phase
-starts, which is expected to surface more of these.)*
+particularly once the remaining soundness cases and the totality
+construction are attempted.)*
