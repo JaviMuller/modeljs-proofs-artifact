@@ -206,6 +206,40 @@ heap/reg only ever grow via `⊔`).
 
 ---
 
+---
+
+## Decision 6 — the automaton files are fully independent of the old abstract-semantics files; those are dropped from the build
+
+**Where:** `lakefile.toml`, `CoreJsAutomatonSemantics.lean`.
+
+**Instruction from the user, mid-implementation:** the old `CoreJsAbstractSyntax
+.lean`/`CoreJsAbstractSemantics.lean`/`CoreJsAbstractionRelation.lean`/
+`CoreJsAbstractionSoundness.lean` are reference material only — read for the
+value-update math they already worked out — and are to be removed from the
+project eventually. The automaton files must not import or depend on them.
+
+**Consequence.** `CoreJsAutomatonSemantics.lean` re-declares its own copies
+of `ALoc`/`ALocSet`/`VSet`/`AHeap`/`ASto`/`AReg`/`Abstract`/`AbstractSpec`/
+`aevalE`/etc. rather than importing `CoreJsAbstractSyntax.lean`/
+`CoreJsAbstractSemantics.lean`, even though the definitions are currently
+identical — this is deliberate duplication, not an oversight, and should stay
+in sync only by hand until the old files are actually deleted, at which point
+there is exactly one copy again.
+
+Separately: `CoreJsSyntax.lean`'s `Idx` site fields (Decision 4-worth of
+`DESIGN_AND_PLAN.md`, implemented first) changed the arity of `ifElse`/
+`whileDo`/`call`/`lookupS`/`lookupD`/`updateS`/`updateD`, which the old
+`CoreJsAbstractSemantics.lean`'s `ABigStep` (and transitively
+`CoreJsAbstractionSoundness.lean`) pattern-matches by the old arity — so
+those files no longer type-check regardless of the independence question
+above. Rather than patching them to compile (wasted effort on files headed
+for deletion), `lakefile.toml`'s `globs` now lists only `CoreJsSyntax`,
+`CoreJsSemantics`, `CoreJsAutomatonSyntax` and `CoreJsAutomatonSemantics`;
+the four old files remain on disk, readable, but are no longer build targets
+and no longer need to type-check. `lake build` is green with this set.
+
+---
+
 *(This document will grow as further decision points are reached —
 particularly once the abstraction-relation and soundness/totality phase
 starts, which is expected to surface more of these.)*
