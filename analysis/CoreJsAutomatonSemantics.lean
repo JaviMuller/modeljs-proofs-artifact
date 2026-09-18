@@ -397,9 +397,23 @@ inductive AEdge [Abstract] (Γ : Env) :
   | whileBody {cs entry pending κ e s a b C} :
       AEdge Γ cs (.whileIn cs κ) id s a b C →
       AEdge Γ cs entry pending (.whileDo κ e s) a b C
-  | whileBack {cs entry pending κ e s x xpending} :
+  /-- Every subsequent iteration re-checks the guard exactly the same way
+      the first one did — fanning out again into `whileIn`/`whileOut`, this
+      time from the previous iteration's own exit `x` with its own
+      accumulated `xpending`, rather than looping back through `entry`'s
+      *original* `pending` a second time. `PROBLEMS.md` decision 8: routing
+      the back-edge through `entry` (matching `DESIGN_AND_PLAN.md`'s literal
+      table, "epsilon back to the header") turned out to need `L entry ⊑
+      pending (L entry)` for soundness — a fact nothing guarantees — so the
+      back-edge fans out directly instead, exactly mirroring `entry`'s own
+      first-arrival fan-out (`whileHeaderIn`/`.whileHeaderOut` above) but
+      sourced at `x` with `xpending` in place of `entry` with `pending`. -/
+  | whileBackIn {cs entry pending κ e s x xpending} :
       AExit Γ cs (.whileIn cs κ) id s x xpending →
-      AEdge Γ cs entry pending (.whileDo κ e s) x entry xpending
+      AEdge Γ cs entry pending (.whileDo κ e s) x (.whileIn cs κ) xpending
+  | whileBackOut {cs entry pending κ e s x xpending} :
+      AExit Γ cs (.whileIn cs κ) id s x xpending →
+      AEdge Γ cs entry pending (.whileDo κ e s) x (.whileOut cs κ) xpending
   /-- The call's own continuation state also always gets a pass-through edge
       directly from the call, binding `x` to `∅` and leaving everything else
       unchanged — `PROBLEMS.md` decision 3: without this, every caller-local

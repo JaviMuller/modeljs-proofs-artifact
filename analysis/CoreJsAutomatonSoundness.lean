@@ -8,15 +8,16 @@
   ## Status
 
   **Incomplete**, in the sense the project's `sorry` policy describes (see
-  `CLAUDE.md`): the statement, the supporting infrastructure, and 15 of 19
+  `CLAUDE.md`): the statement, the supporting infrastructure, and 18 of 19
   statement-shape cases are proved (`skip`/`assign`/`setTaint`/`setSink`/
   `lookupS`/`lookupD`/`updateS`/`updateD`/`ret`/`seqRet`/`seqCont`/`ifTrue`/
-  `ifFalse`/`callRet`/`callCont`). Left as `sorry`: `binOp`/`objLit` (need a
-  new cross-spec relating `⊕` to `⊕̂`, introduced below, *and* an
-  `α`-freshness invariant this proof does not track yet); and `whileDo`,
-  which is not merely unfinished — attempting it surfaced a suspected
-  genuine gap in `Labeling.Valid` itself, left as an open design question
-  (`PROBLEMS.md` decision 8) rather than patched over. No `axiom`s are used.
+  `ifFalse`/`callRet`/`callCont`/`whileDo`). Left as `sorry`: `binOp`/
+  `objLit`, which need a new cross-spec relating `⊕` to `⊕̂` (introduced
+  below) *and* an `α`-freshness invariant this proof does not track yet.
+  `whileDo` needed a real design fix along the way, not just proof
+  engineering — `PROBLEMS.md` decision 8 — since `Labeling.Valid` as first
+  stated was not strong enough to make this theorem true for a `while` loop
+  preceded by a non-trivial `pending`. No `axiom`s are used.
 
   ## Why this proof is *simpler* than the old `soundnessN`, in one respect
 
@@ -262,21 +263,71 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
             hvalidS _ _ _ (.ifElseBJoin hAExit2)
           exact Or.inl ⟨.ifEnd cs κ, id, .ifElse, hout, α', hext, hlit', hαres.le hedge_out⟩
         · exact Or.inr ⟨rst, rpending, e', l', .ifElseB hARet2, hout, α', hext, hlit', hαres, hmaps⟩
-    | whileDo _ =>
-        -- Not just unfinished — attempting it surfaced a suspected genuine
-        -- gap, left unresolved (`PROBLEMS.md` decision 8): after one loop
-        -- iteration, the concrete configuration relates to `L entry`
-        -- directly (via `AEdge.whileBack`'s inequality), but re-entering via
-        -- `AEdge.whileHeaderIn`/`.whileHeaderOut` for a second iteration (or
-        -- to exit) needs it to relate to `pending (L entry)` instead, which
-        -- needs `L entry ⊑ pending (L entry)` — a fact `Labeling.Valid` does
-        -- not currently guarantee for an arbitrary valid labeling. None of
-        -- `DESIGN_AND_PLAN.md`'s worked examples have a `while` loop
-        -- preceded by a flat statement in the same straight-line run, so
-        -- this never had a trace to expose it. Three candidate fixes are
-        -- recorded in `PROBLEMS.md`, none chosen yet — this needs a design
-        -- decision, not just more proof engineering.
-        sorry
+    | @whileDo nred h ρ δ κ e s r' Hstep =>
+        -- `PROBLEMS.md` decision 8: this needed `AEdge.whileBack` replaced by
+        -- `.whileBackIn`/`.whileBackOut` (fanning out again from an
+        -- iteration's own exit, instead of looping back through `entry`'s
+        -- possibly-stale `pending`). With that fix, every iteration is
+        -- handled uniformly by a nested induction taking, as an explicit
+        -- parameter, *which* fan-out edges apply at the current position —
+        -- `AEdge.whileHeaderIn`/`.whileHeaderOut` for the first arrival at
+        -- `entry`, `.whileBackIn`/`.whileBackOut` for every subsequent one at
+        -- whatever `x` the previous iteration exited to.
+        suffices hloop : ∀ (m : Nat), m ≤ nred → ∀ {pos : AState} {posPending : AConf → AConf}
+            {c' : Conf} {r'' : Res} {αc : AlphaFn},
+            AEdge Γ cs entry pending (.whileDo κ e s) pos (.whileIn cs κ) posPending →
+            AEdge Γ cs entry pending (.whileDo κ e s) pos (.whileOut cs κ) posPending →
+            BigStepN Γ m c' (.ifElse κ e (.seq s (.whileDo κ e s)) .skip) r'' →
+            αc.Lits →
+            AConf.Alpha αc c' (posPending (L pos)) →
+            ( (∃ x xpending, AExit Γ cs entry pending (.whileDo κ e s) x xpending ∧
+                 r''.out = .cont ∧ ∃ α', α' ≥α αc ∧ α'.Lits ∧
+                   AConf.Alpha α' ⟨r''.heap, r''.sto, r''.reg⟩ (xpending (L x)))
+            ∨ (∃ rst rpending e'' l, ARet Γ cs entry pending (.whileDo κ e s) rst rpending e'' ∧
+                 r''.out = .ret l ∧ ∃ α', α' ≥α αc ∧ α'.Lits ∧
+                   AConf.Alpha α' ⟨r''.heap, r''.sto, r''.reg⟩ (rpending (L rst)) ∧
+                   α'.MapsInto l (aevalE (rpending (L rst)).sto e'')) ) by
+          exact hloop nred (Nat.le_refl nred) AEdge.whileHeaderIn AEdge.whileHeaderOut Hstep
+            hlit hα
+        clear Hstep hα hlit
+        intro m
+        induction m using Nat.strongRecOn with
+        | _ m IHloop =>
+          intro hmn pos posPending c' r'' αc hedgeIn hedgeOut Hstep' hlit hα'
+          cases Hstep' with
+          | @ifFalse _ _ _ _ _ _ _ _ _ _ _ hval Hskip =>
+              cases Hskip
+              have hineq : posPending (L pos) ⊑ L (.whileOut cs κ) := hvalidS _ _ _ hedgeOut
+              exact Or.inl ⟨.whileOut cs κ, id, .whileDo, rfl, αc, .refl αc, hlit, hα'.le hineq⟩
+          | @ifTrue mm h1 ρ1 δ1 _ _ _ _ _ _ _ hval Hbody =>
+              have hineqIn : posPending (L pos) ⊑ L (.whileIn cs κ) := hvalidS _ _ _ hedgeIn
+              have hαIn : AConf.Alpha αc ⟨h1, ρ1, δ1⟩ (L (.whileIn cs κ)) := hα'.le hineqIn
+              have hvalidBody : ∀ a b C, AEdge Γ cs (.whileIn cs κ) id s a b C → C (L a) ⊑ L b :=
+                fun a b C he => hvalidS a b C (.whileBody he)
+              cases Hbody with
+              | @seqRet m1 _ _ _ _ _ _ _ _ _ _ Hs1 =>
+                  rcases IH m1 (by omega) hcs hlit hvalidBody Hs1 hαIn with
+                      ⟨_, _, _, hcont, _⟩
+                    | ⟨rst, rpending, e'', l, hARet_s, hout, α1, hext1, hlit1, hα1, hmaps1⟩
+                  · exact absurd hcont (by simp)
+                  · exact Or.inr ⟨rst, rpending, e'', l, .whileDo hARet_s, hout, α1, hext1,
+                      hlit1, hα1, hmaps1⟩
+              | @seqCont m1 _ _ _ _ _ _ _ _ _ _ _ _ _ _ Hs1 Hs2 =>
+                  rcases IH m1 (by omega) hcs hlit hvalidBody Hs1 hαIn with
+                      ⟨x, xpending, hAExit_s, hcont, α1, hext1, hlit1, hα1⟩
+                    | ⟨_, _, _, _, _, hout, _⟩
+                  · cases Hs2 with
+                    | @whileDo m2 _ _ _ _ _ _ _ Hstep2 =>
+                        rcases IHloop m2 (by omega) (by omega) (pos := x) (posPending := xpending)
+                            (αc := α1) (.whileBackIn hAExit_s) (.whileBackOut hAExit_s) Hstep2
+                            hlit1 hα1 with
+                            ⟨y, ypending, hAExit_y, hout2, α2, hext2, hlit2, hα2⟩
+                          | ⟨rst, rpending, e'', l, hARet_y, hout2, α2, hext2, hlit2, hα2, hmaps2⟩
+                        · exact Or.inl ⟨y, ypending, hAExit_y, hout2, α2, hext1.trans hext2,
+                            hlit2, hα2⟩
+                        · exact Or.inr ⟨rst, rpending, e'', l, hARet_y, hout2, α2,
+                            hext1.trans hext2, hlit2, hα2, hmaps2⟩
+                  · exact absurd hout (by simp)
     | @callRet nred h h' ρ ρ' ρf' δ δ' x κ e es lf f params body ls l t he hlf hΓf hes
         harity Hstep hρ' =>
         subst hρ'
@@ -461,21 +512,21 @@ totality (`exists_valid_labeling`); the supporting relation infrastructure
 (`CoreJsAutomatonRelation.lean`, including the heap-update lemmas
 `Heap.Alpha.setObj`/`.setObjV`); `skip`, `assign`, `setTaint`, `setSink`,
 `lookupS`, `lookupD`, `updateS`, `updateD`, `ret`, `seqRet`, `seqCont`,
-`ifTrue`, `ifFalse`, `callRet`, `callCont` proved end to end — 15 of the 19
-statement-shape cases.
+`ifTrue`, `ifFalse`, `callRet`, `callCont`, `whileDo` proved end to end —
+**18 of the 19** statement-shape cases.
+
+`whileDo` needed `PROBLEMS.md` decision 8 (`AEdge.whileBack` replaced by
+`.whileBackIn`/`.whileBackOut`, fanning out again from an iteration's own
+exit instead of looping back through `entry`'s possibly-stale `pending`) and
+a nested strong induction (`hloop`/`IHloop`, local to that case) over the
+number of concrete loop iterations, taking as an explicit parameter which
+pair of fan-out edges applies at the current position — the first
+iteration's from `entry`, every subsequent one's from the previous
+iteration's own exit.
 
 Left:
 
-1. `whileDo` — **not just unfinished, but blocked on an open design
-   question** (`PROBLEMS.md` decision 8, unresolved): attempting it exposed
-   that `Labeling.Valid` may not be strong enough to make `step_sound` true
-   as stated for a `while` loop preceded by a non-trivial `pending`, because
-   nothing pins down `L entry ⊑ pending (L entry)` for the second and later
-   iterations. Needs a decision among the three candidate fixes recorded
-   there (strengthen `Labeling.Valid`; redefine the `while` edges to use
-   `id` and give `while` sites their own state after all; or restrict which
-   programs are accepted) before more proof engineering is worthwhile.
-2. `binOp`/`objLit` — need the `α`-extension step at a fresh allocation site
+1. `binOp`/`objLit` — need the `α`-extension step at a fresh allocation site
    (`ConcreteSpec.allocC_fresh`/`AbstractSpec.allocA_site`) and, for `binOp`
    only, the new `OpSemSound` cross-spec introduced at the top of this file.
    Genuinely harder than it looks: extending `α` safely requires knowing the
@@ -483,11 +534,14 @@ Left:
    invariant this proof does not currently track (see the `binOp` `sorry`'s
    comment) — the old, pre-automaton proof hit exactly the same wall and
    also left it unstarted.
-3. `exists_valid_labeling` — real additional construction (see the section
-   above), independent of 1–2, and probably best attempted only after
-   decision 8 is resolved (the construction needs to produce a labeling
-   that actually satisfies whatever `Labeling.Valid` ends up requiring for
-   `while` loops).
+2. `exists_valid_labeling` — real additional construction (see the section
+   above), independent of 1. The one thing worth double-checking once it is
+   attempted: that a labeling built via Kleene iteration from `⊥` actually
+   satisfies the *new* `whileBackIn`/`.whileBackOut` edges' inequalities
+   (there is no reason to expect it wouldn't — they are ordinary edges into
+   `whileIn`/`whileOut` like any other, just sourced at whatever state a
+   loop body's own exit turned out to be — but it was decision 8's fix, so
+   worth confirming explicitly rather than assuming).
 -/
 
 end CoreJS
