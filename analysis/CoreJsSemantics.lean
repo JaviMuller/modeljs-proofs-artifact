@@ -75,6 +75,43 @@ def Heap.setObjs (h : Heap) (l : Loc) : List (PropName × Loc) → Heap
   | []            => h
   | (p, l') :: ps => (h.setObj l p l').setObjs l ps
 
+/-- Finite support: from some location on, the heap holds no value and no
+    object.  Every heap reachable from a finite one by the semantics is
+    finite (`BigStep.finite`), and only finite heaps are guaranteed to have
+    a free location for the allocator to return (`ConcreteSpec`). -/
+def Heap.Finite (h : Heap) : Prop :=
+  ∃ n, ∀ l, n ≤ l → h.val l = none ∧ ∀ p, h.obj l p = none
+
+theorem Heap.Finite.setVal {h : Heap} (hf : h.Finite) (l : Loc) (v : Val) :
+    (h.setVal l v).Finite := by
+  obtain ⟨n, hn⟩ := hf
+  refine ⟨max n (l + 1), fun l' hl' => ?_⟩
+  have h₁ : n ≤ l' := Nat.le_trans (Nat.le_max_left _ _) hl'
+  have hne : l' ≠ l := Nat.ne_of_gt (Nat.le_trans (Nat.le_max_right _ _) hl')
+  refine ⟨?_, (hn l' h₁).2⟩
+  simpa [Heap.setVal, hne] using (hn l' h₁).1
+
+theorem Heap.Finite.setObj {h : Heap} (hf : h.Finite) (l : Loc) (p : PropName) (l' : Loc) :
+    (h.setObj l p l').Finite := by
+  obtain ⟨n, hn⟩ := hf
+  refine ⟨max n (l + 1), fun l₁ hl₁ => ?_⟩
+  have h₁ : n ≤ l₁ := Nat.le_trans (Nat.le_max_left _ _) hl₁
+  have hne : l₁ ≠ l := Nat.ne_of_gt (Nat.le_trans (Nat.le_max_right _ _) hl₁)
+  refine ⟨(hn l₁ h₁).1, fun p₁ => ?_⟩
+  simpa [Heap.setObj, hne] using (hn l₁ h₁).2 p₁
+
+theorem Heap.Finite.setObjs {h : Heap} (hf : h.Finite) (l : Loc) (ps : List (PropName × Loc)) :
+    (h.setObjs l ps).Finite := by
+  induction ps generalizing h with
+  | nil => exact hf
+  | cons q ps ih => exact ih (hf.setObj l q.1 q.2)
+
+/-- A finite heap has a location that is free in both levels. -/
+theorem Heap.Finite.exists_fresh {h : Heap} (hf : h.Finite) :
+    ∃ l, h.val l = none ∧ ∀ p, h.obj l p = none := by
+  obtain ⟨n, hn⟩ := hf
+  exact ⟨n, hn n (Nat.le_refl n)⟩
+
 /-- Taint registers `δ ∈ Reg`:
     * `dep` — dependencies between values (`l₂ ∈ δ.dep l₁`: the value in `l₁`
       was computed from the one in `l₂`);
@@ -158,11 +195,26 @@ open Concrete
     locations are pairwise distinct, and `alloc_c` returns a location that is
     unused in the current heap (hence, in a well-formed heap, distinct from
     every `l_v`).  The semantics itself does not depend on these; they are
-    needed for the soundness proofs. -/
+    needed for the soundness proofs.
+
+    Freshness is only demanded of *finite* heaps (`Heap.Finite`): a heap
+    that holds a value at every location has no free location to return, so
+    requiring freshness of all heaps would make the specification
+    unsatisfiable (and every theorem assuming it vacuous). -/
 structure ConcreteSpec [Concrete] : Prop where
   litLoc_inj   : ∀ v w, litLoc v = litLoc w → v = w
-  allocC_fresh : ∀ (h : Heap) (κ : Idx),
+  allocC_fresh : ∀ (h : Heap) (κ : Idx), h.Finite →
     h.val (allocC h κ) = none ∧ ∀ p, h.obj (allocC h κ) p = none
+
+/-- The allocation half of `ConcreteSpec` is satisfiable. -/
+theorem exists_allocator :
+    ∃ alloc : Heap → Idx → Loc, ∀ (h : Heap) (κ : Idx), h.Finite →
+      h.val (alloc h κ) = none ∧ ∀ p, h.obj (alloc h κ) p = none := by
+  classical
+  refine ⟨fun h _ => if hf : h.Finite then Classical.choose hf.exists_fresh else 0, ?_⟩
+  intro h κ hf
+  simp only [hf, dif_pos]
+  exact Classical.choose_spec hf.exists_fresh
 
 /-! ## Expression evaluation (Fig. A3)
 
@@ -607,6 +659,30 @@ theorem BigStepN.toBigStep [Concrete] {Γ : Env} :
   | ret h1 => exact .ret h1
   | setTaint h1 h2 => exact .setTaint h1 h2
   | setSink h1 h2 => exact .setSink h1 h2
+
+/-- Every rule of the concrete semantics preserves heap finiteness (whatever
+    location `allocC` returns). -/
+theorem BigStep.finite [Concrete] {Γ : Env} {c : Conf} {s : Stmt} {r : Res}
+    (hb : BigStep Γ c s r) : c.heap.Finite → r.heap.Finite := by
+  induction hb with
+  | skip => exact id
+  | assign _ _ => exact id
+  | binOp _ _ _ _ _ _ hh' _ _ _ => intro hf; subst hh'; exact hf.setVal _ _
+  | objLit _ _ hh' _ _ => intro hf; subst hh'; exact hf.setObjs _ _
+  | lookupS _ _ _ => exact id
+  | lookupD _ _ _ _ _ => exact id
+  | updateS _ _ hh' => intro hf; subst hh'; exact hf.setObj _ _ _
+  | updateD _ _ _ _ hh' => intro hf; subst hh'; exact hf.setObj _ _ _
+  | seqRet _ ih => exact ih
+  | seqCont _ _ ih₁ ih₂ => exact fun hf => ih₂ (ih₁ hf)
+  | callRet _ _ _ _ _ _ _ ih => exact ih
+  | callCont _ _ _ _ _ _ _ ih => exact ih
+  | ifTrue _ _ _ ih => exact ih
+  | ifFalse _ _ _ ih => exact ih
+  | whileDo _ ih => exact ih
+  | ret _ => exact id
+  | setTaint _ _ => exact id
+  | setSink _ _ => exact id
 
 /-- Notation for the big-step judgement:
     `Γ ⊢ c ⇓[s] r` is `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`. -/
