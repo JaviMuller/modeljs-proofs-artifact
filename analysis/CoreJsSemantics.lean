@@ -247,6 +247,61 @@ def Heap.WF [Concrete] (h : Heap) (s : Stmt) : Prop :=
   (∀ v ∈ s.lits, h.val (litLoc v) = some v) ∧
   h.val (litLoc .undef) = some .undef
 
+/-! ## Initial configurations
+
+The configuration a program starts from: the *minimal* well-formed heap (only
+the literals of the statement, plus `undefined`, hold values; no object has
+any property), the empty store and the empty taint register. -/
+
+/-- The empty taint register: no dependencies, nothing attacker-controlled,
+    no sinks. -/
+def Reg.empty : Reg := ⟨fun _ => ∅, ∅, ∅⟩
+
+/-- The minimal well-formed heap for `s`: `l_v ↦ v` for `v = undefined` and
+    each literal `v` of `s`, and nothing else. -/
+def Heap.init [Concrete] (s : Stmt) : Heap where
+  obj := fun _ _ => none
+  val := fun l => (Val.undef :: s.lits).find? (fun v => litLoc v == l)
+
+/-- The initial configuration `⟨Heap.init s, ∅, δ∅⟩` of a run of `s`. -/
+def Conf.init [Concrete] (s : Stmt) : Conf :=
+  ⟨Heap.init s, Sto.empty, Reg.empty⟩
+
+/-- `Heap.init s` is well formed for `s`. -/
+theorem Heap.init_WF [Concrete] (hs : ConcreteSpec) (s : Stmt) : (Heap.init s).WF s := by
+  have key : ∀ v ∈ Val.undef :: s.lits, (Heap.init s).val (litLoc v) = some v := by
+    intro v hv
+    show (Val.undef :: s.lits).find? (fun w => litLoc w == litLoc v) = some v
+    cases hf : (Val.undef :: s.lits).find? (fun w => litLoc w == litLoc v) with
+    | none =>
+      have := List.find?_eq_none.1 hf v hv
+      simp at this
+    | some w =>
+      have hw := List.find?_some hf
+      simp only [beq_iff_eq] at hw
+      rw [hs.litLoc_inj _ _ hw]
+  exact ⟨fun v hv => key v (List.mem_cons_of_mem _ hv), key _ (List.mem_cons_self ..)⟩
+
+/-- `Heap.init s` is finite: no literal location exceeds the largest one used. -/
+theorem Heap.init_finite [Concrete] (s : Stmt) : (Heap.init s).Finite := by
+  obtain ⟨n, hn⟩ : ∃ n, ∀ v ∈ Val.undef :: s.lits, litLoc v < n := by
+    generalize Val.undef :: s.lits = xs
+    induction xs with
+    | nil => exact ⟨0, by simp⟩
+    | cons a xs ih =>
+      obtain ⟨n, hn⟩ := ih
+      refine ⟨max (litLoc a + 1) n, ?_⟩
+      intro v hv
+      rcases List.mem_cons.1 hv with rfl | hv
+      · exact Nat.lt_of_lt_of_le (Nat.lt_succ_self _) (Nat.le_max_left _ _)
+      · exact Nat.lt_of_lt_of_le (hn v hv) (Nat.le_max_right _ _)
+  refine ⟨n, fun l hl => ⟨?_, fun _ => rfl⟩⟩
+  show (Val.undef :: s.lits).find? (fun v => litLoc v == l) = none
+  rw [List.find?_eq_none]
+  intro x hx
+  have := hn x hx
+  simpa using Nat.ne_of_lt (Nat.lt_of_lt_of_le this hl)
+
 /-! ## Big-step semantics (Figs. A5 and A6)
 
 `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`.
