@@ -24,4 +24,6 @@ globs = [
     "CoreJsQuerySemantics",
     "CoreJsQueryBridge",
     "CoreJsQueryTests",
+    "CoreJsFoLtl",
+    "CoreJsFoLtlTests",
 ]

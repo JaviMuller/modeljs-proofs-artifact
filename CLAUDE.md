@@ -53,6 +53,8 @@ All files are in `namespace CoreJS`. What each file imports:
 - `CoreJsQuerySemantics` ← `CoreJsSemantics`, `CoreJsQuerySyntax`
 - `CoreJsQueryBridge` ← `CoreJsQuerySemantics`
 - `CoreJsQueryTests` ← `CoreJsQueryBridge`
+- `CoreJsFoLtl` ← `CoreJsQuerySemantics`
+- `CoreJsFoLtlTests` ← `CoreJsQueryTests`, `CoreJsFoLtl`
 
 The query chain and the automaton chain are independent of each other; both
 sit on top of the concrete semantics.
@@ -148,6 +150,28 @@ change one semantics, check the abstraction relation and the soundness cases.
     (`Heap.init` only holds the main statement's literals).
     After changing the semantics, `lake build` this file: a failure here means
     a rule or query semantics changed behaviourally.
+
+### FO-LTL over finite traces
+
+11. **`CoreJsFoLtl.lean`** — first-order LTL (`Ltl ν`, primitives `⊤ ⊥ ¬ ∧ ∨ X U ∃ ∀`,
+    with `F`/`G`/`imp`/`conj`/`disj` derived; atoms `Atom ν`: the four actions, the
+    taint/value predicates and `=`; generic in the variable type `ν`), finite models
+    (`Model`: list of states, each the set of actions holding there, plus a static
+    `Obs`), and `Exec.toModel`, which materialises an execution record. Conventions
+    worth knowing:
+    - Positions are *boundaries* `0 … n` (`n` = number of states); boundary `n` is a
+      sentinel where no action holds, matching the query semantics' indexing. `X` is
+      strong (`i < n ∧ φ (i+1)`); `F φ := ⊤ U φ`. So `F(a ∧ X ⊤)` is "`a` occurs".
+    - Action atoms are predicates of the state; state atoms read only `σ` and hold at
+      every boundary or none (`G p ≡ p ≡ F p`, `sat_G_state`).
+    - "Multiple actions cannot happen at the same time": `Model.Excl`,
+      `Exec.toModel_excl`, and the finite first-order axiomatisation `Ltl.excl v shapes`
+      (relative to a set of action `Shape`s, calls told apart by arity), satisfied by
+      every record's model (`Exec.toModel_sat_excl`). Only the soundness direction is
+      proved (models of records satisfy it), not that the formula characterises `Excl`.
+12. **`CoreJsFoLtlTests.lean`** — compile-time tests on `eTaint`, an explicit record
+    for the run of `pTaint` (linked to the real run by `link_eTaint`): sequencing,
+    sentinel, state atoms, quantification, exclusivity.
 
 ## Lean gotchas hit in this repository
 
