@@ -4,135 +4,174 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A Lean 4 formalisation (no Mathlib) of the appendices of the paper "Model
-Checking Security Properties of Node.js Packages": a small "Core JavaScript"
-language, its concrete semantics, a static analysis (abstract semantics) over
-it, an abstraction relation between the two, and a soundness proof for the
-analysis. There is no application code — the entire deliverable is the Lean
-source under `analysis/`.
+A Lean 4 formalisation (no Mathlib) built around the paper "Model Checking
+Security Properties of Node.js Packages":
+
+- a small "Core JavaScript" language and its concrete semantics (Appendix A);
+- a static analysis over it, formulated on the `automaton-trace-model` branch
+  as a call-string *automaton* with a *labeling* (replacing the paper's
+  μ-trace/summary machinery), plus an abstraction relation and a soundness
+  proof for it;
+- a *query language* for describing vulnerable behaviours, with a satisfaction
+  relation over execution records (trace + taint observation), and a bridge
+  from concrete runs to such records.
+
+There is no application code — the entire deliverable is the Lean source under
+`analysis/`. Two design documents live at the repository root:
+`DESIGN_AND_PLAN.md` (the automaton design) and `PROBLEMS.md` (a numbered log
+of implementation decisions taken where the design left things open). The
+file headers cite them by section / decision number; read the cited passage
+before changing the code it explains.
 
 ## Build / check commands
 
-- Build the default targets: `lake build`
-- Type-check a single file without building the whole project:
-  `lake env lean analysis/<File>.lean`
+- Build everything: `lake build`
+- Type-check a single file: `lake env lean analysis/<File>.lean` (its imports
+  must already be built, i.e. run `lake build` first).
 - `lean-toolchain` pins `leanprover/lean4:v4.32.1`; use `lake`/`lean` via
-  `elan` as usual, no other toolchain setup is required.
+  `elan`, no other setup is required.
 
-### Important gotcha: `lakefile.toml`'s glob list is not the full file set
+### `lakefile.toml` lists modules explicitly
 
-`lakefile.toml` declares the library's source files explicitly via `globs`,
-and that list currently lags behind what's actually in `analysis/`:
-
-```toml
-globs = ["CoreJsSyntax", "CoreJsSemantics", "CoreJsAbstractSyntax", "CoreJsAbstractSemantics",
-         "CoreJsAbstractionRelation"]
-```
-
-`CoreJsAbstractionSoundness.lean` exists and imports `CoreJsAbstractionRelation`,
-but is **not** in this list, so a plain `lake build` silently skips it (no
-error — it's simply not a target). To type-check it, either:
-- add it to `globs` in `lakefile.toml`, or
-- compile it directly: `lake env lean analysis/CoreJsAbstractionSoundness.lean`
-  (its only local dependency, `CoreJsAbstractionRelation`, is already built by
-  `lake build`).
-
-When adding a new `.lean` file under `analysis/`, add its module name (no
-extension) to `globs` so `lake build` actually covers it.
+`globs` enumerates every module of the `Analysis` library; a `.lean` file that
+is not listed is silently skipped by `lake build`. **When adding a file under
+`analysis/`, add its module name (no extension) to `globs`.** The list is
+currently complete. (The old `CoreJsAbstract*` files were deleted; do not
+resurrect references to them — some header comments still mention them
+historically.)
 
 ## Architecture
 
-The files form a linear dependency chain, each corresponding to a specific
-part of the paper's Appendix A/B. Read them in this order to build up
-context; each file's header comment names the exact figures/definitions it
-formalises:
+All files are in `namespace CoreJS`. What each file imports:
 
-1. **`CoreJsSyntax.lean`** — the language: `Val`, `Expr`, `BinOp`, `Stmt`.
-   No semantics. Also defines `Stmt.lits`, the literal values occurring in a
-   statement (needed by both well-formedness definitions below).
-2. **`CoreJsSemantics.lean`** — the *concrete* semantics (Appendix A):
-   semantic domains (`Sto`, `Heap`, `Reg`, `Trc`, `Act`, `Out`), the
-   `Concrete` typeclass parameterising literal-location injection/allocator/
-   operator interpretation, expression evaluation, heap well-formedness
-   (`Heap.WF`), and the big-step judgement `BigStep` (`Γ ⊢ c ⇓[s] r`). Also
-   defines `BigStepN`, a derivation-height-indexed copy of `BigStep` — needed
-   because `BigStep` lives in `Prop` and has no recursor to do strong
-   induction on height with; `BigStep.toN`/`BigStepN.toBigStep` show the two
-   coincide.
-3. **`CoreJsAbstractSyntax.lean`** — the abstract domains (Appendix B.1, Figs.
-   B1/Def. B4/B5), independent of the concrete semantics: `ALoc`, `ALocSet`,
-   `VSet` (value sets plus a `⊤`), `ASto`/`AHeap`/`AReg`/`AAct`/`ATrc`/`AOut`,
-   the `⊑` order (`Def. B4`) and `⊔` join (`Def. B5`), plus the general-purpose
-   `Join` typeclass introduced locally (no Mathlib).
-4. **`CoreJsAbstractSemantics.lean`** — the abstract big-step semantics (Figs.
-   B6/B7): abstract expression evaluation, weak vs. strong heap/register
-   updates, the `Abstract` typeclass (abstract literal locations/allocator/
-   `⊕̂`), the mutually-recursive `ABigStep`/`ACallBranch` judgement, call
-   summaries (`ASummary`, `ASigma`) for handling recursion via
-   assume/guarantee (`[Call-Fix]`/`[Call-Assume]`), and the top-level analysis
-   entry point `SA`. **Read the `REMARKS` section at the end of this file
-   first** — it documents several places where the implementation
-   deliberately deviates from (or fixes gaps in) the paper's Fig. B7, e.g. the
-   multi-target `[Function Call]` rule, the totalised `[If-Then-Else]` outcome
-   join, and the strong update in `[Object Initialization]`.
-5. **`CoreJsAbstractionRelation.lean`** — the relation `∼α` connecting
-   concrete and abstract states (Def. B8) via a partial abstraction function
-   `AlphaFn : Loc → Option ALoc`, plus the supporting lemmas the soundness
-   proof needs: `α`-extension (Lemma B10), expression evaluation (Lemma B9),
-   store update (Lemma B11), and `α`-monotonicity of the abstract domains
-   (Lemma B13). See its `REMARK A/B/C` comments for how partiality of `α` and
-   the `Out.Alpha` asymmetry (`ret ⊑ cont` but not the reverse) are handled.
-6. **`CoreJsAbstractionSoundness.lean`** — Theorem B15 itself. Opens with a
-   "Supporting order, monotonicity and finiteness results" section: facts
-   needed by the proof but not involving the abstraction relation itself
-   (`⊑` is a preorder on `AAct`/`AOut`/`ATrc`, substitution/unfolding laws for
-   `μ`-traces, monotonicity of abstract evaluation such as `aevalE_mono`,
-   and the ascending-chain-condition groundwork for why a `[Call-Fix]`
-   fixpoint search terminates) — kept here rather than in
-   `CoreJsAbstractionRelation.lean` precisely because they don't touch
-   `AlphaFn`. **Currently incomplete**: the height-indexed statement
-   (`soundnessN`), the `SigmaValid` assume/guarantee invariant, the
-   `[Weakening]`-absorbing generation-lemma pattern (`abs_gen_skip`), and the
-   `[Skip]` case are done; every other case is `sorry`. There are no
-   `axiom`s, so `sorry` is the only way anything is left unproved — grep for
-   it to see exactly what remains, and read the "Remaining work" section at
-   the end of the file for the planned order of attack (generation lemmas per
-   statement shape, then assignment/return/sequence/lookup/update, then the
-   two cases where `α` grows (`binOp`/`objLit`), then `if`/`while`, then
-   multi-target calls, then `[Call-Fix]`/`[Call-Assume]`).
+- `CoreJsSemantics` ← `CoreJsSyntax`
+- `CoreJsAutomatonSyntax` ← `CoreJsSyntax`
+- `CoreJsAutomatonSemantics` ← `CoreJsAutomatonSyntax`, `CoreJsSemantics`
+- `CoreJsAutomatonRelation` ← `CoreJsAutomatonSemantics`
+- `CoreJsAutomatonSoundness` ← `CoreJsAutomatonRelation`
+- `CoreJsQuerySyntax` ← `CoreJsSyntax`
+- `CoreJsQuerySemantics` ← `CoreJsSemantics`, `CoreJsQuerySyntax`
+- `CoreJsQueryBridge` ← `CoreJsQuerySemantics`
+- `CoreJsQueryTests` ← `CoreJsQueryBridge`
 
-   When adding a new lemma that this file's proof needs: if it mentions
-   `AlphaFn`/`Heap.Alpha`/`Sto.Alpha`/etc., it belongs in
-   `CoreJsAbstractionRelation.lean`; otherwise it belongs in the "Supporting
-   ..." section here. Don't reintroduce a separate grab-bag file for it.
+The query chain and the automaton chain are independent of each other; both
+sit on top of the concrete semantics.
 
-### Two semantics, one relation
+### The language and concrete semantics
 
-The concrete (`CoreJsSemantics.lean`) and abstract (`CoreJsAbstractSemantics.lean`)
-judgements are deliberately kept in lockstep: each abstract rule is named and
-shaped after its concrete counterpart, and both are stated with the result
-configuration's components introduced as variables fixed by equational
-premises (so the Lean rule reads as a literal transcription of the paper's
-figure). When modifying one semantics, check whether the abstraction relation
-(`CoreJsAbstractionRelation.lean`) and the corresponding case of
-`soundnessN` need to change too.
+1. **`CoreJsSyntax.lean`** — `Val`, `Expr`, `BinOp`, `Stmt` (every call /
+   lookup / update / `if` / `while` carries a site index `κ`, a deliberate
+   deviation from the paper, see the file's REMARK), `Stmt.lits`, `Stmt.sites`.
+   `Loc := Nat` is an `abbrev` (see the `omega` gotcha below).
+2. **`CoreJsSemantics.lean`** — semantic domains (`Sto`, `Heap`, `Reg`, `Trc`,
+   `Act`, `Out`), the `Concrete` typeclass (`litLoc`, `allocC`, `opSem`),
+   `ConcreteSpec` (its side conditions), `Heap.WF`, the big-step judgement
+   `BigStep`, and `BigStepN`, a derivation-height-indexed copy needed because
+   `BigStep` lives in `Prop` and has no recursor to induct on height
+   (`BigStep.toN`/`BigStepN.toBigStep` transport between the two; if you add a
+   concrete rule, add the matching `BigStepN` constructor and extend `mono`/
+   `mono_le`/`toN`/`toBigStep`). Also here: `Heap.Finite` (with
+   `BigStep.finite`), and the minimal initial configuration
+   (`Reg.empty`, `Heap.init`, `Conf.init`, `Heap.init_WF`, `Heap.init_finite`).
+   - **`ConcreteSpec.allocC_fresh` only applies to finite heaps.** Demanding
+     freshness of *every* heap made the spec unsatisfiable (a heap defined at
+     every location has no free one), so anything assuming it was vacuous.
+     Proofs using freshness therefore need `Heap.Finite` of the current heap;
+     `BigStep.finite` propagates it along a run.
 
-### Height-indexing pattern
+### The automaton-based analysis
 
-`BigStep`/`ABigStep` are ordinary `Prop`-valued inductives, so Lean gives no
-structural recursion principle strong enough for the soundness proof (in
-particular, `[Call-Fix]`'s premise quantifies over *all* executions of a
-callee body, not just sub-derivations of the term being inducted on).
-`BigStepN Γ n` re-adds an explicit height so `soundnessN` can do strong
-induction on it (`Nat.strongRecOn`); `.toN`/`.toBigStep` transport between the
-heighted and unheighted relations at the boundary. If you add new concrete
-rules, add the matching `BigStepN` constructor and extend `mono`/`mono_le`/
-`toN`/`toBigStep`.
+3. **`CoreJsAutomatonSyntax.lean`** — call strings and the automaton state
+   space `AState`.
+4. **`CoreJsAutomatonSemantics.lean`** — the abstract domains (self-contained:
+   `ALoc`, `VSet`, `AHeap`, `ASto`, `AReg`, `AConf`), the `Abstract` class, the
+   per-statement effect functions, the mutually inductive edge relations
+   `AExit`/`AEdge`/`ARet`, `Labeling`, `Labeling.Valid`, `AnalysisResult`.
+5. **`CoreJsAutomatonRelation.lean`** — the abstraction relation (`AlphaFn`,
+   `Heap.Alpha`/`Sto.Alpha`/`Reg.Alpha`/`AConf.Alpha`) and its lemmas.
+6. **`CoreJsAutomatonSoundness.lean`** — `step_sound`, `sound`, `sound_top`.
+   **Incomplete.** 18 of 19 statement-shape cases are proved. Remaining
+   `sorry`s: the `binOp`/`objLit` cases of `step_sound` (need an
+   `α`-freshness invariant, and now also `Heap.Finite` of the current heap as a
+   hypothesis threaded through `sound`) and `exists_valid_labeling`. Read the
+   "Remaining work" section at the end of the file for the plan.
 
-### `sorry` policy
+The concrete and abstract judgements are kept in lockstep: each abstract rule
+is named and shaped after its concrete counterpart, and both state the result
+configuration's components as variables fixed by equational premises. When you
+change one semantics, check the abstraction relation and the soundness cases.
 
-`CoreJsAbstractionSoundness.lean` is a proof in progress and its `sorry`s are
+### The query language
+
+7. **`CoreJsQuerySyntax.lean`** — `Query Q(x⃗) { ∃y⃗: F₁ when I except F₂ }`:
+   `QAct`, `Pred`, `Inv`, `Pat`, `Guarded`, `Query`, and the well-formedness
+   predicates `Query.WF`/`QProg.WF` (all variables declared in `x⃗ ∪ y⃗`,
+   arities match, no duplicates, callees only *later* in the program list) and
+   the optional `Query.Safe` (range restriction). The semantics does *not*
+   assume any of these.
+8. **`CoreJsQuerySemantics.lean`** — execution records `Exec = ⟨trc, obs⟩`,
+   `Obs = ⟨val, dep, ac, sk⟩`, `Obs.ofRun`, `Obs.WF`, and the satisfaction
+   relations of Fig. 5 in interval form `t, σ, ξ ⊨ F : i ⇝ j`
+   (`Pat.Sat`/`Guarded.Sat`). Semantic decisions made with the user, worth
+   knowing before touching this file:
+   - `F₁ & F₂ : i ⇝ j` needs both sides matched from `i`, `j = max j₁ j₂`; one
+     action may serve both sides (`a & a ≡ a`).
+   - `except F'` is checked over the **whole trace** (`F'` matched from `0`, for
+     every end point `k`), for nested queries as well as the top-level one, so a
+     guard does not depend on where its query starts. It only constrains the
+     guarded pattern it belongs to: under `Q ‖ F`, a failing `except` inside `Q`
+     just rules out that alternative. (Earlier it was checked from `i`; the
+     change makes guards position-independent, which the FO-LTL translation
+     relies on.)
+   - `dep(x₁,x₂)` is plain membership `ξ x₂ ∈ σ.dep (ξ x₁)` — no closure in the
+     semantics; transitivity of `dep` and reverse-closure of `ac` are the
+     `Obs.WF` predicate. `sv` requires both values *defined* and equal.
+   - Invocation `Q(z⃗)` runs `Q`'s body under `[xᵢ ↦ ξ(zᵢ)]` (valuation
+     passing, equivalent to capture-free substitution; locals of `Q` are private).
+   - Queries live in a **list** (`QProg`) and invocation is resolved by
+     structural recursion (`QProg.interp`); `Pat.Sat` takes an interpretation
+     `Θ` of invocations as a parameter. This is forced by strict positivity:
+     `except` negates `Pat.Sat`, which cannot sit inside the inductive that
+     defines it. Acyclicity is thereby built in.
+9. **`CoreJsQueryBridge.lean`** — `Reg.DepInv` (transitive `dep`, every
+   dependency target holds a value), `BigStep.depInv`, and the bridge theorems
+   `BigStep.obs_wf` / `obs_wf_empty` / `obs_wf_init`: a concrete run yields a
+   well-formed observation (needs `ConcreteSpec` and a finite starting heap).
+10. **`CoreJsQueryTests.lean`** — a compile-time regression suite: one program
+    per statement shape run through `BigStep`, then positive and negative
+    query tests over the runs of `pTaint`/`pObjRT`. The `bigstep` tactic builds
+    a derivation automatically; `run tac` wraps it for goals of the form
+    `∃ r, BigStep … r ∧ P r`; `obs_simp [q]`/`tr_simp` discharge observation
+    and trace facts. Its `Concrete` instance is test-only and does **not**
+    satisfy `ConcreteSpec` (non-injective `litLoc`), so the bridge theorems are
+    not exercised by it. Function bodies in its `Γ₀` must mention no literals
+    (`Heap.init` only holds the main statement's literals).
+    After changing the semantics, `lake build` this file: a failure here means
+    a rule or query semantics changed behaviourally.
+
+## Lean gotchas hit in this repository
+
+- **`omega` cannot reason about `=`/`≠` on `Loc`** (an `abbrev` for `Nat`); it
+  handles `≤`/`<`. Convert with explicit `Nat` lemmas (`Nat.ne_of_gt`,
+  `Nat.le_trans`, …) or state such facts over `Nat`.
+- **Helper lemmas for dot-notation must live in the type's namespace.** A
+  `theorem Guarded.Sat.simple` declared inside `namespace CoreJS.Tests` is
+  *not* found by `.simple`/`h.simple`; declare it as
+  `theorem _root_.CoreJS.Guarded.Sat.simple`.
+- **`;;` is overloaded** (`Stmt.seq` and `Trc.seq`, both scoped `infixr:70`);
+  it resolves by expected type, so annotate when a literal is ambiguous.
+- **Hole metavariables from `refine ⟨?r, …⟩` are opaque** and cannot be
+  assigned by `apply`; use `apply Exists.intro` when a later tactic must
+  discover the witness (this is what `run` does).
+- Do not depend on `Reg`/`Heap` structure eta: `{ δ with ac := … }` is not
+  definitionally `δ`. Use a congruence lemma (`Reg.DepInv.congr`) instead.
+
+## `sorry` policy
+
+`CoreJsAutomatonSoundness.lean` is a proof in progress and its `sorry`s are
 intentional placeholders for known-remaining work, not accidents — the file's
 own header explains this. Don't paper over a `sorry` with an `axiom` or a
 weakened statement to make the build "succeed"; either prove the case or leave
-it as `sorry` and note what's missing.
+it as `sorry` and note what's missing. There are no `axiom`s in the
+development; `grep -n sorry analysis/*.lean` shows exactly what remains. The
+query files (`CoreJsQuery*.lean`) and the concrete semantics are `sorry`-free.

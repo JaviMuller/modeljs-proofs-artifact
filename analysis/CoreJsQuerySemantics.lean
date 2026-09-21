@@ -24,8 +24,11 @@
   * `F₁ & F₂ : i ⇝ j` requires *both* patterns to match from `i`, ending at
     `j₁` and `j₂`, and `j = max j₁ j₂`.  A single trace action may serve both
     sides, so `a & a` is matched whenever `a` is.
-  * `except F'` is checked from `i` (not from `0`) but for *every* end point
-    `k`, not just `k ≤ j`: `F'` must not occur anywhere in `t[i..]`.
+  * `except F'` is checked over the *whole trace*: `F'`, matched from `0`
+    with any end point `k`, must not occur anywhere in `t` — not just after
+    the start `i` of the query it belongs to, and not just before `j`.  It
+    only constrains the guarded pattern it belongs to, so under `Q ‖ F` a
+    failing `except` inside `Q` merely rules out the left alternative.
   * The figure quantifies over extensions `ξ'' ⊇ ξ'` of the valuation; here
     valuations are total and (by `Query.Declared`) every variable of the
     query is already assigned, so the quantifier is vacuous and is dropped.
@@ -180,7 +183,9 @@ inductive Pat.Sat (Θ : Interp) (t : List Act) (σ : Obs) (ξ : LEnv) :
       j = max j₁ j₂ →
       Pat.Sat Θ t σ ξ (.both F₁ F₂) i j
 
-/-- `t, σ, ξ ⊨ (exists y⃗: F when I except F') : i ⇝ j`. -/
+/-- `t, σ, ξ ⊨ (exists y⃗: F when I except F') : i ⇝ j`.  The positive part
+    `F` is matched from `i`; the excluded pattern `F'` is checked from the
+    start of the trace, so that the guard does not depend on `i`. -/
 inductive Guarded.Sat (Θ : Interp) (t : List Act) (σ : Obs) :
     LEnv → Guarded → Nat → Nat → Prop where
   | mk {ξ ξ' g ls i j} :
@@ -188,7 +193,7 @@ inductive Guarded.Sat (Θ : Interp) (t : List Act) (σ : Obs) :
       ξ' = ξ.bind g.locals ls →
       Pat.Sat Θ t σ ξ' g.body i j →
       Inv.Sat σ ξ' g.when →
-      (∀ F', g.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ' F' i k) →
+      (∀ F', g.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ' F' 0 k) →
       Guarded.Sat Θ t σ ξ g i j
 
 /-! ## Query programs -/

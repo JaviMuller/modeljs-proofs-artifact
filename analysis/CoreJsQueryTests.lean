@@ -257,7 +257,7 @@ theorem _root_.CoreJS.Guarded.Sat.simple {Θ t σ ξ} {g : Guarded} {i j : Nat} 
 theorem _root_.CoreJS.Guarded.Sat.invert {Θ t σ ξ} {g : Guarded} {i j : Nat} (hl : g.locals = [])
     (h : Guarded.Sat Θ t σ ξ g i j) :
     Pat.Sat Θ t σ ξ g.body i j ∧ Inv.Sat σ ξ g.when ∧
-      ∀ F', g.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ F' i k := by
+      ∀ F', g.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ F' 0 k := by
   cases h with
   | mk hlen hξ hb hi he =>
     rw [hl] at hlen hξ
@@ -495,6 +495,41 @@ theorem q_outerSwap_no : Runs pTaint fun r =>
         obtain ⟨_, hi, _⟩ := hg.invert rfl
         revert hi
         obs_simp [qSink, qOuterSwap]
+
+/-! ### `except` is whole-trace, and local to its own alternative
+
+`Late(f, r, x) { Retn(f, r) except Call(f, [x]) }` excludes a call that occurs
+*before* the position where `Late` starts matching. -/
+
+def qLate : Query :=
+  mkQ "Late" ["f", "r", "x"] (.act (.retn "f" "r")) .tt (some (.act (.call "f" ["x"])))
+
+/-- `Call(f,[x]) ; Late(f, r, x)`: `Late` starts after the call (position 1), yet its
+    `except` still sees the call at position 0, so the query is not matched.
+    (Checked only from position 1, the call would not be seen.) -/
+def qOuterLate : Query :=
+  mkQ "OuterLate" ["f", "x", "r"] (.seq (.act (.call "f" ["x"])) (.query "Late" ["f", "r", "x"]))
+theorem q_exceptWhole_no : Runs pTaint fun r =>
+    ¬ Exec.Matches [qOuterLate, qLate] (Exec.ofRes r) "OuterLate" [204, 1100, 0] := by
+  run refine not_matches_of fun j hj => ?_
+      obtain ⟨hb, _, _⟩ := hj.invert rfl
+      cases hb with
+      | @seq _ _ _ k j h₁ h₂ =>
+        cases h₂ with
+        | query h =>
+          obtain ⟨_, hg⟩ := (QProg.interp_head qLate [] _ _ _ _ _).1 h
+          obtain ⟨_, _, he⟩ := hg.invert rfl
+          exact he _ rfl 1 (.act (by decide) (by decide) (by decide))
+
+/-- ... but `Late` on its own can still be one alternative of a `‖`: its failing `except`
+    only rules out that alternative, and `Retn(f, r)` on the right still matches. -/
+def qEither : Query :=
+  mkQ "Either" ["f", "x", "r"] (.alt (.query "Late" ["f", "r", "x"]) (.act (.retn "f" "r")))
+theorem q_exceptLocal : Runs pTaint fun r =>
+    Exec.Matches [qEither, qLate] (Exec.ofRes r) "Either" [204, 1100, 0] := by
+  run exact matches_of (j := 2) rfl
+        (Guarded.Sat.simple rfl rfl (.altR (.act (by decide) (by decide) (by decide)))
+          (by obs_simp [qEither]))
 
 /-! ### Lookup and update actions
 
