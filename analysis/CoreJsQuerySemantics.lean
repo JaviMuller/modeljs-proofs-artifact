@@ -394,6 +394,50 @@ theorem Pat.Sat.both_eps {Θ t σ ξ F i j} (hΘ : Θ.Ok t) :
     have := h.le hΘ
     exact .both h .eps (by omega)
 
+/-! ### Inversion lemmas for `Pat.Sat` -/
+
+section inversion
+
+variable {Θ : Interp} {t : List Act} {σ : Obs} {ξ : LEnv} {i j : Nat}
+
+theorem Pat.sat_eps : Pat.Sat Θ t σ ξ .eps i j ↔ j = i := by
+  constructor
+  · intro h; cases h; rfl
+  · rintro rfl; exact .eps
+
+theorem Pat.sat_act {a : QAct} :
+    Pat.Sat Θ t σ ξ (.act a) i j ↔ i < j ∧ j ≤ t.length ∧ t[j - 1]? = some (a.inst ξ) := by
+  constructor
+  · intro h; cases h with | act h₁ h₂ h₃ => exact ⟨h₁, h₂, h₃⟩
+  · rintro ⟨h₁, h₂, h₃⟩; exact .act h₁ h₂ h₃
+
+theorem Pat.sat_seq {F₁ F₂ : Pat} :
+    Pat.Sat Θ t σ ξ (.seq F₁ F₂) i j ↔
+      ∃ k, Pat.Sat Θ t σ ξ F₁ i k ∧ Pat.Sat Θ t σ ξ F₂ k j := by
+  constructor
+  · intro h; cases h with | seq h₁ h₂ => exact ⟨_, h₁, h₂⟩
+  · rintro ⟨k, h₁, h₂⟩; exact .seq h₁ h₂
+
+theorem Pat.sat_alt {F₁ F₂ : Pat} :
+    Pat.Sat Θ t σ ξ (.alt F₁ F₂) i j ↔ Pat.Sat Θ t σ ξ F₁ i j ∨ Pat.Sat Θ t σ ξ F₂ i j := by
+  constructor
+  · intro h
+    cases h with
+    | altL h => exact Or.inl h
+    | altR h => exact Or.inr h
+  · rintro (h | h)
+    · exact .altL h
+    · exact .altR h
+
+theorem Pat.sat_both {F₁ F₂ : Pat} :
+    Pat.Sat Θ t σ ξ (.both F₁ F₂) i j ↔
+      ∃ j₁ j₂, Pat.Sat Θ t σ ξ F₁ i j₁ ∧ Pat.Sat Θ t σ ξ F₂ i j₂ ∧ j = max j₁ j₂ := by
+  constructor
+  · intro h; cases h with | both h₁ h₂ h₃ => exact ⟨_, _, h₁, h₂, h₃⟩
+  · rintro ⟨j₁, j₂, h₁, h₂, h₃⟩; exact .both h₁ h₂ h₃
+
+end inversion
+
 /-- Unfolding of `QProg.interp` at the head query of the program (any start `i`). -/
 theorem QProg.interp_head (q : Query) (Δ : QProg) (t : List Act) (σ : Obs) (ls : List Loc)
     (i j : Nat) :

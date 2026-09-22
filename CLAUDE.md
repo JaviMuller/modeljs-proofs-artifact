@@ -197,9 +197,28 @@ change one semantics, check the abstraction relation and the soundness cases.
     for the run of `pTaint` (linked to the real run by `link_eTaint`): sequencing,
     sentinel, state atoms, quantification, exclusivity, and the past operators
     (`Y`/`O`/`H`/`atStart`).
-13. **`CoreJsQueryToLtl.lean`** — the translation from queries into `Ltl Var`, and the
-    theorem that it is semantics-preserving over execution records (via `Exec.toModel`).
-    See the file header for the current state of this (in-progress) file.
+13. **`CoreJsQueryToLtl.lean`** — the translation from queries into `Ltl LVar`
+    (`LVar := Var ⊕ Nat`: original source names, or a synthetic tag freshly minted per
+    invoked-query occurrence to avoid capture when inlining — see the file header for why
+    this is needed independently of the in-place, non-prenex translation style), and the
+    (partial — see its own "Remaining work") theorem that it is semantics-preserving over
+    execution records (via `Exec.toModel`).
+    - `Pat.Tr ρ Δ F K n φ n'` / `Guarded.Tr ρ Δ g K n φ n'`: a *relation* (not a computable
+      function), continuation-style as `CoreJsQuerySemantics.lean`'s comment on `&`
+      anticipates. Genuinely mutually recursive with itself (a query's body may invoke
+      further queries), which is fine for a `Prop` — unlike `Pat.Sat`, it never negates
+      *itself* (a guard's `except` becomes `.not` applied to an already-produced formula,
+      ordinary data, not a negated occurrence of the relation), so it needs no external
+      `Interp`-style parameter.
+    - A guarded pattern `∃y⃗: F when I except F'` translates to
+      `∃y⃗: I ∧ atStart(¬ tr(F',⊤)) ∧ tr(F,K)`, written *in place* at the invocation — this
+      is exactly why `except` was moved to whole-trace semantics and why `Ltl.atStart` was
+      added: both are needed together to make the `&` rule
+      (`tr(F₁&F₂,K) = tr(F₁,K) ∧ tr(F₂,K)`) exact without hoisting into any normal form.
+    - `Pat.tr_correct`/`Pat.tr_mono` fully prove correctness for the invocation-free
+      fragment (`ε`/`a`/`;`/`‖`/`&`); guards/locals/invocation are not yet covered (needs a
+      well-founded induction on `Δ.length` using `QProg.WF`, not yet stated) — read the
+      file's own "Remaining work" before extending it.
 
 ## Lean gotchas hit in this repository
 

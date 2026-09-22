@@ -26,4 +26,5 @@ globs = [
     "CoreJsQueryTests",
     "CoreJsFoLtl",
     "CoreJsFoLtlTests",
+    "CoreJsQueryToLtl",
 ]
