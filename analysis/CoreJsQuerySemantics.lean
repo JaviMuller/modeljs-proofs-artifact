@@ -436,6 +436,12 @@ theorem Pat.sat_both {F₁ F₂ : Pat} :
   · intro h; cases h with | both h₁ h₂ h₃ => exact ⟨_, _, h₁, h₂, h₃⟩
   · rintro ⟨j₁, j₂, h₁, h₂, h₃⟩; exact .both h₁ h₂ h₃
 
+theorem Pat.sat_query {Q : QName} {zs : List Var} :
+    Pat.Sat Θ t σ ξ (.query Q zs) i j ↔ Θ Q (zs.map ξ) i j := by
+  constructor
+  · intro h; cases h with | query h => exact h
+  · intro h; exact .query h
+
 end inversion
 
 /-- Unfolding of `QProg.interp` at the head query of the program (any start `i`). -/
