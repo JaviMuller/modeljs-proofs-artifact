@@ -152,6 +152,54 @@ inductive Trc where
 
 @[inherit_doc] scoped infixr:70 (name := trcSeq) " ;; " => Trc.seq
 
+/-- Flatten a trace into the list of its actions, in order. -/
+def Trc.toList : Trc → List Act
+  | .emp       => []
+  | .act a     => [a]
+  | .seq t₁ t₂ => t₁.toList ++ t₂.toList
+
+/-! ## Execution records
+
+An *execution record* `⟨t, σ⟩` pairs a trace with an *observation* `σ` of it:
+the value stored at each location and the taint facts (`dep`/`ac`/`sk`) in
+force by the end of the run. Defined here, rather than alongside the query
+language that consumes them (`CoreJsQuerySemantics.lean`), because they are
+built entirely from concepts already in this file (`Trc`, `Heap`, `Reg`) and
+are meant to be shared: the query semantics and the FO-LTL translation both
+sit on top of them, and a future model-checking algorithm over the automaton
+of `CoreJsAutomatonSemantics.lean` may need them too. -/
+
+/-- Observations `σ` of an execution: the value stored at each location
+    (`val`), the locations each location was computed from (`dep`), the
+    attacker-controlled locations (`ac`) and the sink locations (`sk`). -/
+structure Obs where
+  val : Loc → Option Val
+  dep : Loc → LocSet
+  ac  : LocSet
+  sk  : LocSet
+
+/-- Execution records `⟨t, σ⟩`. -/
+structure Exec where
+  trc : Trc
+  obs : Obs
+
+/-- The observation of a concrete run with final heap `h` and taint register
+    `δ`: `val = h.val`, `dep = δ.dep`, `sk = δ.sk`, and `ac` is `δ.ac`
+    together with every location that depends on a location of `δ.ac`. -/
+def Obs.ofRun (h : Heap) (δ : Reg) : Obs where
+  val := h.val
+  dep := δ.dep
+  ac  := fun l => δ.ac l ∨ ∃ l', δ.ac l' ∧ δ.dep l l'
+  sk  := δ.sk
+
+/-- Well-formedness of an observation (not assumed by any semantics that
+    consumes one): `dep` is transitive (`σ.dep l₁ l₂` reads "`l₂ ∈ σ.dep l₁`",
+    i.e. `l₁` depends on `l₂`), and `ac` is closed under reverse dependency: a
+    location depending on an attacker-controlled one is attacker-controlled. -/
+structure Obs.WF (σ : Obs) : Prop where
+  dep_trans : ∀ l₁ l₂ l₃, σ.dep l₁ l₂ → σ.dep l₂ l₃ → σ.dep l₁ l₃
+  ac_closed : ∀ l₁ l₂, σ.dep l₂ l₁ → σ.ac l₁ → σ.ac l₂
+
 /-- Execution outcomes `o ∈ Out ::= · | r⟨l⟩`. -/
 inductive Out where
   /-- Continuation outcome `·`. -/

@@ -4,8 +4,9 @@
   Standard first-order linear temporal logic (FO-LTL) over *finite* traces —
   with both future (`X`, `U`) and past (`Y`, `S`) operators, formulas freely
   interleaving them (no restriction to any normal form) — together with the
-  materialisation of an execution record `⟨t, σ⟩` (`CoreJsQuerySemantics.lean`)
-  as a model of it.
+  materialisation of an execution record `⟨t, σ⟩` (`Exec`/`Obs`, defined in
+  `CoreJsSemantics.lean` since this file needs nothing else from the query
+  language) as a model of it.
 
   This file is organised the way a logic text would present a first-order
   temporal logic, so that each of the usual components has a single,
@@ -56,7 +57,7 @@
   Plain Lean 4 — no Mathlib required.
 -/
 
-import CoreJsQuerySemantics
+import CoreJsSemantics
 
 namespace CoreJS
 

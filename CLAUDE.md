@@ -53,8 +53,9 @@ All files are in `namespace CoreJS`. What each file imports:
 - `CoreJsQuerySemantics` ← `CoreJsSemantics`, `CoreJsQuerySyntax`
 - `CoreJsQueryBridge` ← `CoreJsQuerySemantics`
 - `CoreJsQueryTests` ← `CoreJsQueryBridge`
-- `CoreJsFoLtl` ← `CoreJsQuerySemantics`
+- `CoreJsFoLtl` ← `CoreJsSemantics`
 - `CoreJsFoLtlTests` ← `CoreJsQueryTests`, `CoreJsFoLtl`
+- `CoreJsQueryToLtl` ← `CoreJsQuerySemantics`, `CoreJsFoLtl`
 
 The query chain and the automaton chain are independent of each other; both
 sit on top of the concrete semantics.
@@ -80,6 +81,14 @@ sit on top of the concrete semantics.
      every location has no free one), so anything assuming it was vacuous.
      Proofs using freshness therefore need `Heap.Finite` of the current heap;
      `BigStep.finite` propagates it along a run.
+   - **Execution records** `Exec = ⟨trc, obs⟩`, `Obs = ⟨val, dep, ac, sk⟩`,
+     `Trc.toList`, `Obs.ofRun`, `Obs.WF` also live here, not in
+     `CoreJsQuerySemantics.lean`, even though the query language is their
+     first consumer: they are built entirely from `Trc`/`Heap`/`Reg` (no
+     dependency on the query syntax), and both `CoreJsQuerySemantics.lean`
+     and `CoreJsFoLtl.lean` need them independently, as would a future
+     model-checking algorithm over the automaton of
+     `CoreJsAutomatonSemantics.lean`.
 
 ### The automaton-based analysis
 
@@ -111,10 +120,10 @@ change one semantics, check the abstraction relation and the soundness cases.
    arities match, no duplicates, callees only *later* in the program list) and
    the optional `Query.Safe` (range restriction). The semantics does *not*
    assume any of these.
-8. **`CoreJsQuerySemantics.lean`** — execution records `Exec = ⟨trc, obs⟩`,
-   `Obs = ⟨val, dep, ac, sk⟩`, `Obs.ofRun`, `Obs.WF`, and the satisfaction
-   relations of Fig. 5 in interval form `t, σ, ξ ⊨ F : i ⇝ j`
-   (`Pat.Sat`/`Guarded.Sat`). Semantic decisions made with the user, worth
+8. **`CoreJsQuerySemantics.lean`** — the satisfaction relations of Fig. 5 in
+   interval form `t, σ, ξ ⊨ F : i ⇝ j` (`Pat.Sat`/`Guarded.Sat`), over
+   execution records `Exec`/`Obs` (defined in `CoreJsSemantics.lean` — see
+   its entry above for why). Semantic decisions made with the user, worth
    knowing before touching this file:
    - `F₁ & F₂ : i ⇝ j` needs both sides matched from `i`, `j = max j₁ j₂`; one
      action may serve both sides (`a & a ≡ a`).
