@@ -153,15 +153,33 @@ change one semantics, check the abstraction relation and the soundness cases.
 
 ### FO-LTL over finite traces
 
-11. **`CoreJsFoLtl.lean`** — first-order LTL (`Ltl ν`, primitives `⊤ ⊥ ¬ ∧ ∨ X U ∃ ∀`,
-    with `F`/`G`/`imp`/`conj`/`disj` derived; atoms `Atom ν`: the four actions, the
-    taint/value predicates and `=`; generic in the variable type `ν`), finite models
-    (`Model`: list of states, each the set of actions holding there, plus a static
-    `Obs`), and `Exec.toModel`, which materialises an execution record. Conventions
-    worth knowing:
+11. **`CoreJsFoLtl.lean`** — standard first-order past+future LTL over finite traces,
+    organized the way a logic text would present it, with an explicit table in the file
+    header mapping each usual component (signature/terms/atomic formulas/formula
+    grammar/structures/satisfaction) to its Lean definition:
+    - **Signature**: one sort of individuals (`Loc`); relation symbols `lookup/3`,
+      `update/3`, `retn/2`, `eq/2`, `sk/1`, `ac/1`, `dep/2`, `sv/2`, `hv(_,c)/1` (one
+      per `c : Val`), and the `call_n/(n+1)` family (one per arity `n`, enumerated by
+      `Shape`). No function symbols (`## Terms`: only variables).
+    - **Atomic formulas / formulas**: `Atom ν` / `Ltl ν` (generic in the variable type
+      `ν` so translations can rename), primitives `⊤ ⊥ ¬ ∧ ∨ X U Y S ∃ ∀` with
+      `F`/`G` (future) and `O`/`H` (past) derived from `U`/`S`. No normal-form
+      restriction — formulas may nest/interleave arbitrarily.
+    - **Structures**: `Model` — a rigid part (`obs : Obs`, constant across the trace)
+      plus a temporal part (`states`, the actions holding at each position).
+    - **Satisfaction**: `Atom.Sat`, `Ltl.Sat` (`m, ξ, i ⊨ φ`), `Ltl.Holds` (at
+      boundary `0`).
+    Conventions:
     - Positions are *boundaries* `0 … n` (`n` = number of states); boundary `n` is a
       sentinel where no action holds, matching the query semantics' indexing. `X` is
-      strong (`i < n ∧ φ (i+1)`); `F φ := ⊤ U φ`. So `F(a ∧ X ⊤)` is "`a` occurs".
+      strong (`i < n ∧ φ (i+1)`); `Y` is false at boundary `0` (no yesterday before the
+      start) — both standard for LTL over finite/bounded traces.
+    - `Ltl.first := ¬Y⊤` holds only at boundary `0`; `Ltl.atStart φ := O(φ ∧ first)`
+      holds at *every* boundary iff `φ` holds at `0` (`sat_atStart`) — the standard way
+      to reach back to the start of a finite trace from anywhere in a formula, used to
+      translate queries' `except` (checked over the whole trace) without rewriting into
+      any normal form. `atStart φ` then behaves like a state atom itself
+      (`sat_atStart_indep`).
     - Action atoms are predicates of the state; state atoms read only `σ` and hold at
       every boundary or none (`G p ≡ p ≡ F p`, `sat_G_state`).
     - "Multiple actions cannot happen at the same time": `Model.Excl`,
@@ -169,9 +187,19 @@ change one semantics, check the abstraction relation and the soundness cases.
       (relative to a set of action `Shape`s, calls told apart by arity), satisfied by
       every record's model (`Exec.toModel_sat_excl`). Only the soundness direction is
       proved (models of records satisfy it), not that the formula characterises `Excl`.
+    - `Model` is deliberately more general than `Exec` (a state is a *predicate* over
+      actions, not one action): it is the logic's own class of models, independent of
+      how one is produced. `Exec.toModel` is the intended-model construction connecting
+      it to the query language; the eventual model-checking algorithm is being built on
+      a *separate* automaton structure, not on `Ltl`/`Model` — this file stays a
+      self-contained logic definition, not glued to that other development.
 12. **`CoreJsFoLtlTests.lean`** — compile-time tests on `eTaint`, an explicit record
     for the run of `pTaint` (linked to the real run by `link_eTaint`): sequencing,
-    sentinel, state atoms, quantification, exclusivity.
+    sentinel, state atoms, quantification, exclusivity, and the past operators
+    (`Y`/`O`/`H`/`atStart`).
+13. **`CoreJsQueryToLtl.lean`** — the translation from queries into `Ltl Var`, and the
+    theorem that it is semantics-preserving over execution records (via `Exec.toModel`).
+    See the file header for the current state of this (in-progress) file.
 
 ## Lean gotchas hit in this repository
 

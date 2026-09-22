@@ -1,10 +1,24 @@
 /-
   # Core JavaScript — First-Order LTL over Finite Traces
 
-  Syntax and semantics of first-order linear temporal logic (FO-LTL) over
-  *finite* traces, with CoreJS actions and taint/value predicates as atoms,
-  and the materialisation of an execution record `⟨t, σ⟩`
-  (`CoreJsQuerySemantics.lean`) as a model of it.
+  Standard first-order linear temporal logic (FO-LTL) over *finite* traces —
+  with both future (`X`, `U`) and past (`Y`, `S`) operators, formulas freely
+  interleaving them (no restriction to any normal form) — together with the
+  materialisation of an execution record `⟨t, σ⟩` (`CoreJsQuerySemantics.lean`)
+  as a model of it.
+
+  This file is organised the way a logic text would present a first-order
+  temporal logic, so that each of the usual components has a single,
+  identifiable home:
+
+  | Component                         | Here                                   |
+  |------------------------------------|-----------------------------------------|
+  | Signature (sorts, relation symbols)| `## Signature`, `Atom`'s constructors    |
+  | Terms                              | `## Terms` (variables only, see below)  |
+  | Atomic formulas                    | `Atom ν`                                |
+  | Formula grammar                    | `Ltl ν`                                 |
+  | Structures / models                | `Model`                                 |
+  | Satisfaction relation `⊨`          | `Atom.Sat`, `Ltl.Sat`, `Ltl.Holds`       |
 
   ## Conventions
 
@@ -14,14 +28,23 @@
     semantics indexes a trace (`a : i ⇝ j` when the event `t[j-1]` is `a`),
     so `F(a ∧ X ⊤)` reads "`a` occurs", `ε` and the empty trace need no
     special case, and `A₁ ; A₂ ≡ F(A₁ ∧ X F A₂)` holds verbatim.
-  * `X` is *strong*: `X φ` holds at `i` iff `i < n` and `φ` holds at `i + 1`.
-  * `U` is the usual until, over `[i, n]`.  `F φ := ⊤ U φ`, `G φ := ¬F¬φ`.
+  * `X` is *strong* (`X φ` at `i` needs `i < n`); `Y` is the past mirror and is
+    simply *false* at boundary `0` (no yesterday before the start — this is
+    the standard convention for past operators over finite/bounded traces).
+    `U`/`S` are the usual until/since.  `F φ := ⊤ U φ`, `G φ := ¬F¬φ`,
+    `O φ := ⊤ S φ` ("once"), `H φ := ¬O¬φ` ("historically").
+  * **`first : Ltl ν`** holds only at boundary `0` (`:= ¬ Y ⊤`), and
+    **`atStart φ := O(φ ∧ first)`** holds at *every* boundary iff `φ` holds at
+    boundary `0` (`sat_atStart`) — the standard trick of reaching back to the
+    start of a finite trace from anywhere in it, used to give queries' `except`
+    clauses (checked over the *whole* trace, see `CoreJsQuerySemantics.lean`)
+    a translation that sits exactly where the query occurs, with no need to
+    rewrite formulas into any normal form.
   * **Action atoms** are predicates of the state: `lookup(x₁,x₂,x₃)` holds at
     `p` iff the action at `p` is the lookup of the locations the variables
     denote.  **State atoms** (`sk`, `ac`, `dep`, `sv`, `hv`, `=`) read only the
     static part `σ` of the model, so they hold at every boundary or at none:
     `G p ≡ p ≡ F p` (`sat_G_state`).
-  * First-order variables are *rigid* and range over `Loc`.
   * Multiple actions cannot happen at the same time: `Model.Excl`, and its
     first-order axiomatisation over a finite set of action shapes
     (`Ltl.excl`), which every execution record satisfies
@@ -37,10 +60,36 @@ import CoreJsQuerySemantics
 
 namespace CoreJS
 
-/-! ## Syntax -/
+/-! ## Signature
 
-/-- Atomic predicates over variables of type `ν`: the four kinds of action,
-    the taint/value predicates of the query language, and equality. -/
+The non-logical vocabulary of the logic:
+
+* **Sorts.** A single sort of *individuals*, interpreted by `Loc` — this is
+  what variables and quantifiers range over. `Val` is not a sort with its own
+  variables or quantifiers; it appears only as a *constant* parameter of the
+  `hv` relation (see below), naming one particular value.
+* **Relation symbols**, all on the individual sort (arity in parentheses):
+  `lookup/3`, `update/3`, `retn/2`, `eq/2`, `sk/1`, `ac/1`, `dep/2`, `sv/2`,
+  and, for every `c : Val`, `hv(_, c)/1`.  `call` is a *family* of relation
+  symbols indexed by arity, one `call_n/(n+1)` per `n : Nat` (`Shape.call n`
+  names exactly this family, see `## Exclusivity as a formula` below).
+* **No function symbols** on the individual sort — see `## Terms`.
+
+The first four relation symbols above hold or not *per boundary* (the
+"temporal"/rigid-designator-but-time-varying predicates); the rest read only
+the model's static part and so are true at every boundary or none
+(`Atom.sat_state_indep`). -/
+
+/-! ## Terms
+
+The language is purely relational: the only terms are variables (`ν`); there
+are no function symbols on the individual sort, hence no compound terms. -/
+
+/-! ## Atomic formulas -/
+
+/-- Atomic formulas over variables of type `ν`: one atom per relation symbol of
+    the signature, applied to variables (and, for `hv`, one further constant of
+    the auxiliary sort `Val`). -/
 inductive Atom (ν : Type) where
   /-- `x₁ := x₂[x₃]` happens now. -/
   | lookup (x₁ x₂ x₃ : ν)
@@ -58,6 +107,13 @@ inductive Atom (ν : Type) where
   /-- `x₁ = x₂`. -/
   | eq (x₁ x₂ : ν)
 
+/-! ## Formulas
+
+Standard first-order past+future LTL: the propositional connectives, the
+future operators `X`/`U`, the past operators `Y`/`S`, and first-order
+quantification over the individual sort.  No restriction to any normal form —
+these constructors may nest and interleave freely. -/
+
 /-- First-order LTL formulas. -/
 inductive Ltl (ν : Type) where
   | atom  (a : Atom ν)
@@ -66,10 +122,14 @@ inductive Ltl (ν : Type) where
   | not   (φ : Ltl ν)
   | and   (φ ψ : Ltl ν)
   | or    (φ ψ : Ltl ν)
-  /-- `X φ`, strong next. -/
+  /-- `X φ`: strong next. -/
   | next  (φ : Ltl ν)
-  /-- `φ U ψ`. -/
+  /-- `φ U ψ`: until. -/
   | until (φ ψ : Ltl ν)
+  /-- `Y φ`: yesterday, false at boundary `0`. -/
+  | yesterday (φ : Ltl ν)
+  /-- `φ S ψ`: since. -/
+  | since (φ ψ : Ltl ν)
   /-- `∃x. φ`. -/
   | ex    (x : ν) (φ : Ltl ν)
   /-- `∀x. φ`. -/
@@ -79,11 +139,24 @@ namespace Ltl
 
 variable {ν : Type}
 
-/-- `F φ := ⊤ U φ`. -/
+/-- `F φ := ⊤ U φ` ("eventually"). -/
 def F (φ : Ltl ν) : Ltl ν := .until .tt φ
 
-/-- `G φ := ¬F¬φ`. -/
+/-- `G φ := ¬F¬φ` ("globally"). -/
 def G (φ : Ltl ν) : Ltl ν := .not (F (.not φ))
+
+/-- `O φ := ⊤ S φ` ("once": held at some point up to and including now). -/
+def O (φ : Ltl ν) : Ltl ν := .since .tt φ
+
+/-- `H φ := ¬O¬φ` ("historically": has always held up to now). -/
+def H (φ : Ltl ν) : Ltl ν := .not (O (.not φ))
+
+/-- `first : Ltl ν`, holding only at boundary `0`. -/
+def first : Ltl ν := .not (.yesterday .tt)
+
+/-- `atStart φ`, holding at *every* boundary iff `φ` holds at boundary `0`
+    (`sat_atStart`) — reaches back to the start of the trace from anywhere. -/
+def atStart (φ : Ltl ν) : Ltl ν := O (.and φ first)
 
 /-- `φ → ψ`. -/
 def imp (φ ψ : Ltl ν) : Ltl ν := .or (.not φ) ψ
@@ -106,7 +179,13 @@ def exN (vs : List ν) (φ : Ltl ν) : Ltl ν := vs.foldr .ex φ
 
 end Ltl
 
-/-! ## Models -/
+/-! ## Structures (models)
+
+A model of the signature above: a *rigid* part (`obs`, a first-order structure
+in the ordinary sense — a domain of individuals `Loc`, and interpretations for
+`val`/`dep`/`ac`/`sk`, constant across the whole trace) together with a
+*temporal* part (`states`, a finite sequence giving, at each boundary short of
+the sentinel, which action symbols hold there). -/
 
 /-- A finite FO-LTL model: the actions that hold in each of the `n` states, and
     the static part `σ` interpreting the state predicates. -/
@@ -129,7 +208,7 @@ def Model.Excl (m : Model) : Prop :=
 def upd {ν : Type} [DecidableEq ν] (ξ : ν → Loc) (x : ν) (l : Loc) : ν → Loc :=
   fun y => if y = x then l else ξ y
 
-/-! ## Semantics -/
+/-! ## Satisfaction relation `⊨` -/
 
 /-- Atoms: `m, ξ, i ⊨ a`. -/
 def Atom.Sat {ν : Type} (m : Model) (ξ : ν → Loc) (i : Nat) : Atom ν → Prop
@@ -146,17 +225,19 @@ def Atom.Sat {ν : Type} (m : Model) (ξ : ν → Loc) (i : Nat) : Atom ν → P
 
 /-- `m, ξ, i ⊨ φ`, for `i` a boundary `0 … n`. -/
 def Ltl.Sat {ν : Type} [DecidableEq ν] (m : Model) : (ν → Loc) → Ltl ν → Nat → Prop
-  | ξ, .atom a,    i => a.Sat m ξ i
-  | _, .tt,        _ => True
-  | _, .ff,        _ => False
-  | ξ, .not φ,     i => ¬ φ.Sat m ξ i
-  | ξ, .and φ ψ,   i => φ.Sat m ξ i ∧ ψ.Sat m ξ i
-  | ξ, .or φ ψ,    i => φ.Sat m ξ i ∨ ψ.Sat m ξ i
-  | ξ, .next φ,    i => i < m.len ∧ φ.Sat m ξ (i + 1)
-  | ξ, .until φ ψ, i =>
+  | ξ, .atom a,        i => a.Sat m ξ i
+  | _, .tt,            _ => True
+  | _, .ff,            _ => False
+  | ξ, .not φ,         i => ¬ φ.Sat m ξ i
+  | ξ, .and φ ψ,       i => φ.Sat m ξ i ∧ ψ.Sat m ξ i
+  | ξ, .or φ ψ,        i => φ.Sat m ξ i ∨ ψ.Sat m ξ i
+  | ξ, .next φ,        i => i < m.len ∧ φ.Sat m ξ (i + 1)
+  | ξ, .until φ ψ,     i =>
       ∃ k, i ≤ k ∧ k ≤ m.len ∧ ψ.Sat m ξ k ∧ ∀ p, i ≤ p → p < k → φ.Sat m ξ p
-  | ξ, .ex x φ,    i => ∃ l, φ.Sat m (upd ξ x l) i
-  | ξ, .all x φ,   i => ∀ l, φ.Sat m (upd ξ x l) i
+  | ξ, .yesterday φ,   i => i ≠ 0 ∧ φ.Sat m ξ (i - 1)
+  | ξ, .since φ ψ,     i => ∃ k, k ≤ i ∧ ψ.Sat m ξ k ∧ ∀ p, k < p → p ≤ i → φ.Sat m ξ p
+  | ξ, .ex x φ,        i => ∃ l, φ.Sat m (upd ξ x l) i
+  | ξ, .all x φ,       i => ∀ l, φ.Sat m (upd ξ x l) i
 
 /-- A formula holds in a model iff it holds at the first boundary. -/
 def Ltl.Holds {ν : Type} [DecidableEq ν] (m : Model) (ξ : ν → Loc) (φ : Ltl ν) : Prop :=
@@ -180,6 +261,41 @@ theorem Ltl.sat_G {φ : Ltl ν} :
     exact Classical.byContradiction fun hφ => h ⟨k, hik, hk, hφ⟩
   · rintro h ⟨k, hik, hk, hφ⟩
     exact hφ (h k hik hk)
+
+theorem Ltl.sat_O {φ : Ltl ν} :
+    φ.O.Sat m ξ i ↔ ∃ k, k ≤ i ∧ φ.Sat m ξ k := by
+  simp [Ltl.O, Ltl.Sat]
+
+theorem Ltl.sat_H {φ : Ltl ν} :
+    φ.H.Sat m ξ i ↔ ∀ k, k ≤ i → φ.Sat m ξ k := by
+  simp only [Ltl.H, Ltl.Sat, Ltl.sat_O]
+  constructor
+  · intro h k hk
+    exact Classical.byContradiction fun hφ => h ⟨k, hk, hφ⟩
+  · rintro h ⟨k, hk, hφ⟩
+    exact hφ (h k hk)
+
+/-- `Y ⊤` is false at `0` and true everywhere else. -/
+theorem Ltl.sat_yesterday_tt : (Ltl.yesterday (Ltl.tt : Ltl ν)).Sat m ξ i ↔ i ≠ 0 := by
+  simp [Ltl.Sat]
+
+/-- `first` holds only at boundary `0`. -/
+theorem Ltl.sat_first : (Ltl.first : Ltl ν).Sat m ξ i ↔ i = 0 := by
+  simp [Ltl.first, Ltl.Sat]
+
+/-- `atStart φ` holds at any boundary iff `φ` holds at boundary `0`: it reaches back to
+    the start of the trace, from anywhere. -/
+theorem Ltl.sat_atStart {φ : Ltl ν} : (Ltl.atStart φ).Sat m ξ i ↔ φ.Sat m ξ 0 := by
+  simp only [Ltl.atStart, Ltl.sat_O, Ltl.Sat, Ltl.sat_first]
+  constructor
+  · rintro ⟨k, _, hφ, rfl⟩; exact hφ
+  · intro h; exact ⟨0, Nat.zero_le _, h, rfl⟩
+
+/-- `atStart φ` therefore has the same truth value at every boundary — it behaves like a
+    state atom, regardless of what `φ` itself is. -/
+theorem Ltl.sat_atStart_indep {φ : Ltl ν} {i' : Nat} :
+    (Ltl.atStart φ).Sat m ξ i ↔ (Ltl.atStart φ).Sat m ξ i' := by
+  rw [Ltl.sat_atStart, Ltl.sat_atStart]
 
 theorem Ltl.sat_imp {φ ψ : Ltl ν} :
     (φ.imp ψ).Sat m ξ i ↔ (φ.Sat m ξ i → ψ.Sat m ξ i) := by
@@ -297,9 +413,9 @@ theorem Exec.toModel_excl (e : Exec) : e.toModel.Excl := by
 
 /-! ## Exclusivity as a formula
 
-`Shape`s are the actions up to their arguments (calls are told apart by arity),
-so that exclusivity can be axiomatised by a *finite* first-order formula over
-the shapes that occur in a query. -/
+`Shape`s enumerate the `call_n` family of relation symbols (by arity) together
+with the three fixed-arity symbols, so that exclusivity can be axiomatised by a
+*finite* first-order formula over the shapes that occur in a query. -/
 
 /-- The shape of an action: its kind, and for calls its arity. -/
 inductive Shape where

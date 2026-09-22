@@ -107,4 +107,58 @@ theorem fo_excl :
     (Ltl.excl (fun k => s!"v{k}") [.call 1, .retn, .lookup, .update]).Holds eTaint.toModel ξt :=
   Exec.toModel_sat_excl _ _ _ _
 
+
+
+/-! ### Past operators -/
+
+/-- `Y ⊤` is false at `0`, true at `1` and `2`. -/
+theorem fo_yesterday :
+    ¬ (Ltl.yesterday .tt : Ltl Var).Sat eTaint.toModel ξt 0 ∧
+    (Ltl.yesterday .tt : Ltl Var).Sat eTaint.toModel ξt 1 ∧
+    (Ltl.yesterday .tt : Ltl Var).Sat eTaint.toModel ξt 2 := by
+  simp only [Ltl.Sat]
+  decide
+
+/-- `O(retn(f,r))`: the return, once made, stays "once true" forever after (it does not
+    yet hold at `0`, the call's own position). -/
+theorem fo_once :
+    ¬ (Ltl.O retFr).Sat eTaint.toModel ξt 0 ∧
+    (Ltl.O retFr).Sat eTaint.toModel ξt 1 ∧
+    (Ltl.O retFr).Sat eTaint.toModel ξt 2 := by
+  simp only [Ltl.sat_O, retFr, Ltl.Sat, Atom.Sat, Exec.holds_toModel]
+  refine ⟨?_, ⟨1, by decide, by decide⟩, ⟨1, by decide, by decide⟩⟩
+  rintro ⟨k, hk, hc⟩
+  have : k = 0 := by omega
+  subst this
+  exact absurd hc (by decide)
+
+/-- `H(¬retn(f,r))`: "no return has happened yet" holds at `0`, fails from `1` on. -/
+theorem fo_historically :
+    (Ltl.H (.not retFr)).Sat eTaint.toModel ξt 0 ∧
+    ¬ (Ltl.H (.not retFr)).Sat eTaint.toModel ξt 1 := by
+  simp only [Ltl.sat_H, retFr, Ltl.Sat, Atom.Sat, Exec.holds_toModel]
+  constructor
+  · intro k hk
+    have : k = 0 := by omega
+    subst this
+    decide
+  · intro h; exact (h 1 (by decide)) (by decide)
+
+/-- `atStart(sk(f))` holds at every boundary, reaching back to the start, even nested
+    under `X X`. -/
+theorem fo_atStart_nested :
+    (Ltl.next (Ltl.next (Ltl.atStart (.atom (.sk "f"))))).Holds eTaint.toModel ξt := by
+  have h0 : (Ltl.atStart (.atom (.sk "f")) : Ltl Var).Sat eTaint.toModel ξt 0 :=
+    Ltl.sat_atStart.2 (by simp [Atom.Sat, Exec.toModel, eTaint, ξt] : (Atom.sk "f").Sat eTaint.toModel ξt 0)
+  refine ⟨by decide, by decide, ?_⟩
+  exact Ltl.sat_atStart_indep.2 h0
+
+/-- `atStart(¬call(f,[x]))` is false at `0` (the call *does* happen at `0`), matching what
+    a query's `except` translation would report for `except Call(f,[x])` at any position. -/
+theorem fo_atStart_except_no :
+    ¬ (Ltl.atStart (.not callFx)).Holds eTaint.toModel ξt := by
+  rw [Ltl.Holds, Ltl.sat_atStart]
+  simp only [Ltl.Sat, callFx, Atom.Sat, Exec.holds_toModel]
+  decide
+
 end CoreJS.Tests
