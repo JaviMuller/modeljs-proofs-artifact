@@ -444,6 +444,150 @@ theorem Pat.sat_query {Q : QName} {zs : List Var} :
 
 end inversion
 
+/-! ### Coincidence (locality in the free variables)
+
+`Pat.Sat`/`Inv.Sat`/`Guarded.Sat` depend on a valuation only through its values
+on the term's own variables — standard for any substitution-based semantics,
+and needed to relate an invoked query's *fresh* base valuation to the
+semantics' own `LEnv.empty.bind` (they agree only on the query's declared
+parameters; `Guarded.sat_coincide` is what lets that suffice). -/
+
+/-- A variable not among the ones bound falls through to the base valuation. -/
+theorem LEnv.bind_eq_of_not_mem (ξ : LEnv) :
+    ∀ (locals : List Var) (ls : List Loc) (x : Var), x ∉ locals → LEnv.bind ξ locals ls x = ξ x
+  | [], _, _, _ => rfl
+  | _ :: _, [], _, _ => rfl
+  | y :: ys, l :: ls, x, hx => by
+      simp only [LEnv.bind]
+      have hxy : x ≠ y := fun h => hx (h ▸ List.mem_cons_self ..)
+      rw [if_neg hxy]
+      exact LEnv.bind_eq_of_not_mem ξ ys ls x (fun h => hx (List.mem_cons_of_mem _ h))
+
+/-- A bound variable's value depends only on the binder list `ls`, not on the base
+    valuation. -/
+theorem LEnv.bind_indep (ξ₁ ξ₂ : LEnv) :
+    ∀ (locals : List Var) (ls : List Loc), ls.length = locals.length → ∀ x ∈ locals,
+      LEnv.bind ξ₁ locals ls x = LEnv.bind ξ₂ locals ls x
+  | [], _, _, x, hx => by simp at hx
+  | y :: ys, ls, hlen, x, hx => by
+      match ls, hlen with
+      | l :: ls', hlen =>
+        simp only [LEnv.bind]
+        by_cases hxy : x = y
+        · simp [hxy]
+        · rw [if_neg hxy, if_neg hxy]
+          exact LEnv.bind_indep ξ₁ ξ₂ ys ls' (by simpa using hlen) x
+            ((List.mem_cons.1 hx).resolve_left hxy)
+
+theorem Pat.sat_coincide {Θ : Interp} {t : List Act} {σ : Obs} {i j : Nat} :
+    ∀ {F : Pat} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ F.vars, ξ₁ x = ξ₂ x) →
+      (Pat.Sat Θ t σ ξ₁ F i j ↔ Pat.Sat Θ t σ ξ₂ F i j)
+  | .eps, _, _, _ => by rw [Pat.sat_eps, Pat.sat_eps]
+  | .act a, ξ₁, ξ₂, h => by
+      have hinst : a.inst ξ₁ = a.inst ξ₂ := by
+        simp only [Pat.vars] at h
+        cases a with
+        | lookup x₁ x₂ x₃ =>
+          simp only [QAct.vars, List.mem_cons, List.not_mem_nil, or_false] at h
+          simp only [QAct.inst, h x₁ (Or.inl rfl), h x₂ (Or.inr (Or.inl rfl)),
+            h x₃ (Or.inr (Or.inr rfl))]
+        | update x₁ x₂ x₃ =>
+          simp only [QAct.vars, List.mem_cons, List.not_mem_nil, or_false] at h
+          simp only [QAct.inst, h x₁ (Or.inl rfl), h x₂ (Or.inr (Or.inl rfl)),
+            h x₃ (Or.inr (Or.inr rfl))]
+        | call xf xs =>
+          simp only [QAct.vars, List.mem_cons] at h
+          have hxf : ξ₁ xf = ξ₂ xf := h xf (Or.inl rfl)
+          have hxs : xs.map ξ₁ = xs.map ξ₂ := List.map_congr_left (fun x hx => h x (Or.inr hx))
+          simp only [QAct.inst, hxf, hxs]
+        | retn xf x =>
+          simp only [QAct.vars, List.mem_cons, List.not_mem_nil, or_false] at h
+          simp only [QAct.inst, h xf (Or.inl rfl), h x (Or.inr rfl)]
+      simp only [Pat.sat_act, hinst]
+  | .query Q zs, ξ₁, ξ₂, h => by
+      have : zs.map ξ₁ = zs.map ξ₂ := List.map_congr_left (fun x hx => h x hx)
+      simp only [Pat.sat_query, this]
+  | .seq F₁ F₂, ξ₁, ξ₂, h => by
+      simp only [Pat.sat_seq]
+      constructor
+      · rintro ⟨k, h₁, h₂⟩
+        exact ⟨k, (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; left; exact hx))).1 h₁,
+          (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; right; exact hx))).1 h₂⟩
+      · rintro ⟨k, h₁, h₂⟩
+        exact ⟨k, (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; left; exact hx))).2 h₁,
+          (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; right; exact hx))).2 h₂⟩
+  | .alt F₁ F₂, ξ₁, ξ₂, h => by
+      simp only [Pat.sat_alt]
+      constructor
+      · rintro (h₁ | h₂)
+        · exact Or.inl ((Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; left; exact hx))).1 h₁)
+        · exact Or.inr ((Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; right; exact hx))).1 h₂)
+      · rintro (h₁ | h₂)
+        · exact Or.inl ((Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; left; exact hx))).2 h₁)
+        · exact Or.inr ((Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; right; exact hx))).2 h₂)
+  | .both F₁ F₂, ξ₁, ξ₂, h => by
+      simp only [Pat.sat_both]
+      constructor
+      · rintro ⟨j₁, j₂, h₁, h₂, h₃⟩
+        exact ⟨j₁, j₂, (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; left; exact hx))).1 h₁,
+          (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; right; exact hx))).1 h₂, h₃⟩
+      · rintro ⟨j₁, j₂, h₁, h₂, h₃⟩
+        exact ⟨j₁, j₂, (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; left; exact hx))).2 h₁,
+          (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; right; exact hx))).2 h₂, h₃⟩
+
+theorem Pred.sat_coincide {σ : Obs} :
+    ∀ {p : Pred} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ p.vars, ξ₁ x = ξ₂ x) → (Pred.Sat σ ξ₁ p ↔ Pred.Sat σ ξ₂ p)
+  | .sk x, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
+  | .ac x, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
+  | .dep x₁ x₂, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h.1, h.2]
+  | .sv x₁ x₂, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h.1, h.2]
+  | .hv x c, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
+
+theorem Inv.sat_coincide {σ : Obs} :
+    ∀ {I : Inv} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ I.vars, ξ₁ x = ξ₂ x) → (Inv.Sat σ ξ₁ I ↔ Inv.Sat σ ξ₂ I)
+  | .pred p, ξ₁, ξ₂, h => Pred.sat_coincide h
+  | .not I, ξ₁, ξ₂, h => by simp only [Inv.Sat, Inv.sat_coincide (I := I) h]
+  | .or I₁ I₂, ξ₁, ξ₂, h => by
+      simp only [Inv.Sat]
+      rw [Inv.sat_coincide (I := I₁) (fun x hx => h x (by simp [Inv.vars]; left; exact hx)),
+        Inv.sat_coincide (I := I₂) (fun x hx => h x (by simp [Inv.vars]; right; exact hx))]
+  | .and I₁ I₂, ξ₁, ξ₂, h => by
+      simp only [Inv.Sat]
+      rw [Inv.sat_coincide (I := I₁) (fun x hx => h x (by simp [Inv.vars]; left; exact hx)),
+        Inv.sat_coincide (I := I₂) (fun x hx => h x (by simp [Inv.vars]; right; exact hx))]
+  | .tt, _, _, _ => Iff.rfl
+  | .ff, _, _, _ => Iff.rfl
+
+/-- `Guarded.Sat` depends on the outer valuation only through its values outside the
+    guard's own locals (which get rebound internally regardless). -/
+theorem Guarded.sat_coincide {Θ : Interp} {t : List Act} {σ : Obs} {g : Guarded} {i j : Nat}
+    {ξ₁ ξ₂ : LEnv} (h : ∀ x ∈ g.vars, x ∉ g.locals → ξ₁ x = ξ₂ x) :
+    Guarded.Sat Θ t σ ξ₁ g i j ↔ Guarded.Sat Θ t σ ξ₂ g i j := by
+  have mp : ∀ {ξ₁ ξ₂ : LEnv}, (∀ x ∈ g.vars, x ∉ g.locals → ξ₁ x = ξ₂ x) →
+      Guarded.Sat Θ t σ ξ₁ g i j → Guarded.Sat Θ t σ ξ₂ g i j := by
+    intro ξ₁ ξ₂ h hs
+    cases hs with
+    | mk hlen hξ' hbody hwhen hexcept =>
+      rename_i ξ' ls
+      have key : ∀ x ∈ g.vars, LEnv.bind ξ₁ g.locals ls x = LEnv.bind ξ₂ g.locals ls x := by
+        intro x hxg
+        by_cases hxl : x ∈ g.locals
+        · exact LEnv.bind_indep ξ₁ ξ₂ g.locals ls hlen x hxl
+        · rw [LEnv.bind_eq_of_not_mem ξ₁ g.locals ls x hxl,
+            LEnv.bind_eq_of_not_mem ξ₂ g.locals ls x hxl]
+          exact h x hxg hxl
+      subst hξ'
+      refine .mk hlen rfl ?_ ?_ ?_
+      · exact (Pat.sat_coincide
+          (fun x hx => key x (List.mem_append.2 (Or.inl (List.mem_append.2 (Or.inl hx)))))).1 hbody
+      · exact (Inv.sat_coincide
+          (fun x hx => key x (List.mem_append.2 (Or.inl (List.mem_append.2 (Or.inr hx)))))).1 hwhen
+      · intro F' hF' k hk
+        exact hexcept F' hF' k
+          ((Pat.sat_coincide (F := F') (fun x hx => key x
+            (List.mem_append.2 (Or.inr (by rw [hF']; exact hx))))).2 hk)
+  exact ⟨mp h, mp (fun x hx hxl => (h x hx hxl).symm)⟩
+
 /-- Unfolding of `QProg.interp` at the head query of the program (any start `i`). -/
 theorem QProg.interp_head (q : Query) (Δ : QProg) (t : List Act) (σ : Obs) (ls : List Loc)
     (i j : Nat) :

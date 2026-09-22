@@ -95,10 +95,14 @@ abbrev Ren := Var → LVar
 
 /-- The fresh renaming for a callee's own scope: its parameters resolve to the
     caller-supplied arguments (already resolved through the caller's own
-    renaming); nothing else is visible (matches `Query.Declared`: a query body
-    only ever mentions its own parameters and locals). -/
-def Ren.ofParams (params : List Var) (args : List LVar) : Ren :=
-  fun x => ((params.zip args).find? (·.1 = x)).map Prod.snd |>.getD (Sum.inl x)
+    renaming), by first-match exactly as `LEnv.bind`; nothing else is visible
+    (matches `Query.Declared`: a query body only ever mentions its own
+    parameters and locals — `Ren.sat_ofParams` below only claims agreement
+    with the semantics' own `LEnv.bind` on `x ∈ params`, which is all a
+    declared body ever evaluates `ρ` at). -/
+def Ren.ofParams : List Var → List LVar → Ren
+  | y :: ys, l :: ls => fun x => if x = y then l else Ren.ofParams ys ls x
+  | _,       _        => fun x => Sum.inl x
 
 /-- Extend `ρ` with fresh synthetic names for `locals`, starting at `n`
     (`locals[k] ↦ Sum.inr (n + k)`, by first-match exactly as `LEnv.bind`); used for a
@@ -134,16 +138,17 @@ def Ren.Fresh (ρ : Ren) (n : Nat) : Prop := ∀ x m, ρ x = Sum.inr m → m < n
 theorem Ren.Fresh.mono {ρ : Ren} {n n' : Nat} (h : ρ.Fresh n) (hle : n ≤ n') : ρ.Fresh n' :=
   fun x m hx => Nat.lt_of_lt_of_le (h x m hx) hle
 
-theorem Ren.Fresh.ofParams {params : List Var} {args : List LVar} {n : Nat}
-    (hargs : ∀ l ∈ args, ∀ m, l = Sum.inr m → m < n) :
-    (Ren.ofParams params args).Fresh n := by
-  intro x m hx
-  simp only [Ren.ofParams] at hx
-  cases h : (params.zip args).find? (·.1 = x) with
-  | none => simp [h] at hx
-  | some p =>
-    simp only [h, Option.map_some, Option.getD_some] at hx
-    exact hargs p.2 (List.of_mem_zip (List.mem_of_find?_eq_some h)).2 m hx
+theorem Ren.Fresh.ofParams {n : Nat} :
+    ∀ {params : List Var} {args : List LVar}, (∀ l ∈ args, ∀ m, l = Sum.inr m → m < n) →
+      (Ren.ofParams params args).Fresh n
+  | [], _, _ => fun x m hx => by simp only [Ren.ofParams] at hx; nomatch hx
+  | _ :: _, [], _ => fun x m hx => by simp only [Ren.ofParams] at hx; nomatch hx
+  | y :: ys, l :: ls, hargs => by
+      intro x m hx
+      simp only [Ren.ofParams] at hx
+      split at hx
+      · exact hargs l (List.mem_cons_self ..) m hx
+      · exact Ren.Fresh.ofParams (fun l' hl' => hargs l' (List.mem_cons_of_mem _ hl')) x m hx
 
 theorem Ren.Fresh.map {ρ : Ren} {n : Nat} (h : ρ.Fresh n) (zs : List Var) :
     ∀ l ∈ zs.map ρ, ∀ m, l = Sum.inr m → m < n := by
@@ -261,6 +266,152 @@ theorem Ren.sat_updateFresh_extendFresh :
               (by simpa using hlen) (upd ξ (.inr n) l) x,
             hfresh.upd_comp ξ l]
 
+/-- Connects an invoked query's fresh base renaming to the semantics' own valuation for
+    its call, `LEnv.empty.bind q.params ls` — but only for `x ∈ params`: `Ren.ofParams`'s
+    "not found" fallback (`Sum.inl x`) and `LEnv.empty`'s (`0`) have no reason to agree
+    under an arbitrary `ξ`, which is exactly why this is *not* claimed for every `x` (a
+    declared query body never evaluates `ρ` outside its own parameters/locals, so this is
+    all `Guarded.sat_coincide` ever needs it for). -/
+theorem Ren.sat_ofParams (ξ : LVar → Loc) :
+    ∀ (params : List Var) (args : List LVar), params.length = args.length → ∀ x ∈ params,
+      ξ (Ren.ofParams params args x) = LEnv.bind LEnv.empty params (args.map ξ) x
+  | [], _, _, x, hx => by simp at hx
+  | y :: ys, args, hlen, x, hx => by
+      match args, hlen with
+      | l :: args', hlen =>
+        simp only [Ren.ofParams, LEnv.bind, List.map_cons]
+        by_cases hxy : x = y
+        · simp [hxy]
+        · rw [if_neg hxy, if_neg hxy]
+          exact Ren.sat_ofParams ξ ys args' (by simpa using hlen) x
+            ((List.mem_cons.1 hx).resolve_left hxy)
+
+/-! ### Insensitivity of a formula to updates at fresh tags it does not itself use
+
+A *continuation* `K` threaded into a translation step is built *before* the
+current guarded pattern's own fresh tags exist, so its truth must not depend
+on what they are eventually set to — otherwise wrapping it under a further
+`∃y⃗` (as `Guarded.Tr` does) could silently change its meaning. `Ltl.Indep φ n`
+captures this: `φ` cannot tell `ξ` apart from any `updateFresh ξ m ls` with
+`m ≥ n`. It grows monotonically as more fresh tags are consumed
+(`Ltl.Indep.mono`), and — critically for `Ltl.ex`/`Ltl.all` — binding one of
+`φ`'s *own* (already-below-`n`) tags preserves `Indep n` at the *same* `n`,
+not a smaller one: the update ranges this predicate ever has to withstand
+never reach back down to an already-bound tag. -/
+
+/-- `φ` cannot distinguish `ξ` from `updateFresh ξ m ls` for any `m ≥ n`. -/
+def Ltl.Indep (φ : Ltl LVar) (n : Nat) : Prop :=
+  ∀ (m : Model) (ξ : LVar → Loc) (k : Nat) (ls : List Loc), n ≤ k →
+    ∀ i, φ.Sat m ξ i ↔ φ.Sat m (updateFresh ξ k ls) i
+
+theorem Ltl.Indep.mono {φ : Ltl LVar} {n n' : Nat} (h : φ.Indep n) (hn : n ≤ n') : φ.Indep n' :=
+  fun m ξ k ls hk i => h m ξ k ls (Nat.le_trans hn hk) i
+
+theorem Ltl.Indep.tt (n : Nat) : (Ltl.tt : Ltl LVar).Indep n := fun _ _ _ _ _ _ => Iff.rfl
+theorem Ltl.Indep.ff (n : Nat) : (Ltl.ff : Ltl LVar).Indep n := fun _ _ _ _ _ _ => Iff.rfl
+
+theorem Ltl.Indep.not {φ : Ltl LVar} {n : Nat} (h : φ.Indep n) : (Ltl.not φ).Indep n :=
+  fun m ξ k ls hk i => by simp only [Ltl.Sat, h m ξ k ls hk i]
+
+theorem Ltl.Indep.and {φ ψ : Ltl LVar} {n : Nat} (h1 : φ.Indep n) (h2 : ψ.Indep n) :
+    (Ltl.and φ ψ).Indep n :=
+  fun m ξ k ls hk i => by simp only [Ltl.Sat, h1 m ξ k ls hk i, h2 m ξ k ls hk i]
+
+theorem Ltl.Indep.or {φ ψ : Ltl LVar} {n : Nat} (h1 : φ.Indep n) (h2 : ψ.Indep n) :
+    (Ltl.or φ ψ).Indep n :=
+  fun m ξ k ls hk i => by simp only [Ltl.Sat, h1 m ξ k ls hk i, h2 m ξ k ls hk i]
+
+theorem Ltl.Indep.next {φ : Ltl LVar} {n : Nat} (h : φ.Indep n) : (Ltl.next φ).Indep n :=
+  fun m ξ k ls hk i => by simp only [Ltl.Sat, h m ξ k ls hk (i + 1)]
+
+theorem Ltl.Indep.yesterday {φ : Ltl LVar} {n : Nat} (h : φ.Indep n) :
+    (Ltl.yesterday φ).Indep n :=
+  fun m ξ k ls hk i => by simp only [Ltl.Sat, h m ξ k ls hk (i - 1)]
+
+theorem Ltl.Indep.until {φ ψ : Ltl LVar} {n : Nat} (h1 : φ.Indep n) (h2 : ψ.Indep n) :
+    (Ltl.until φ ψ).Indep n := by
+  intro m ξ k ls hk i
+  simp only [Ltl.Sat]
+  constructor
+  · rintro ⟨p, hp1, hp2, hp3, hp4⟩
+    exact ⟨p, hp1, hp2, (h2 m ξ k ls hk p).1 hp3,
+      fun q hq1 hq2 => (h1 m ξ k ls hk q).1 (hp4 q hq1 hq2)⟩
+  · rintro ⟨p, hp1, hp2, hp3, hp4⟩
+    exact ⟨p, hp1, hp2, (h2 m ξ k ls hk p).2 hp3,
+      fun q hq1 hq2 => (h1 m ξ k ls hk q).2 (hp4 q hq1 hq2)⟩
+
+theorem Ltl.Indep.since {φ ψ : Ltl LVar} {n : Nat} (h1 : φ.Indep n) (h2 : ψ.Indep n) :
+    (Ltl.since φ ψ).Indep n := by
+  intro m ξ k ls hk i
+  simp only [Ltl.Sat]
+  constructor
+  · rintro ⟨p, hp1, hp2, hp3⟩
+    exact ⟨p, hp1, (h2 m ξ k ls hk p).1 hp2, fun q hq1 hq2 => (h1 m ξ k ls hk q).1 (hp3 q hq1 hq2)⟩
+  · rintro ⟨p, hp1, hp2, hp3⟩
+    exact ⟨p, hp1, (h2 m ξ k ls hk p).2 hp2, fun q hq1 hq2 => (h1 m ξ k ls hk q).2 (hp3 q hq1 hq2)⟩
+
+/-- Binding one of `φ`'s own already-consumed tags (`< n`) preserves `Indep n` — the
+    update ranges it has to withstand start at `≥ n > x`, so they never reach `x`. -/
+theorem Ltl.Indep.ex {x : LVar} {φ : Ltl LVar} {n : Nat}
+    (hx : ∀ m, x = Sum.inr m → m < n) (h : φ.Indep n) : (Ltl.ex x φ).Indep n := by
+  intro m ξ k ls hk i
+  have hxk : ∀ m', x = Sum.inr m' → m' < k := fun m' hm' => Nat.lt_of_lt_of_le (hx m' hm') hk
+  have hcomm : ∀ l : Loc, upd (updateFresh ξ k ls) x l = updateFresh (upd ξ x l) k ls := by
+    intro l
+    funext v
+    cases v with
+    | inl y => simp [upd, updateFresh]
+    | inr m' =>
+      simp only [upd, updateFresh]
+      by_cases hv : (Sum.inr m' : LVar) = x
+      · have hlt := hxk m' hv.symm
+        have hnk : ¬ k ≤ m' := by omega
+        simp [hv, hnk]
+      · simp [hv]
+  simp only [Ltl.Sat]
+  constructor
+  · rintro ⟨l, hl⟩
+    refine ⟨l, ?_⟩
+    rw [hcomm l]
+    exact (h m (upd ξ x l) k ls hk i).1 hl
+  · rintro ⟨l, hl⟩
+    rw [hcomm l] at hl
+    exact ⟨l, (h m (upd ξ x l) k ls hk i).2 hl⟩
+
+theorem Ltl.Indep.all {x : LVar} {φ : Ltl LVar} {n : Nat}
+    (hx : ∀ m, x = Sum.inr m → m < n) (h : φ.Indep n) : (Ltl.all x φ).Indep n := by
+  intro m ξ k ls hk i
+  have hxk : ∀ m', x = Sum.inr m' → m' < k := fun m' hm' => Nat.lt_of_lt_of_le (hx m' hm') hk
+  have hcomm : ∀ l, upd (updateFresh ξ k ls) x l = updateFresh (upd ξ x l) k ls := by
+    intro l
+    funext v
+    cases v with
+    | inl y => simp [upd, updateFresh]
+    | inr m' =>
+      simp only [upd, updateFresh]
+      by_cases hv : (Sum.inr m' : LVar) = x
+      · have := hxk m' hv.symm
+        have hnk : ¬ k ≤ m' := by omega
+        simp [hv, hnk]
+      · simp [hv]
+  simp only [Ltl.Sat]
+  constructor
+  · intro hl l
+    rw [hcomm l]
+    exact (h m (upd ξ x l) k ls hk i).1 (hl l)
+  · intro hl l
+    have := hl l
+    rw [hcomm l] at this
+    exact (h m (upd ξ x l) k ls hk i).2 this
+
+/-- Every value `ρ` produces for a query variable is untouched by an update ranging over
+    `≥ n`, given `ρ.Fresh n`. -/
+theorem Ren.Fresh.updateFresh_ren {ρ : Ren} {n k : Nat} (hfresh : ρ.Fresh n) (hk : n ≤ k)
+    (ξ : LVar → Loc) (ls : List Loc) (v : Var) : updateFresh ξ k ls (ρ v) = ξ (ρ v) := by
+  cases hc : ρ v with
+  | inl x => rfl
+  | inr m => simp [updateFresh, Nat.not_le.2 (Nat.lt_of_lt_of_le (hfresh v m hc) hk)]
+
 /-! ## Translating actions, predicates and invariants
 
 These have no query-invocation case, so are ordinary structurally recursive
@@ -308,6 +459,40 @@ theorem Inv.sat_tr (m : Model) (ρ : Ren) (ξ : LVar → Loc) (i : Nat) :
   | .and I₁ I₂ => by simp [Inv.tr, Ltl.Sat, Inv.Sat, Inv.sat_tr m ρ ξ i I₁, Inv.sat_tr m ρ ξ i I₂]
   | .tt        => by simp [Inv.tr, Ltl.Sat, Inv.Sat]
   | .ff        => by simp [Inv.tr, Ltl.Sat, Inv.Sat]
+
+/-- A translated action atom is independent of any update at or beyond `ρ`'s own range. -/
+theorem Ltl.Indep.qact {ρ : Ren} {n : Nat} (hfresh : ρ.Fresh n) (a : QAct) :
+    (Ltl.atom (a.toAtom ρ) : Ltl LVar).Indep n := by
+  intro m ξ k ls hk i
+  have hveq : ∀ v : Var, updateFresh ξ k ls (ρ v) = ξ (ρ v) := hfresh.updateFresh_ren hk ξ ls
+  have hveqs : ∀ vs : List Var, (vs.map ρ).map (updateFresh ξ k ls) = (vs.map ρ).map ξ :=
+    fun vs => List.map_congr_left (fun w hw => by
+      obtain ⟨v, _, rfl⟩ := List.mem_map.1 hw; exact hveq v)
+  cases a <;> simp [Ltl.Sat, Atom.Sat, QAct.toAtom, hveq, List.map_map, Function.comp_def, hveqs]
+
+/-- A translated taint/value atom is likewise independent. -/
+theorem Ltl.Indep.pred {ρ : Ren} {n : Nat} (hfresh : ρ.Fresh n) (p : Pred) :
+    (Ltl.atom (Pred.tr ρ p) : Ltl LVar).Indep n := by
+  intro m ξ k ls hk i
+  have hveq : ∀ v : Var, updateFresh ξ k ls (ρ v) = ξ (ρ v) := hfresh.updateFresh_ren hk ξ ls
+  cases p <;> simp [Ltl.Sat, Atom.Sat, Pred.tr, hveq]
+
+/-- A translated invariant is independent, for the same reason, by structural induction. -/
+theorem Ltl.Indep.inv {ρ : Ren} {n : Nat} (hfresh : ρ.Fresh n) : ∀ I : Inv, (Inv.tr ρ I).Indep n
+  | .pred p    => Ltl.Indep.pred hfresh p
+  | .not I     => (Ltl.Indep.inv hfresh I).not
+  | .or I₁ I₂  => (Ltl.Indep.inv hfresh I₁).or (Ltl.Indep.inv hfresh I₂)
+  | .and I₁ I₂ => (Ltl.Indep.inv hfresh I₁).and (Ltl.Indep.inv hfresh I₂)
+  | .tt        => Ltl.Indep.tt n
+  | .ff        => Ltl.Indep.ff n
+
+/-- `first` mentions no query variable at all, so it is independent at every range. -/
+theorem Ltl.Indep.first (n : Nat) : (Ltl.first : Ltl LVar).Indep n :=
+  ((Ltl.Indep.tt n).yesterday).not
+
+/-- `atStart` preserves independence. -/
+theorem Ltl.Indep.atStart {φ : Ltl LVar} {n : Nat} (h : φ.Indep n) : (Ltl.atStart φ).Indep n :=
+  (Ltl.Indep.tt n).since (h.and (Ltl.Indep.first n))
 
 /-! ## Looking up a query together with what it may itself invoke -/
 
