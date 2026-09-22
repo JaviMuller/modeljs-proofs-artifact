@@ -201,8 +201,9 @@ change one semantics, check the abstraction relation and the soundness cases.
     (`LVar := Var ⊕ Nat`: original source names, or a synthetic tag freshly minted per
     invoked-query occurrence to avoid capture when inlining — see the file header for why
     this is needed independently of the in-place, non-prenex translation style), and the
-    (partial — see its own "Remaining work") theorem that it is semantics-preserving over
-    execution records (via `Exec.toModel`).
+    **complete** theorem that it is semantics-preserving over execution records (via
+    `Exec.toModel`) — for the *full* query language, including guards, locals and
+    invocation, not just an invocation-free fragment.
     - `Pat.Tr ρ Δ F K n φ n'` / `Guarded.Tr ρ Δ g K n φ n'`: a *relation* (not a computable
       function), continuation-style as `CoreJsQuerySemantics.lean`'s comment on `&`
       anticipates. Genuinely mutually recursive with itself (a query's body may invoke
@@ -215,10 +216,20 @@ change one semantics, check the abstraction relation and the soundness cases.
       is exactly why `except` was moved to whole-trace semantics and why `Ltl.atStart` was
       added: both are needed together to make the `&` rule
       (`tr(F₁&F₂,K) = tr(F₁,K) ∧ tr(F₂,K)`) exact without hoisting into any normal form.
-    - `Pat.tr_correct`/`Pat.tr_mono` fully prove correctness for the invocation-free
-      fragment (`ε`/`a`/`;`/`‖`/`&`); guards/locals/invocation are not yet covered (needs a
-      well-founded induction on `Δ.length` using `QProg.WF`, not yet stated) — read the
-      file's own "Remaining work" before extending it.
+    - `correct_all` (`PatCorrect`/`GuardedCorrect`, by strong induction on the remaining
+      program's length, since `Pat.Tr`/`Guarded.Tr` are mutually inductive and this Lean
+      version's `induction` tactic cannot induct on a mutual-family hypothesis directly)
+      proves every `Pat.Tr`/`Guarded.Tr` witness semantics-preserving for every
+      well-formed program; `exists_all` proves a witness always exists. Together,
+      `Query.tr_correct`/`Query.exists_tr_correct` give the headline result: for a
+      well-formed query at the head of a well-formed program, matching it on an execution
+      record agrees with the record's model satisfying the translated formula at the
+      query's own top environment (`Query.topEnv`). A worked example (`exSink`) exercises
+      this concretely. Read the file's own "Remaining work" (now a completed record, not a
+      plan) for the supporting machinery this needed: renaming/freshness, the
+      `updateFresh`/`Ren.sat_updateFresh_extendFresh` bridge to `LEnv.bind`, the
+      coincidence/locality lemmas, and `Ltl.Indep` (continuations must be insensitive to
+      fresh-tag updates for the guard case's `Mono` argument to transfer).
 
 ## Lean gotchas hit in this repository
 
