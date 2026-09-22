@@ -72,6 +72,23 @@ theorem fo_action_next :
     (Ltl.F callFx).Holds eTaint.toModel ξt :=
   Ltl.sat_F_action_next (by simp [Atom.IsAction] : (Atom.call "f" ["x"]).IsAction)
 
+/-- Same, but for `retFr`, the *last* action of the trace: `X ⊤` only needs the sentinel
+    boundary to exist (always true), not a following action, so `F(a ∧ X ⊤) ≡ F(a)` holds
+    even when `a` is the final action. Checked concretely (not just via the general
+    lemma above) since `retFr` sits at the last real position of `eTaint`'s trace. -/
+theorem fo_action_next_last :
+    (Ltl.F (.and retFr (.next .tt))).Holds eTaint.toModel ξt ↔
+    (Ltl.F retFr).Holds eTaint.toModel ξt :=
+  Ltl.sat_F_action_next (by simp [Atom.IsAction] : (Atom.retn "f" "r").IsAction)
+
+/-- Spelled out directly, without the general lemma: `X ⊤` genuinely holds right after the
+    last action (at boundary `1`, one before the sentinel `2`), and both sides of the
+    equivalence above are witnessed at the trace's last position. -/
+theorem fo_action_next_last_direct :
+    (Ltl.F (.and retFr (.next .tt))).Holds eTaint.toModel ξt := by
+  simp only [Ltl.Holds, Ltl.sat_F, retFr, Ltl.Sat, Atom.Sat, Exec.holds_toModel]
+  exact ⟨1, by decide, by decide, by decide, by decide⟩
+
 /-- State atoms hold at every boundary or none: `G sk(f) ≡ sk(f) ≡ F sk(f)`. -/
 theorem fo_state_always :
     (Ltl.G (.atom (.sk "f"))).Holds eTaint.toModel ξt ∧
