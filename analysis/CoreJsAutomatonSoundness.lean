@@ -16,7 +16,8 @@
   derivation (a call's case recurses into a derivation of the callee's body,
   which is not a subterm of the call). `sound` drops the height, and
   `sound_top` specialises to a whole program run from its initial
-  configuration against an `AnalysisResult`.
+  configuration against an `AnalysisResult`, and `sound_least` to the least
+  one, which always exists (`CoreJsAutomatonTotality.lean`).
 
   The labeling is a single flat predicate over the whole graph
   (`Labeling.Valid`), so a recursive call needs no assume/guarantee argument:
@@ -34,6 +35,7 @@
 -/
 
 import CoreJsAutomatonRelation
+import CoreJsAutomatonTotality
 
 namespace CoreJS
 
@@ -474,37 +476,14 @@ theorem sound_top [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSpe
     (AlphaFn.lits_allocSafe _) (Heap.init_finite s₀) (Heap.init_fidCanon s₀)
     (fun _ _ _ _ he => .top he) H ((AConf.Alpha.init cspec s₀).le hres.2)
 
-/-!
-## Totality (deferred, `sorry`)
-
-`DESIGN_AND_PLAN.md` decision 12: aim for a Kleene-iteration witness
-(`F(⊥), F(F(⊥)), ...` stabilising by the ascending chain condition), not
-`main`'s `⊤`-shortcut. Stating the *goal* here so it is on record; the
-construction itself is substantial additional work not attempted yet:
-
-1. Restrict to the finite subtype of `AState` actually used by `(Γ, s₀)`
-   (`AState.WF` in `CoreJsAutomatonSyntax.lean`, together with
-   `CallString.length_le` and `EnvSpec.fin`) — needed before "iterate a
-   whole-graph transformer" is even a well-founded notion, since `AState`
-   itself is not finite without this restriction (`Idx`/`Fid` are `Nat`/
-   `String`).
-2. Define the whole-graph transformer `F : Labeling → Labeling`,
-   `F L s = ⊔` over every edge landing at `s` of that edge's contribution
-   computed from its own source's label under `L` — this needs `AEdge`
-   turned into an enumerable (not just decidable-in-principle) fact per
-   state, which `AEdge` as an inductive `Prop` does not provide for free.
-3. Show `F` is monotone (routine, given every atomic effect and every
-   `AHeap`/`ASto`/`AReg` operation used already is) and invoke the ascending
-   chain condition (the finite-domain groundwork the old
-   `CoreJsAbstractionSoundness.lean` already sketched — `AFinite`,
-   `AscendingHeap` — ports over essentially unchanged) to get `n` with
-   `F (F^n ⊥) ⊑ F^n ⊥`, i.e. a post-fixed point, i.e. (by construction of
-   `F`) a valid labeling.
--/
-
-theorem exists_valid_labeling [Concrete] [Abstract] (Γ : Env) (s₀ : Stmt)
-    (hΓ : EnvSpec Γ) : ∃ L : Labeling, Labeling.Valid Γ s₀ L := by
-  sorry
+/-- The headline result: every run of a program from its initial
+    configuration is matched by a walk through the automaton labeled with the
+    program's least analysis result (`CoreJsAutomatonTotality.lean`), which
+    always exists. -/
+theorem sound_least [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : AbstractSpec)
+    (xspec : CrossSpec) {Γ : Env} {s₀ : Stmt} {r : Res} (H : BigStep Γ (Conf.init s₀) s₀ r) :
+    SoundRun Γ s₀ (Labeling.least Γ s₀) [] (.entry []) id s₀ (.entry []) AlphaFn.lits r :=
+  sound_top cspec xspec (Labeling.least_result aspec Γ s₀) H
 
 /-! ## The assumptions are jointly satisfiable
 

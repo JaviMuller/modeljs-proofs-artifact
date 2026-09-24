@@ -422,3 +422,126 @@ proof needs them too, and they mention only concrete-semantics notions. The
 bridge still finds them through its import chain.
 
 ---
+
+## Decision 15 — totality by the meet of all analysis results, not by Kleene iteration terminating under the ascending chain condition
+
+**Where:** new file `CoreJsAutomatonTotality.lean` (`Labeling.least`,
+`Labeling.least_result`, `exists_least_analysisResult`,
+`exists_valid_labeling`, `Labeling.step`, `Labeling.kleene*`). TODO.md
+Entry 3, design steps 1–6. `DESIGN_AND_PLAN.md` decision 12.
+
+**The gap.** The planned argument iterates the whole-graph transformer from
+`⊥` and concludes that the chain stabilises at some finite `n`, because
+"each component domain satisfies the ascending chain condition". Under the
+current assumptions that is false:
+- `VSet` is a set of `Val`s, and `Val` is infinite (integers, strings).
+  `AbstractSpec` requires only that `opSemA` is monotone, not that it widens
+  or stays within a finite set of values. The paper's widening threshold
+  was never formalised. With `opSemA add {1} {1} = {2}` and so on, the loop
+  `while (…) { x := x + 1 }` gives the strictly ascending chain `{1}`,
+  `{1,2}`, `{1,2,3}`, … at `x`'s allocation site, which never stabilises.
+- Property names are unbounded strings, so the heap's object component does
+  not live in a finite lattice either.
+
+The old development's scaffolding, which TODO.md's first open sub-item asks
+about, is recoverable from git history: `CoreJsAbstractionSoundness.lean` as
+of the parent of commit `0eb7503`, section "Termination of the fixpoint
+search". It contains only an `AFinite` class and a lemma that ascending
+chains are monotone at every distance. It never proves stabilisation, and
+its comment relies on the same unformalised "`⊤` absorbs once the widening
+threshold is exceeded". There is nothing there to reuse.
+
+**Alternatives considered.**
+- Add a finite-height assumption (for example, `opSemA` returns `⊤` or a
+  subset of a fixed finite set) and do the full ACC argument. Rejected as
+  the main route: it adds a restriction on the abstraction that nothing else
+  needs, and needs a finite-type encoding of the reachable state space
+  (design step 1) plus a counting argument over `Prop`-valued sets. All of
+  that would only prove existence, which is available without it.
+- Use the `⊤` labeling. Rejected, as decision 12 requires: it is valid but
+  carries no information.
+- **Chosen: Knaster–Tarski.** The abstract domains are `Prop`-valued sets, so
+  labelings have arbitrary meets (`AConf.inf`). Every edge's contribution
+  is monotone in the labeling (`AGraph.lmono`, Decision 16). Hence the meet
+  of all analysis results, `Labeling.least Γ s₀`, is itself one: it lies
+  below each result `L`, so each edge's contribution from it lies below `L`'s
+  target label, hence below their meet. This is the most precise possible
+  witness (`exists_least_analysisResult`: below every analysis result),
+  which is strictly more than decision 12 asked for ("not manufacture
+  triviality").
+
+**What is kept of the Kleene story.** `Labeling.step L` is the join over
+every edge into each state (plus the initial configuration at the top
+entry), built with the infinitary join `AConf.sup`. It is proved monotone.
+Analysis results are exactly its post-fixed points (`result_iff`), and
+`least` is a fixed point (`least_fixed`). The iterates `kleene n` from `⊥`
+ascend (`kleene_ascending`) and stay below `least` (`kleene_le_least`), and
+an iterate that is a post-fixed point is an analysis result equal to `least`
+(`kleene_stable`). So whenever Kleene iteration does terminate, it computes
+exactly the labeling constructed here. Only "it always terminates" is not
+claimed, because it is not true in general (above).
+
+**Design step 1 (a finite `AState` type) is not needed** and was not built.
+The meet construction never iterates or enumerates states. `CallString.
+length_le` remains available should a terminating algorithm be formalised
+later.
+
+---
+
+## Decision 16 — monotonicity of the gated contributions, confirmed as a lemma
+
+**Where:** `CoreJsAutomatonTotality.lean`, `AConf.Calls_mono`,
+`AEdge.lmono`, `AGraph.lmono`. TODO.md Entry 3, second open sub-item.
+
+The candidate check is monotone in the configuration (`Calls_mono`: the
+callee's value set only grows with the heap and store). So an `if Calls then
+X else ⊥` contribution can switch from `⊥` to `X` as the labeling grows, but
+never back, and is monotone when `X` is. `AEdge.lmono` proves every edge's
+contribution monotone as a function of the whole labeling (Decision 1). This
+includes the return edges, which read two different states' labels. The
+accumulated transforms are handled by `PendingClosed` (Decision 4) with the
+property `AMono`. Monotonicity of `doBinOp`/`doObjLit` needs `AbstractSpec`
+(`allocA_site`: the allocated abstract location does not depend on the
+heap; `opSemA_mono`), so the totality theorems take `aspec`.
+
+TODO.md design step 7 ("confirm the `whileBackIn`/`.whileBackOut` edges are
+satisfied") holds with no special case. `least_result` proves every
+`AGraph` edge's inequality by one uniform argument, and the two back edges
+are ordinary constructors covered by `AEdge.lmono`.
+
+---
+
+## Decision 17 — `exists_valid_labeling`'s hypotheses
+
+**Where:** `CoreJsAutomatonTotality.lean`, `exists_valid_labeling`.
+
+The old statement took `[Concrete]` and `hΓ : EnvSpec Γ`, neither of which
+the proof uses. It now takes `aspec : AbstractSpec`, which the monotonicity
+argument needs. This is not a weakening in any meaningful sense: the bare
+statement `∃ L, Labeling.Valid Γ s₀ L` is provable with no hypotheses at all,
+by the `⊤` labeling. The substantive statement is
+`exists_least_analysisResult`, which says the witness is the least analysis
+result, and `exists_valid_labeling` is kept as its corollary so the name the
+old plan used still exists. The theorem moved from the soundness file to the
+new totality file (listed in `lakefile.toml`), and the soundness file imports
+it for the headline corollary `sound_least`: every run is matched by a walk
+of the least analysis result.
+
+---
+
+## Decision 18 — invariant 4(b) holds of the least analysis result
+
+**Where:** `CoreJsAutomatonTotality.lean`, `AConf.restrictFid`,
+`Labeling.least_fidReserved`. This completes Decision 4.
+
+The least labeling is compared with its own restriction `L'`: every
+function's location is cut down to at most that function. `L'` is itself an
+analysis result. Each edge's contribution from `L'` lies below `least`'s
+target label by monotonicity, and reserves functions' locations by
+`AGraph.fidReserved`. The initial configuration reserves them by
+`AConf.FidReserved.init`. So `least ≤ L'`, and `least` inherits the bound.
+This is where the preservation-lemma formulation of Decision 4 pays off:
+the proof needs only "each edge preserves the property", never a new
+`Labeling.Valid` conjunct.
+
+---

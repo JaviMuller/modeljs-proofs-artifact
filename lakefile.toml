@@ -19,6 +19,7 @@ globs = [
     "CoreJsAutomatonSyntax",
     "CoreJsAutomatonSemantics",
     "CoreJsAutomatonRelation",
+    "CoreJsAutomatonTotality",
     "CoreJsAutomatonSoundness",
     "CoreJsQuerySyntax",
     "CoreJsQuerySemantics",
