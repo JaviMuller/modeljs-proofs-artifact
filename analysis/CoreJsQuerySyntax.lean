@@ -80,7 +80,7 @@ inductive Pat where
 
 /-- Guarded action patterns `P ::= ⟨exists y⃗:⟩ F₁ ⟨when I⟩ ⟨except F₂⟩`.
 
-    The omitted clauses default, as in the paper, to no local variables
+    The omitted clauses default to no local variables
     (`locals = []`), `true` (`when = .tt`) and no excluded pattern
     (`except = none`). -/
 structure Guarded where
@@ -103,8 +103,8 @@ structure Query where
 
 /-- A query program: a list of queries, each of which may only invoke queries
     that appear *later* in the list (see `QProg.WF`).  A cons-list rather than
-    a map, so that the semantics is definable by structural recursion — the
-    paper's requirement that query invocation be acyclic is then built in. -/
+    a map, so that the semantics is definable by structural recursion —
+    acyclic query invocation is then built in. -/
 abbrev QProg := List Query
 
 /-- The (first) query named `Q`. -/
@@ -167,7 +167,7 @@ def Guarded.calls (g : Guarded) : List (QName × List Var) :=
 /-! ## Well-formedness
 
 The satisfaction relation is defined for *every* query, well-formed or not;
-these predicates single out the queries the paper talks about. -/
+these predicates single out the queries that make sense to write. -/
 
 /-- Every variable used by the query is declared in `x⃗ ∪ y⃗`, and the two
     binder lists are together duplicate-free. -/

@@ -9,7 +9,7 @@
   semantics; `Obs.ofRun` (also in `CoreJsSemantics.lean`) shows how a concrete
   run's final heap and taint register yield an observation.
 
-  The relations follow Fig. 5 of the paper:
+  The relations:
 
   * `Inv.Sat σ ξ I`                       — `σ, ξ ⊨ I`
   * `Pat.Sat Θ t σ ξ F i j`               — `t, σ, ξ ⊨ F : i ⇝ j`
@@ -21,19 +21,22 @@
   `F` is performed, and the last action it uses is `t[j-1]` (so `j` is one
   past it; `j = i` if `F` uses no action).
 
-  Differences from the figure as printed (all deliberate):
+  Choices worth knowing about:
 
   * `F₁ & F₂ : i ⇝ j` requires *both* patterns to match from `i`, ending at
     `j₁` and `j₂`, and `j = max j₁ j₂`.  A single trace action may serve both
     sides, so `a & a` is matched whenever `a` is.
   * `except F'` is checked over the *whole trace*: `F'`, matched from `0`
     with any end point `k`, must not occur anywhere in `t` — not just after
-    the start `i` of the query it belongs to, and not just before `j`.  It
-    only constrains the guarded pattern it belongs to, so under `Q ‖ F` a
-    failing `except` inside `Q` merely rules out the left alternative.
-  * The figure quantifies over extensions `ξ'' ⊇ ξ'` of the valuation; here
-    valuations are total and (by `Query.Declared`) every variable of the
-    query is already assigned, so the quantifier is vacuous and is dropped.
+    the start `i` of the query it belongs to, and not just before `j`.  A
+    guard thereby does not depend on where its query starts, which is what
+    lets the FO-LTL translation (`CoreJsQueryToLtl.lean`) place a guard's
+    translation exactly where the query occurs.  It only constrains the
+    guarded pattern it belongs to, so under `Q ‖ F` a failing `except` inside
+    `Q` merely rules out the left alternative.
+  * Valuations are total and (by `Query.Declared`) every variable of a
+    well-formed query is already assigned, so there is no quantification
+    over extensions of the valuation.
   * Invocation `Q(z⃗)` runs the body of `Q` under the valuation
     `[xᵢ ↦ ξ(zᵢ)]` — equivalent to `P_Q[z⃗/x⃗]` with the locals of `Q` private —
     rather than substituting syntactically, so no capture-avoidance is needed.

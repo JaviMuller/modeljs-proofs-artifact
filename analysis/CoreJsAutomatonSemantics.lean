@@ -1,26 +1,24 @@
 /-
   # Core JavaScript — Automaton Semantics
 
-  This file is *not* a transcription of any figure in the paper. It is this
-  branch's own contribution: the automaton-based replacement for the
-  μ-trace/summary machinery of `CoreJsAbstractSemantics.lean`
-  (`ATrc`/`AOut`/`ASummary`/`ASigma`/`ACallBranch`/`ABigStep`'s control-flow
-  rules), described in `DESIGN_AND_PLAN.md` §4.3–4.4.
+  The abstract domains of the analysis, the automaton's edges over the states
+  of `CoreJsAutomatonSyntax.lean`, and what it means for a labeling (an
+  abstract configuration at every state) to be valid:
 
-  **Independent of the old abstract-semantics files.** `CoreJsAbstractSyntax
-  .lean`/`CoreJsAbstractSemantics.lean`/`CoreJsAbstractionRelation.lean`/
-  `CoreJsAbstractionSoundness.lean` are kept in the repository only as
-  reference material for this rewrite (their per-statement value-update math
-  is where the atomic effect functions below come from) and are slated for
-  removal once the automaton development is complete. This file therefore
-  does **not** import any of them — it re-declares the abstract domains
-  (`ALoc`, `ALocSet`, `VSet`, `AHeap`, `ASto`, `AReg`) it needs from scratch,
-  rather than reusing theirs, so that the automaton development has no
-  dependency left to sever later.
+  * abstract locations, value sets, heaps, stores and taint registers, their
+    order and join, and the parameters of the analysis (`Abstract`,
+    `AbstractSpec`);
+  * abstract trace actions (`AAct`), the labels of the edges;
+  * the per-statement effects on abstract configurations;
+  * the edge relations `AExit`/`AEdge`/`ARet`, the whole graph `AGraph`,
+    labelings and their validity, analysis results, and walks (`AWalk`);
+  * the invariant that functions' canonical locations hold only those
+    functions, preserved by every edge.
 
-  See `PROBLEMS.md` for the implementation decisions made while turning
-  `DESIGN_AND_PLAN.md`'s §4 into Lean, several of which concern this file
-  specifically (Decisions 1, 2, 3, 4, 5).
+  Control flow is purely structural: whether a statement returned or
+  continued is a matter of which states and edges exist, never a value
+  carried on a result. A branch that returns simply has no edge into what
+  follows it.
 
   Plain Lean 4 — no Mathlib required.
 -/
@@ -32,8 +30,7 @@ namespace CoreJS
 
 /-! ## Abstract locations and location sets
 
-Reproduced from `CoreJsAbstractSyntax.lean` (Fig. B1) rather than imported —
-see the file header. Nothing below depends on the representation. -/
+Nothing below depends on the representation of abstract locations. -/
 
 def ALoc := Nat
 
@@ -71,7 +68,7 @@ instance : Membership Val VSet  := ⟨VSet.Mem⟩
 instance : HasSubset VSet       := ⟨VSet.Subset⟩
 instance : Union VSet           := ⟨VSet.join⟩
 
-/-! ## Abstract heap, store and taint register (Fig. B1) -/
+/-! ## Abstract heap, store and taint register -/
 
 /-- Abstract stores `ρ̂ ∈ Ŝto : Var ⇀ P(L̂oc)`, modelled total into `∅`. -/
 def ASto := Var → ALocSet
@@ -109,8 +106,7 @@ def AAct.visible : AAct → List AAct
   | .epsilon => []
   | a        => [a]
 
-/-! ### Order (Def. B4) and join (Def. B5), restricted to the domains still
-    needed. -/
+/-! ### Order and join -/
 
 def AHeap.Le (h₁ h₂ : AHeap) : Prop :=
   (∀ l p, h₁.obj l p ⊆ h₂.obj l p) ∧ (∀ l, (h₁.val l) ⊆ (h₂.val l))
@@ -149,7 +145,7 @@ instance : Join AHeap   := ⟨AHeap.join⟩
 instance : Join ASto    := ⟨ASto.join⟩
 instance : Join AReg    := ⟨AReg.join⟩
 
-/-! ## Lifting the heap/register to sets of locations (Fig. B6) -/
+/-! ## Lifting the heap/register to sets of locations -/
 
 def AHeap.valOf (h : AHeap) (L : ALocSet) : VSet :=
   .vals (fun v => ∃ l, L l ∧ (h.val l).Mem v)
@@ -163,7 +159,11 @@ def AHeap.objOfV (h : AHeap) (L : ALocSet) (V : VSet) : ALocSet :=
 def AReg.depOf (δ : AReg) (L : ALocSet) : ALocSet :=
   fun l' => ∃ l, L l ∧ δ.dep l l'
 
-/-! ## Abstract updates (Fig. B6). All heap/register updates are weak (§5.1). -/
+/-! ## Abstract updates
+
+All heap/register updates are weak (they join into what is there): one
+abstract location stands for every concrete location allocated at the sites
+it abstracts, so an update of one of them must not erase the others. -/
 
 def AHeap.weakSetVal (h : AHeap) (l : ALoc) (V : VSet) : AHeap :=
   { h with val := fun l' => if l' = l then VSet.join V (h.val l') else h.val l' }
@@ -213,7 +213,7 @@ structure AbstractSpec [Abstract] : Prop where
       nothing an allocation writes can reach it. -/
   allocA_fid : ∀ h κ f, allocA h κ ≠ litLocA (.fid f)
 
-/-- `⟦e⟧ρ̂` (Fig. B2). Total: an unbound variable evaluates to `∅`. -/
+/-- `⟦e⟧ρ̂`. Total: an unbound variable evaluates to `∅`. -/
 def aevalE [Abstract] (ρ : ASto) : Expr → ALocSet
   | .val v => {litLocA v}
   | .var x => ρ x
@@ -222,7 +222,7 @@ def aevalEs [Abstract] (ρ : ASto) : List Expr → List ALocSet
   | []      => []
   | e :: es => aevalE ρ e :: aevalEs ρ es
 
-/-! ## Call candidates (§5.1, `IsCandidate`) -/
+/-! ## Call candidates -/
 
 def Env.params (Γ : Env) (f : Fid) : List Var :=
   ((Γ f).map Prod.fst).getD []
@@ -254,16 +254,13 @@ def AConf.Le (c₁ c₂ : AConf) : Prop :=
 
 instance : LE AConf := ⟨AConf.Le⟩
 
-/-! ## Atomic per-statement effects (Fig. B6)
+/-! ## Atomic per-statement effects
 
 Every statement shape that allocates no automaton state of its own
 (`skip`/`assign`/`binOp`/`objLit`/`setTaint`/`setSink`) or exactly one
 `action` state consumed by a single edge (`lookupS`/`lookupD`/`updateS`/
 `updateD`) contributes a *deterministic* transformation of the running
-`AConf`. These are transcribed unchanged from the old `ABigStep`'s
-corresponding rules (`CoreJsAbstractSemantics.lean`) — decision 2 of
-`PROBLEMS.md`: the value-update math does not change, only how it is
-attached, here directly as an edge's contribution function. -/
+`AConf`, attached to the edges as (part of) their contribution. -/
 
 def AConf.doAssign [Abstract] (x : Var) (e : Expr) (c : AConf) : AConf :=
   { c with sto := c.sto.upd x (aevalE c.sto e) }
@@ -343,7 +340,7 @@ def AConf.Calls [Abstract] (Γ : Env) (e : Expr) (n : Nat) (f : Fid) (c : AConf)
 /-- A labeling assigns an `AConf` to every automaton state. -/
 def Labeling := AState → AConf
 
-/-! ## The automaton's edges (§4.3)
+/-! ## The automaton's edges
 
 Three mutually recursive relations, parameterised by the function
 environment `Γ` and indexed by the call string `cs` and the "processing
@@ -355,7 +352,7 @@ whatever arrives at `entry`:
 * `AExit Γ cs entry pending s x xpending` — processing `s` leaves `x` as one
   of the (possibly several) dangling *continuing* exits, itself to be resumed
   with transform `xpending`. `ret` contributes no `AExit` fact at all — a
-  `ret` never continues (Decision 3 of `DESIGN_AND_PLAN.md`, decisions 3/8).
+  `ret` never continues.
 * `AEdge Γ cs entry pending s a b C ℓ` — processing `s` produces the graph
   edge `a → b` with contribution `C` and action label `ℓ`. Both are read off
   a labeling `L`: `C L` is what the edge contributes to `L b`, and `ℓ L` is
@@ -368,18 +365,19 @@ whatever arrives at `entry`:
   `ret e` at state `r`, with `rpending` the transform up to (but not
   including) evaluating `e`. Used only by `call`'s own processing to wire
   every reachable `ret` inside a candidate callee to that call's own
-  continuation (`PROBLEMS.md` decision 4) — `ret` itself never emits an edge.
+  continuation: the call knows the variable to bind and the callee's call
+  string, whereas a `ret` does not know which call sites reach it. `ret`
+  itself never emits an edge.
 
 These are ordinary inductive `Prop`s, not a terminating computation: `call`'s
-cases recurse into `Γ.body f` for whichever `f` is a candidate, exactly as
-`ABigStep`'s old `callRet`/`callCont` did, which is well-formed for a
-strictly positive inductive `Prop` without needing any termination measure
-(`PROBLEMS.md` decision 1). -/
+cases recurse into `Γ.body f`, which is not a subterm of the call, and a
+strictly positive inductive `Prop` needs no termination measure for that.
+Nothing needs the edge set to be computable, only to be well defined. -/
 
--- `IsCandidate` is an arbitrary `Prop` (it quantifies through `VSet.Mem`),
--- not decidable in general; the `if IsCandidate ... then ... else ...` in
--- `callEntry` below is only ever used to state a value, never executed, so a
--- classical instance is exactly right here.
+-- `AConf.Calls` is an arbitrary `Prop` (it quantifies through `VSet.Mem`),
+-- not decidable in general; the `if … then … else …` in the call edges below
+-- is only ever used to state a value, never executed, so a classical
+-- instance is exactly right here.
 attribute [local instance] Classical.propDecidable
 
 mutual
@@ -476,14 +474,11 @@ inductive AEdge [Abstract] (Γ : Env) :
   /-- Every subsequent iteration re-checks the guard exactly the same way
       the first one did — fanning out again into `whileIn`/`whileOut`, this
       time from the previous iteration's own exit `x` with its own
-      accumulated `xpending`, rather than looping back through `entry`'s
-      *original* `pending` a second time. `PROBLEMS.md` decision 8: routing
-      the back-edge through `entry` (matching `DESIGN_AND_PLAN.md`'s literal
-      table, "epsilon back to the header") turned out to need `L entry ⊑
-      pending (L entry)` for soundness — a fact nothing guarantees — so the
-      back-edge fans out directly instead, exactly mirroring `entry`'s own
-      first-arrival fan-out (`whileHeaderIn`/`.whileHeaderOut` above) but
-      sourced at `x` with `xpending` in place of `entry` with `pending`. -/
+      accumulated `xpending`, mirroring `entry`'s first-arrival fan-out
+      (`whileHeaderIn`/`.whileHeaderOut`). Looping back to `entry` instead
+      would send every later iteration through `entry`'s *original*
+      `pending` again, which is sound only if `L entry ⊑ pending (L entry)`
+      — nothing guarantees that when flat statements precede the loop. -/
   | whileBackIn {cs entry pending κ e s x xpending} :
       AExit Γ cs (.whileIn cs κ) id s x xpending →
       AEdge Γ cs entry pending (.whileDo κ e s) x (.whileIn cs κ)
@@ -494,18 +489,19 @@ inductive AEdge [Abstract] (Γ : Env) :
         (fun L => xpending (L x)) (fun _ => some .epsilon)
   /-- The call's own continuation state also always gets a pass-through edge
       directly from the call, binding `x` to `∅` and leaving everything else
-      unchanged — `PROBLEMS.md` decision 3: without this, every caller-local
-      variable but `x` would be lost at `cont`, and a call site with no live
-      candidate would starve everything sequenced after it. -/
+      unchanged. Without it, every caller-local variable but `x` would be lost
+      at `cont` (the return edges carry only `x`), and a call site with no
+      live candidate would starve everything sequenced after it. -/
   | callPassThrough {cs entry pending x κ e es} :
       AEdge Γ cs entry pending (.call x κ e es) entry (.cont cs κ)
         (fun L => let v := pending (L entry); { v with sto := v.sto.upd x ∅ })
         (fun _ => some .epsilon)
   /-- Structural edge into every arity-matching candidate's entry, gated
-      entirely on `IsCandidate` (`PROBLEMS.md` decision 5: the *whole*
-      contribution collapses to `AConf.bot`, not just the argument binding,
-      when this call site could not have resolved to `f` at this label; the
-      label is then `none`, so no walk can take the edge either). -/
+      entirely on the candidate check: the *whole* contribution collapses to
+      `AConf.bot`, not just the argument binding, when this call site could
+      not have resolved to `f`, since nothing about such a call should reach
+      `f`'s entry. The label is then `none`, so no walk can take the edge
+      either. -/
   | callEntry {cs entry pending x κ e es f params body}
       (hf : Γ f = some (params, body)) (harity : params.length = es.length) :
       AEdge Γ cs entry pending (.call x κ e es) entry
@@ -521,8 +517,7 @@ inductive AEdge [Abstract] (Γ : Env) :
             some (.call (litLocA (.fid f)) (aevalEs v.sto es))
           else none)
   /-- One edge per `ret` reachable inside a candidate callee's body, wired
-      directly to this call's own continuation (`PROBLEMS.md` decision 4).
-      Gated on the same candidate check as `callEntry`, evaluated at the
+      directly to this call's own continuation. Gated on the same candidate check as `callEntry`, evaluated at the
       *caller's* configuration at the call site: a call site that cannot
       have called `f` receives nothing from `f`'s returns, even though it
       shares `f`'s entry with call sites that can. The callee's local store
@@ -546,13 +541,11 @@ inductive AEdge [Abstract] (Γ : Env) :
   /-- A candidate callee whose body can *fall through* (reach any
       `.cont`-outcome exit, structurally: any `AExit` fact of its body)
       implicitly returns `undefined` (matching the concrete `[Function Call],
-      implicit return` rule, `CoreJsSemantics.lean`'s `callCont`) — this is a
-      genuine second source of contribution to `cont`, independent of
-      `callRet`, surfaced only once the soundness proof was attempted (see
-      `PROBLEMS.md` decision 7): without it the model is unsound for any
-      program where a callee can fall through, since `cont`'s label would
-      then omit `undefined` from `x`'s bindings whenever a live candidate's
-      body has no explicit `return` on some path. Gated like `callRet`. -/
+      implicit return` rule, `CoreJsSemantics.lean`'s `callCont`) — a second
+      source of contribution to `cont`, independent of `callRet`. Without it
+      `cont`'s label would omit `undefined` from `x`'s bindings whenever a
+      live candidate's body has no explicit `return` on some path. Gated like
+      `callRet`. -/
   | callImplicitRet {cs entry pending x κ e es f params body y ypending}
       (hf : Γ f = some (params, body)) (harity : params.length = es.length) :
       AExit Γ (targetCallString cs κ f) (.entry (targetCallString cs κ f)) id

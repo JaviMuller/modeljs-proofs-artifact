@@ -1,8 +1,10 @@
 /-
   # Core JavaScript — Syntax
 
-  Formalisation of Figure A1 of Appendix A of
-  "Model Checking Security Properties of Node.js Packages".
+  Values, expressions, binary operators and statements of Core JavaScript, a
+  small imperative core of JavaScript with first-order functions called
+  through variables, objects with named properties, and two taint-tracking
+  statements (`setTaint`, `setSink`).
 
   Plain Lean 4 — no Mathlib required.
 -/
@@ -11,9 +13,9 @@ namespace CoreJS
 
 /-! ## Basic syntactic categories
 
-The paper's leaf sorts.  We fix concrete representations for the sorts whose
-internal structure is irrelevant to the semantics: identifiers are strings and
-locations are natural numbers. -/
+The leaf sorts. Those whose internal structure is irrelevant to the semantics
+get fixed concrete representations: identifiers are strings and locations are
+natural numbers. -/
 
 /-- Program variables `x ∈ Var`. -/
 abbrev Var := String
@@ -56,10 +58,10 @@ inductive Expr where
   | var (x : Var)
   deriving DecidableEq, Repr
 
-/-- Binary operators `⊕`.  The paper leaves the operator set abstract and
-    only assumes an interpretation `⊕(v₁, v₂)`; we fix a representative set
-    here and supply the interpretation as a parameter of the semantics
-    (see `CoreJS.Concrete.opSem` in `CoreJsSemantics.lean`). -/
+/-- Binary operators `⊕`.  Only their interpretation `⊕(v₁, v₂)` matters to
+    the semantics, and it is a parameter (`CoreJS.Concrete.opSem` in
+    `CoreJsSemantics.lean`); the operator set itself is a representative
+    choice. -/
 inductive BinOp where
   | add | sub | mul | div
   | eq | lt | le
@@ -117,8 +119,8 @@ inductive Stmt where
 
 /-! ## Literals occurring in a program
 
-Needed for Definition A4 (well-formedness of concrete heaps w.r.t. a
-statement): every literal `v` occurring in `s` must be stored at its fixed
+Needed for the well-formedness of concrete heaps w.r.t. a statement
+(`Heap.WF`): every literal `v` occurring in `s` must be stored at its fixed
 location `l_v`.
 
 Note that the static lookup/update rules emit trace actions mentioning `l_p`,
@@ -154,16 +156,15 @@ def Stmt.lits : Stmt → List Val
 
 /-! ## Site identifiers occurring in a statement
 
-REMARK.  Fig. A1 gives `call`/`lookupS`/`lookupD`/`updateS`/`updateD`/`ifElse`/
-`whileDo` no syntactic identity of their own, unlike `binOp`/`objLit`'s `κ`.
-The automaton-based analysis (`CoreJsAutomatonSyntax.lean`) needs every one of
-these constructs to carry a unique per-occurrence index too — a call site's
-identity (combined with a call-string) is what the automaton's states are
-built from, and an `ifElse`/`whileDo` occurrence's index is what names its
-allocated branch/loop states. This is a deliberate deviation from the paper's
-literal syntax, added here (rather than derived structurally from AST
-position) because call sites need to *compose* their index with a call-string,
-which a bare derived path type would not do any more simply.
+Besides `binOp`/`objLit`, whose `κ` the allocator uses, every `call`/
+`lookupS`/`lookupD`/`updateS`/`updateD`/`ifElse`/`whileDo` carries a site index
+of its own. The automaton-based analysis (`CoreJsAutomatonSyntax.lean`) names
+its states after them: a call site's index, combined with a call string,
+identifies that call's continuation, and an `ifElse`/`whileDo`'s index names
+its branch/loop states. The index is explicit rather than derived from the
+statement's position in the syntax tree because a call site's identity has
+to be combined with a call string, which a plain index does at least as
+simply as any derived path would.
 
 Well-formedness (`Stmt.SitesWF`) requires all such indices, together with the
 pre-existing `binOp`/`objLit` `κ`s, to be pairwise distinct across a program —

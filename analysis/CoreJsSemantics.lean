@@ -1,13 +1,15 @@
 /-
   # Core JavaScript — Concrete Semantics
 
-  Formalisation of Figures A2–A6 and Definition A4 of Appendix A of
-  "Model Checking Security Properties of Node.js Packages":
-
-  * Fig. A2  — semantic domains
-  * Fig. A3  — expression evaluation `⟦e⟧ᵨ`
-  * Def. A4  — well-formedness of concrete heaps w.r.t. a statement
-  * Fig. A5/A6 — the big-step judgement `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`
+  * semantic domains (stores, heaps, taint registers, traces, outcomes) and
+    execution records;
+  * the parameters of the semantics (`Concrete`) and their assumptions
+    (`ConcreteSpec`);
+  * expression evaluation `⟦e⟧ᵨ`;
+  * well-formedness of concrete heaps w.r.t. a statement, and the minimal
+    initial configuration of a run;
+  * the big-step judgement `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`, a
+    height-indexed copy of it, and the invariants every run preserves.
 
   Plain Lean 4 — no Mathlib required.
 -/
@@ -32,7 +34,7 @@ instance : Union LocSet          := ⟨fun A B l => A l ∨ B l⟩
 /-- Set inclusion, useful for stating soundness lemmas. -/
 def LocSet.Subset (A B : LocSet) : Prop := ∀ l, A l → B l
 
-/-! ## Semantic domains (Fig. A2) -/
+/-! ## Semantic domains -/
 
 /-- Program stores `ρ ∈ Sto : Var ⇀ Loc`. -/
 def Sto := Var → Option Loc
@@ -68,9 +70,10 @@ def Heap.setVal (h : Heap) (l : Loc) (v : Val) : Heap :=
 def Heap.setObj (h : Heap) (l : Loc) (p : PropName) (l' : Loc) : Heap :=
   { h with obj := fun l₁ p₁ => if l₁ = l ∧ p₁ = p then some l' else h.obj l₁ p₁ }
 
-/-- `h[obj ↦ h.obj[(l, pᵢ) ↦ lᵢ | ⁿᵢ₌₁]]`.  Simultaneous update of the paper;
-    performed left-to-right here, which agrees with it when the `pᵢ` are
-    pairwise distinct (as required for object literals). -/
+/-- `h[obj ↦ h.obj[(l, pᵢ) ↦ lᵢ | ⁿᵢ₌₁]]`, performed left to right, so a later
+    binding of the same property wins.  This is the simultaneous update
+    whenever the `pᵢ` are pairwise distinct, as they are required to be in
+    an object literal. -/
 def Heap.setObjs (h : Heap) (l : Loc) : List (PropName × Loc) → Heap
   | []            => h
   | (p, l') :: ps => (h.setObj l p l').setObjs l ps
@@ -164,7 +167,7 @@ theorem Heap.not_defined_of_fresh {h : Heap} {l : Loc}
     * `ac`  — directly attacker-controlled locations;
     * `sk`  — locations holding sensitive sinks.
 
-    `dep` is total with default `∅`, which is how the paper uses it. -/
+    `dep` is total, with `∅` for a location that depends on nothing. -/
 structure Reg where
   dep : Loc → LocSet
   ac  : LocSet
@@ -279,9 +282,9 @@ structure Res where
 
 /-! ## Parameters of the concrete semantics
 
-The paper leaves three ingredients abstract: the injection `v ↦ l_v` of
-literals into locations, the concrete allocator `alloc_c`, and the
-interpretation of binary operators. -/
+Three ingredients are left as parameters: the injection `v ↦ l_v` of literals
+into locations, the concrete allocator `alloc_c`, and the interpretation of
+binary operators. -/
 
 /-- Parameters of the concrete semantics. -/
 class Concrete where
@@ -294,8 +297,8 @@ class Concrete where
 
 open Concrete
 
-/-- The assumptions the paper makes about the parameters above: literal
-    locations are pairwise distinct, and `alloc_c` returns a location that is
+/-- Assumptions about the parameters above: literal locations are pairwise
+    distinct, and `alloc_c` returns a location that is
     unused in the current heap (hence, in a well-formed heap, distinct from
     every `l_v`).  The semantics itself does not depend on these; they are
     needed for the soundness proofs.
@@ -326,7 +329,7 @@ theorem exists_allocator :
 def Heap.FidCanon [Concrete] (h : Heap) : Prop :=
   ∀ l f, h.val l = some (.fid f) → l = litLoc (.fid f)
 
-/-! ## Expression evaluation (Fig. A3)
+/-! ## Expression evaluation
 
 `⟦e⟧ᵨ ≜ l`, with `⟦v⟧ᵨ ≜ l_v` and `⟦x⟧ᵨ ≜ ρ(x)`.  Partial, as `ρ` is. -/
 
@@ -343,7 +346,7 @@ def evalEs [Concrete] (ρ : Sto) : List Expr → Option (List Loc)
       let ls ← evalEs ρ es
       return l :: ls
 
-/-! ## Well-formedness (Definition A4) -/
+/-! ## Well-formedness -/
 
 /-- A concrete heap `h` is well formed w.r.t. a statement `s` iff every
     literal value `v` occurring in `s` satisfies `h.val(l_v) = v`, and the
@@ -412,15 +415,18 @@ theorem Heap.init_finite [Concrete] (s : Stmt) : (Heap.init s).Finite := by
   have := hn x hx
   simpa using Nat.ne_of_lt (Nat.lt_of_lt_of_le this hl)
 
-/-! ## Big-step semantics (Figs. A5 and A6)
+/-! ## Big-step semantics
 
 `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`.
 
-Each rule is stated exactly as in the paper: the components of the resulting
-configuration are introduced as variables and defined by equational premises.
+Each rule introduces the components of the resulting configuration as
+variables and defines them by equational premises, so a derivation can be
+built by applying the rule and discharging each equation on its own (as the
+test suite's `bigstep` tactic does), and the abstract semantics can mirror
+the rules premise by premise.
 
 Since this is an *inductive* definition, only terminating executions are
-derivable — which is what the paper's finite-trace semantics intends. -/
+derivable, and every trace is finite. -/
 
 inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
 
@@ -576,10 +582,11 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
 
 `BigStep` lives in `Prop`, so Lean generates no `sizeOf` for it and its
 recursor eliminates only into `Prop`: there is no derivation height available
-to recurse on.  The soundness proof needs one — `[Call-Fix]` extends `Σ` with
-a summary whose validity quantifies over *all* concrete executions of the
-callee body, not merely over sub-derivations of the derivation being inducted
-on, so structural induction does not reach it.
+to recurse on.  The automaton soundness proof needs one: its `[While]` case
+applies the induction hypothesis to derivations several levels below the one
+being inducted on (the loop body's derivation, and the next iteration's,
+inside the unfolded conditional and sequence), which structural induction,
+giving hypotheses only for immediate premises, does not provide.
 
 `BigStepN Γ n` is the same relation with an explicit bound on derivation
 height: every rule concludes at `n+1` with its recursive premises at `n`.

@@ -4,15 +4,8 @@ defaultTargets = ["Analysis"]
 [[lean_lib]]
 name = "Analysis"
 srcDir = "analysis"
-# CoreJsAbstractSyntax/CoreJsAbstractSemantics/CoreJsAbstractionRelation/
-# CoreJsAbstractionSoundness are kept in analysis/ as reference material for
-# the automaton rewrite (automaton-trace-model branch) but are no longer
-# build targets: they pattern-match Stmt constructors (ifElse/whileDo/call/
-# lookupS/lookupD/updateS/updateD) by the arity those constructors had before
-# this branch added Idx site fields to them, so they no longer type-check,
-# and the automaton files are deliberately independent of them (see
-# CoreJsAutomatonSemantics.lean's header and PROBLEMS.md). They are slated
-# for deletion once the automaton development is complete.
+# Every module of the library must be listed here: a file under analysis/
+# that is not listed is silently skipped by `lake build`.
 globs = [
     "CoreJsSyntax",
     "CoreJsSemantics",

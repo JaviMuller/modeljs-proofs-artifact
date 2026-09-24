@@ -13,8 +13,9 @@
 
   `step_sound` proves this for a run of any statement processed at any
   position of the graph, by strong induction on the height of the concrete
-  derivation (a call's case recurses into a derivation of the callee's body,
-  which is not a subterm of the call). `sound` drops the height, and
+  derivation: a `while` loop's case needs the hypothesis for the body's and
+  the next iteration's derivations, which sit several levels below the
+  loop's own. `sound` drops the height, and
   `sound_top` specialises to a whole program run from its initial
   configuration against an `AnalysisResult`, and `sound_least` to the least
   one, which always exists (`CoreJsAutomatonTotality.lean`).
@@ -63,8 +64,8 @@ theorem aevalEs_length [Abstract] : ∀ (ρ : ASto) (es : List Expr),
   | _, []      => rfl
   | ρ, e :: es => by simp [aevalEs, aevalEs_length ρ es]
 
-/-- Lemma B11, lifted to whole parameter lists: the callee's freshly built
-    store relates to the abstract store built the same way, given the
+/-- Store update (`sto_upd_alpha`), lifted to whole parameter lists: the
+    callee's freshly built store relates to the abstract store built the same way, given the
     argument lists are related componentwise. -/
 theorem sto_ofParams_alpha {α : AlphaFn} :
     ∀ {ls : List Loc} {Ls : List ALocSet}, LocsAlpha α ls Ls →

@@ -1,34 +1,33 @@
 /-
   # Core JavaScript — Automaton Abstraction Relation
 
-  This file is *not* a transcription of any figure in the paper. It
-  generalises Appendix B.2.1's abstraction relation (Def. B8) from a single
-  concrete/abstract configuration pair to the automaton model of
-  `CoreJsAutomatonSemantics.lean`: relating a concrete configuration to the
-  `AConf` a *labeling* assigns to a given automaton state.
+  Relates concrete configurations and traces to the abstract ones of
+  `CoreJsAutomatonSemantics.lean`, through an abstraction function `α` from
+  concrete to abstract locations:
 
-  Independent of the old `CoreJsAbstractionRelation.lean` (kept only as
-  reference material — see `CoreJsAutomatonSemantics.lean`'s header and
-  `PROBLEMS.md` decision 6): `Heap.Alpha`/`Sto.Alpha`/`Reg.Alpha` and the
-  supporting lemmas below are re-derived against this branch's own `AHeap`/
-  `ASto`/`AReg`/`ALoc` (`CoreJsAutomatonSemantics.lean`), not imported.
-  `Out.Alpha`/`Act.Alpha`/`Trc.Alpha`/`LocsAlpha` have no counterpart here at
-  all — decision 2 of `PROBLEMS.md` drops action/trace labels from this phase
-  entirely, and "did this statement return" is a structural fact about which
-  automaton states/edges exist (`AExit`'s absence for `ret`), never a value
-  carried on a result the way `Out.Alpha` related.
+  * `Heap.Alpha`/`Sto.Alpha`/`Reg.Alpha`/`AConf.Alpha`: a concrete
+    configuration against the `AConf` a labeling assigns to a state;
+  * `Act.Alpha`/`Trc.Alpha`: a concrete trace against a walk's abstract
+    actions, position by position;
+  * the lemmas the soundness proof uses for each statement shape, and the
+    invariant (`AlphaFn.AllocSafe`) and assumptions (`CrossSpec`) that let
+    `α` be extended at every allocation.
 
-  See `PROBLEMS.md` for further decisions made while writing this file.
+  There is no relation on outcomes: whether a statement returned is a
+  structural fact about which automaton states and edges exist, never a
+  value carried on a result.
 -/
 
 import CoreJsAutomatonSemantics
 
 namespace CoreJS
 
-/-! ## Abstraction functions (Def. B8, REMARK A/B of the old
-    `CoreJsAbstractionRelation.lean`, ported unchanged: `α` is a *partial*
-    map, extended monotonically, and commits literal locations once and for
-    all via `AlphaFn.Lits` rather than lazily at each evaluation). -/
+/-! ## Abstraction functions
+
+`α` is a *partial* map, extended monotonically along a run (every relation
+below is positive in `α`), and it commits literal locations once and for all
+(`AlphaFn.Lits`) rather than lazily at each evaluation, so evaluating an
+expression never needs to extend it. -/
 
 /-- `α : Loc ⇀ L̂oc`. -/
 abbrev AlphaFn := Loc → Option ALoc
@@ -58,12 +57,11 @@ theorem AlphaFn.MapsInto.subset {α : AlphaFn} {l L L'} (hs : L ⊆ L')
   exact ⟨al, hal, hs al hL⟩
 
 /-- `α` maps every literal location to its abstract counterpart, once and for
-    all (this is what makes Lemma B9 below need no extension of `α`). -/
+    all (this is what makes `eval_alpha` below need no extension of `α`). -/
 def AlphaFn.Lits [Concrete] [Abstract] (α : AlphaFn) : Prop :=
   ∀ v : Val, α (Concrete.litLoc v) = some (Abstract.litLocA v)
 
-/-! ## The abstraction relation (Def. B8.1–B8.3: heap, store, register —
-    B8.4–B8.6, about outcomes/actions/traces, have no counterpart here). -/
+/-! ## The abstraction relation on configurations -/
 
 def Heap.Alpha (α : AlphaFn) (h : Heap) (ah : AHeap) : Prop :=
   (∀ l p l', h.obj l p = some l' →
@@ -84,7 +82,7 @@ def Reg.Alpha (α : AlphaFn) (δ : Reg) (aδ : AReg) : Prop :=
 def AConf.Alpha (α : AlphaFn) (c : Conf) (ac : AConf) : Prop :=
   Heap.Alpha α c.heap ac.heap ∧ Sto.Alpha α c.sto ac.sto ∧ Reg.Alpha α c.reg ac.reg
 
-/-! ## Lemma B10 (α-Extension): every clause above is positive in `α`. -/
+/-! ## Extending `α`: every clause above is positive in `α` -/
 
 theorem Heap.Alpha.mono {α α' : AlphaFn} {h ah} (he : α' ≥α α)
     (k : Heap.Alpha α h ah) : Heap.Alpha α' h ah := by
@@ -115,7 +113,7 @@ theorem AConf.Alpha.mono {α α' : AlphaFn} {c ac} (he : α' ≥α α)
     (k : AConf.Alpha α c ac) : AConf.Alpha α' c ac :=
   ⟨k.1.mono he, k.2.1.mono he, k.2.2.mono he⟩
 
-/-! ## Lemma B9 (Expression Evaluation) -/
+/-! ## Expression evaluation -/
 
 theorem eval_alpha [Concrete] [Abstract] {α : AlphaFn} {ρ aρ e l}
     (hlit : α.Lits) (hρ : Sto.Alpha α ρ aρ) (he : evalE ρ e = some l) :
@@ -127,12 +125,10 @@ theorem eval_alpha [Concrete] [Abstract] {α : AlphaFn} {ρ aρ e l}
       exact ⟨Abstract.litLocA v, hlit v, rfl⟩
   | var x => exact hρ x l (by simpa [evalE] using he)
 
-/-- Componentwise relation of a concrete argument list to an abstract one
-    (ported from the old `CoreJsAbstractionRelation.lean`, where it also
-    related `Act.call`/`Act.ret`'s argument lists — no counterpart of that
-    here, but it is still exactly what relates a call's concrete argument
-    locations to its abstract argument location sets, needed for the
-    `callEntry` edge's soundness). -/
+/-- Componentwise relation of a concrete argument list to an abstract one:
+    relates a call's concrete argument locations to its abstract argument
+    location sets, both for the callee's initial store and for the call's
+    trace action. -/
 def LocsAlpha (α : AlphaFn) : List Loc → List ALocSet → Prop
   | [],      []      => True
   | l :: ls, L :: Ls => α.MapsInto l L ∧ LocsAlpha α ls Ls
@@ -163,7 +159,7 @@ theorem LocsAlpha.mono {α α' : AlphaFn} (he : α' ≥α α) :
   | [],      [],      _ => trivial
   | _ :: ls, _ :: Ls, k => ⟨k.1.mono he, LocsAlpha.mono he (Ls := Ls) (ls := ls) k.2⟩
 
-/-! ## Lemma B11 (Store Update) -/
+/-! ## Store update -/
 
 theorem sto_upd_alpha {α : AlphaFn} {ρ aρ x l L} (hρ : Sto.Alpha α ρ aρ)
     (hl : α.MapsInto l L) : Sto.Alpha α (ρ.upd x l) (aρ.upd x L) := by
@@ -210,10 +206,7 @@ theorem Heap.Alpha.objOfV {α : AlphaFn} {h : Heap} {ah : AHeap} {l₁ l₂ : Lo
   cases hal'
   exact ⟨al'', hal'', al, p, hLal, hV, hobj'⟩
 
-/-! ## Heap update soundness (needed by `updateS`/`updateD`)
-
-No counterpart in the old `CoreJsAbstractionRelation.lean` — its generation
-lemmas stopped at `lookupS`/`lookupD` (see its own "Remaining work" notes). -/
+/-! ## Heap update soundness (needed by `updateS`/`updateD`) -/
 
 theorem Heap.Alpha.setObj {α : AlphaFn} {h : Heap} {ah : AHeap} {l1 l2 : Loc}
     {p : PropName} {L1 L2 : ALocSet} (k : Heap.Alpha α h ah)
@@ -255,7 +248,8 @@ theorem Heap.Alpha.setObjV {α : AlphaFn} {h : Heap} {ah : AHeap} {l1 l3 : Loc}
       obtain ⟨al, al', ha, ha', hobj⟩ := k.1 l q l' hl
       exact ⟨al, al', ha, ha', Or.inl hobj⟩
 
-/-! ## Lemma B13 (α-Monotonicity of the abstract domains) -/
+/-! ## Monotonicity in the abstract side: a relation to a configuration
+    carries over to any larger one -/
 
 theorem Heap.Alpha.le {α : AlphaFn} {h ah ah'} (k : Heap.Alpha α h ah)
     (hle : ah ⊑ ah') : Heap.Alpha α h ah' := by

@@ -6,14 +6,14 @@
   finite traces (`CoreJsFoLtl.lean`), such that an execution record matches a
   query iff its model (`Exec.toModel`) satisfies the translated formula.
 
-  ## Status
+  ## Results
 
   The translation relation `Pat.Tr`/`Guarded.Tr` (this file's main definitions)
-  is fully defined and exercised end to end via concrete witnesses covering
-  every pattern combinator, `except`, and invocation with parameter renaming
-  (`## Sanity check`). The whole file is `sorry`-free.
+  is exercised end to end via concrete witnesses covering every pattern
+  combinator, `except`, and invocation with parameter renaming
+  (`## Sanity check`).
 
-  The *general* correctness theorem is fully proved, for the *entire* query
+  The *general* correctness theorem holds for the *entire* query
   language including guards, locals and invocation, not just the
   invocation-free fragment: `correct_all` (`PatCorrect`/`GuardedCorrect`, by
   strong induction on the remaining program's length) shows every `Pat.Tr`/
@@ -24,8 +24,8 @@
   at the head of a well-formed program, matching `q` on an execution record
   is equivalent to that record's model satisfying the (constructively
   produced) translated formula, evaluated at `q`'s own topmost environment
-  (`Query.topEnv`). `## Remaining work` at the end of the file records what
-  this took, for future reference; there is no more open work in this file.
+  (`Query.topEnv`). `## Proof structure` at the end of the file summarises
+  the supporting machinery this needs.
 
   ## Continuations
 
@@ -1443,12 +1443,9 @@ example :
       simp only [hξ', exSink, Inv.Sat, Pred.Sat, eSinkMiss, LEnv.bind, LEnv.empty] at hwhen
       exact hwhen.1
 /-!
-## Remaining work
+## Proof structure
 
-None — this section is now a record of what the general theorem took to
-prove, kept for future readers rather than as an open plan.
-
-Done, `sorry`-free (`#print axioms` on each of the theorems named below shows
+The pieces the general theorem is built from (`#print axioms` on each of the theorems named below shows
 only the standard Lean core axioms `propext`, `Classical.choice`,
 `Quot.sound` — `exists_all` needs only `propext`/`Quot.sound`, no choice):
 

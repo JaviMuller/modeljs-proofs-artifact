@@ -1,17 +1,15 @@
 /-
   # Core JavaScript — Automaton State Space
 
-  This file is *not* a transcription of any figure in the paper: it is this
-  branch's own contribution, replacing the μ-trace/summary machinery of
-  `ATrc`/`ASummary`/`ASigma`/`ACallBranch` (see `CoreJsAbstractSemantics.lean`,
-  now trimmed) with a finite-state automaton whose states and edges are a
-  purely static (value-independent) function of the call graph. Motivation and
-  the full design discussion are in `DESIGN_AND_PLAN.md` at the repository
-  root; read it before this file, in particular §4.2 ("`CallString` and
-  `AState`") which this file implements essentially verbatim.
+  The static analysis is a finite-state automaton over the program. Its
+  states and edges are a static (value-independent) function of the program
+  and its call graph; only the abstract configurations a labeling attaches to
+  the states (`CoreJsAutomatonSemantics.lean`) come from a fixpoint. A finite
+  automaton is what a model checker searching it for query matches needs: it
+  terminates by revisiting states.
 
-  See `PROBLEMS.md` for the implementation decisions made while turning that
-  design into Lean that the design document itself left open.
+  This file defines the state space: call strings, and the automaton states
+  indexed by them.
 
   Plain Lean 4 — no Mathlib required.
 -/
@@ -24,11 +22,13 @@ namespace CoreJS
 
 A call string records, for every call currently "open" on the path from the
 top level to the current point, the site at which it was made and the
-function it entered. Decision 5 of `DESIGN_AND_PLAN.md`: a *non-recursive*
-call (its target not already open on the current path) extends the call
-string; a *recursive* call (target already open) does not — the callee's
-entry is shared with the first, outermost occurrence of that target on the
-path. -/
+function it entered. A *non-recursive* call (its target not already open on
+the current path) extends the call string, so each call path gets its own
+instantiation of the callee and its own, unmerged argument values. A
+*recursive* call (target already open) does not: the callee's entry is shared
+with the first, outermost occurrence of that target on the path. So no
+function repeats within a call string, which bounds its length by the number
+of functions and keeps the state space finite. -/
 
 /-- `cs ∈ CallString`: a snapshot of the call sites currently open, oldest
     first. -/
@@ -93,8 +93,8 @@ theorem CallString.truncateAt_wf {f : Fid} :
           exact List.nodup_cons.mpr ⟨hnotin, hIH⟩
 
 /-- `targetCallString cs site f`: the call string in effect at the callee's
-    entry when calling `f` from `site` while the current path is `cs`
-    (Decision 5). If `f` is already open (a recursive/mutually-recursive
+    entry when calling `f` from `site` while the current path is `cs`. If `f`
+    is already open (a recursive/mutually-recursive
     call), reuse its first occurrence's instantiation by truncating; otherwise
     extend with the new site. -/
 def targetCallString (cs : CallString) (site : Idx) (f : Fid) : CallString :=
@@ -123,10 +123,8 @@ theorem targetCallString_wf {cs : CallString} (h : cs.WF) (site : Idx) (f : Fid)
 
 A well-formed call string never repeats a function identifier, so once every
 `Fid` that can occur has been drawn from some fixed finite list, the call
-string's own length cannot exceed that list's length — this is the pigeonhole
-argument `DESIGN_AND_PLAN.md` §4.2 sketches informally ("no `Fid` can repeat
-within one call-string ... so every call-string has length at most
-`|dom(Γ)|`"). -/
+string's own length cannot exceed that list's length (a pigeonhole
+argument). -/
 
 /-- Delete the first occurrence of `a` from `l`, if any. A hand-rolled helper
     used only for the pigeonhole argument below, so that its properties can be
@@ -191,14 +189,14 @@ theorem List.Nodup.length_le_of_subset {α} [DecidableEq α] :
       simp only [List.length_cons]
       omega
 
-/-- The bound stated in `DESIGN_AND_PLAN.md` §4.2: a well-formed call string's
-    length cannot exceed the number of function identifiers it draws from. -/
+/-- A well-formed call string's length cannot exceed the number of function
+    identifiers it draws from. -/
 theorem CallString.length_le {cs : CallString} (h : cs.WF) {fids : List Fid}
     (hsub : ∀ f ∈ cs.fids, f ∈ fids) : cs.length ≤ fids.length := by
   have := List.Nodup.length_le_of_subset (l := cs.fids) h hsub
   simpa [CallString.fids] using this
 
-/-! ## Automaton states (§4.2)
+/-! ## Automaton states
 
 Every construct needing a unique per-occurrence automaton state gets one
 constructor here, indexed by the call string it occurs under (and, for
@@ -209,11 +207,12 @@ inductive AState where
   /-- `lookupS`/`lookupD`/`updateS`/`updateD`: the state reached right after
       performing that one action. -/
   | action    (cs : CallString) (site : Idx)
-  /-- The continuation of a call site: always fresh per call site (never
-      shared, recursive or not — Decision 5/7). -/
+  /-- The continuation of a call site: one per call site and call string,
+      never shared, recursive call or not, since it is where that particular
+      caller resumes, with its own store. -/
   | cont      (cs : CallString) (site : Idx)
   /-- A function body's start. Shared across every call site whose call
-      string, after `targetCallString`, truncates to `cs` (Decision 5). -/
+      string, after `targetCallString`, truncates to `cs`. -/
   | entry     (cs : CallString)
   /-- `ifElse`'s "then" branch entry. -/
   | ifThen    (cs : CallString) (site : Idx)
@@ -221,8 +220,7 @@ inductive AState where
   | ifElseB   (cs : CallString) (site : Idx)
   /-- `ifElse`'s join point. Always exists as a state; whether anything
       reaches it (at least one branch continues) is a fact about which edges
-      happen to target it, not part of the state's own definition
-      (Decision 9). -/
+      happen to target it, not part of the state's own definition. -/
   | ifEnd     (cs : CallString) (site : Idx)
   /-- `whileDo`'s body entry. -/
   | whileIn   (cs : CallString) (site : Idx)
