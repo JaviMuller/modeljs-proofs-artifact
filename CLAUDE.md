@@ -4,24 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-A Lean 4 formalisation (no Mathlib) built around the paper "Model Checking
-Security Properties of Node.js Packages":
+A Lean 4 formalisation (no Mathlib) of a static analysis for security
+properties of a small "Core JavaScript" language. `README.md` is the overview
+for human readers (what is proved, how the files fit together); this file is
+the operational guidance for working on the code.
 
-- a small "Core JavaScript" language and its concrete semantics (Appendix A);
-- a static analysis over it, formulated on the `automaton-trace-model` branch
-  as a call-string *automaton* with a *labeling* (replacing the paper's
-  μ-trace/summary machinery), plus an abstraction relation and a soundness
-  proof for it;
+- a small Core JavaScript language and its concrete big-step semantics;
+- a static analysis over it, formulated as a call-string *automaton* with a
+  *labeling* (an abstract configuration at every state), an abstraction
+  relation, a soundness theorem (every concrete run is matched by a walk
+  through the labeled automaton) and a totality theorem (every program has a
+  least analysis result);
 - a *query language* for describing vulnerable behaviours, with a satisfaction
-  relation over execution records (trace + taint observation), and a bridge
-  from concrete runs to such records.
+  relation over execution records (trace + taint observation), a bridge from
+  concrete runs to such records, and a semantics-preserving translation into
+  first-order LTL over finite traces.
 
 There is no application code — the entire deliverable is the Lean source under
-`analysis/`. Two design documents live at the repository root:
-`DESIGN_AND_PLAN.md` (the automaton design) and `PROBLEMS.md` (a numbered log
-of implementation decisions taken where the design left things open). The
-file headers cite them by section / decision number; read the cited passage
-before changing the code it explains.
+`analysis/`. The source is meant to be self-explanatory: file headers and
+comments state the reasons for non-obvious choices. `PROBLEMS2.md` at the
+repository root is a decision log for the most recent round of changes to the
+automaton development (labels, walks, soundness, totality); read the relevant
+entry before revisiting one of those decisions.
 
 ## Build / check commands
 
@@ -36,9 +40,7 @@ before changing the code it explains.
 `globs` enumerates every module of the `Analysis` library; a `.lean` file that
 is not listed is silently skipped by `lake build`. **When adding a file under
 `analysis/`, add its module name (no extension) to `globs`.** The list is
-currently complete. (The old `CoreJsAbstract*` files were deleted; do not
-resurrect references to them — some header comments still mention them
-historically.)
+currently complete.
 
 ## Architecture
 
@@ -48,7 +50,8 @@ All files are in `namespace CoreJS`. What each file imports:
 - `CoreJsAutomatonSyntax` ← `CoreJsSyntax`
 - `CoreJsAutomatonSemantics` ← `CoreJsAutomatonSyntax`, `CoreJsSemantics`
 - `CoreJsAutomatonRelation` ← `CoreJsAutomatonSemantics`
-- `CoreJsAutomatonSoundness` ← `CoreJsAutomatonRelation`
+- `CoreJsAutomatonTotality` ← `CoreJsAutomatonSemantics`
+- `CoreJsAutomatonSoundness` ← `CoreJsAutomatonRelation`, `CoreJsAutomatonTotality`
 - `CoreJsQuerySyntax` ← `CoreJsSyntax`
 - `CoreJsQuerySemantics` ← `CoreJsSemantics`, `CoreJsQuerySyntax`
 - `CoreJsQueryBridge` ← `CoreJsQuerySemantics`
@@ -63,19 +66,24 @@ sit on top of the concrete semantics.
 ### The language and concrete semantics
 
 1. **`CoreJsSyntax.lean`** — `Val`, `Expr`, `BinOp`, `Stmt` (every call /
-   lookup / update / `if` / `while` carries a site index `κ`, a deliberate
-   deviation from the paper, see the file's REMARK), `Stmt.lits`, `Stmt.sites`.
-   `Loc := Nat` is an `abbrev` (see the `omega` gotcha below).
+   lookup / update / `if` / `while` carries a site index `κ`, like
+   `binOp`/`objLit`: the automaton names its states after them),
+   `Stmt.lits`, `Stmt.sites`. `Loc := Nat` is an `abbrev` (see the `omega`
+   gotcha below).
 2. **`CoreJsSemantics.lean`** — semantic domains (`Sto`, `Heap`, `Reg`, `Trc`,
    `Act`, `Out`), the `Concrete` typeclass (`litLoc`, `allocC`, `opSem`),
    `ConcreteSpec` (its side conditions), `Heap.WF`, the big-step judgement
    `BigStep`, and `BigStepN`, a derivation-height-indexed copy needed because
-   `BigStep` lives in `Prop` and has no recursor to induct on height
-   (`BigStep.toN`/`BigStepN.toBigStep` transport between the two; if you add a
-   concrete rule, add the matching `BigStepN` constructor and extend `mono`/
-   `mono_le`/`toN`/`toBigStep`). Also here: `Heap.Finite` (with
-   `BigStep.finite`), and the minimal initial configuration
-   (`Reg.empty`, `Heap.init`, `Conf.init`, `Heap.init_WF`, `Heap.init_finite`).
+   `BigStep` lives in `Prop` and has no recursor to induct on height, while
+   the automaton soundness proof's `while` case needs the induction
+   hypothesis several derivation levels down (`BigStep.toN`/
+   `BigStepN.toBigStep` transport between the two; if you add a concrete
+   rule, add the matching `BigStepN` constructor and extend `mono`/
+   `mono_le`/`toN`/`toBigStep`). Also here: heap facts preserved along runs
+   (`Heap.Finite`/`BigStep.finite`, `Heap.Defined` and its per-update lemmas,
+   `Heap.FidCanon`/`BigStep.fidCanon`: function values live only at their
+   literal locations), and the minimal initial configuration (`Reg.empty`,
+   `Heap.init`, `Conf.init`, `Heap.init_WF`, `Heap.init_finite`).
    - **`ConcreteSpec.allocC_fresh` only applies to finite heaps.** Demanding
      freshness of *every* heap made the spec unsatisfiable (a heap defined at
      every location has no free one), so anything assuming it was vacuous.
@@ -86,54 +94,83 @@ sit on top of the concrete semantics.
      `CoreJsQuerySemantics.lean`, even though the query language is their
      first consumer: they are built entirely from `Trc`/`Heap`/`Reg` (no
      dependency on the query syntax), and both `CoreJsQuerySemantics.lean`
-     and `CoreJsFoLtl.lean` need them independently, as would a future
-     model-checking algorithm over the automaton of
-     `CoreJsAutomatonSemantics.lean`.
+     and `CoreJsFoLtl.lean` need them independently.
 
 ### The automaton-based analysis
 
-3. **`CoreJsAutomatonSyntax.lean`** — call strings and the automaton state
-   space `AState`.
-4. **`CoreJsAutomatonSemantics.lean`** — the abstract domains (self-contained:
-   `ALoc`, `VSet`, `AHeap`, `ASto`, `AReg`, `AConf`), the `Abstract` class, the
-   per-statement effect functions, the mutually inductive edge relations
-   `AExit`/`AEdge`/`ARet`, `Labeling`, `Labeling.Valid`, `AnalysisResult`.
+3. **`CoreJsAutomatonSyntax.lean`** — call strings (`CallString`,
+   `targetCallString`: a recursive call reuses the first open instantiation of
+   its target, so no function repeats and `CallString.length_le` bounds the
+   length) and the automaton state space `AState`.
+4. **`CoreJsAutomatonSemantics.lean`** — the abstract domains (`ALoc`, `VSet`,
+   `AHeap`, `ASto`, `AReg`, `AConf`), the `Abstract` class and `AbstractSpec`,
+   abstract actions `AAct`, the per-statement effects, the mutually inductive
+   edge relations `AExit`/`AEdge`/`ARet`, the whole graph `AGraph`,
+   `Labeling`, `Labeling.Valid`, `AnalysisResult` (valid, and covering
+   `AConf.init s₀` at the top-level entry), walks `AWalk`, and the
+   `PendingClosed` framework plus invariant `AConf.FidReserved`.
+   - Every edge carries a contribution `C : Labeling → AConf` and an action
+     label `ℓ : Labeling → Option AAct` (`none` = the edge cannot be taken
+     under this labeling). They take the whole labeling, not only the
+     source's label, because a call's return edges start inside the callee
+     but are gated on the caller's configuration at the call site.
+   - Properties of the accumulated `pending`/`xpending`/`rpending`
+     transforms are proved once through `PendingClosed` +
+     `AExit.closed`/`ARet.closed`; reuse that rather than writing a new
+     mutual induction.
 5. **`CoreJsAutomatonRelation.lean`** — the abstraction relation (`AlphaFn`,
-   `Heap.Alpha`/`Sto.Alpha`/`Reg.Alpha`/`AConf.Alpha`) and its lemmas.
-6. **`CoreJsAutomatonSoundness.lean`** — `step_sound`, `sound`, `sound_top`.
-   **Incomplete.** 18 of 19 statement-shape cases are proved. Remaining
-   `sorry`s: the `binOp`/`objLit` cases of `step_sound` (need an
-   `α`-freshness invariant, and now also `Heap.Finite` of the current heap as a
-   hypothesis threaded through `sound`) and `exists_valid_labeling`. Read the
-   "Remaining work" section at the end of the file for the plan.
+   `Heap.Alpha`/`Sto.Alpha`/`Reg.Alpha`/`AConf.Alpha`, `Act.Alpha`/
+   `Trc.Alpha`), the per-statement lemmas, the allocation invariant
+   `AlphaFn.AllocSafe` with `AllocSafe.extend`, the cross-spec `CrossSpec`
+   (concrete/abstract agreement: `opSem` vs `opSemA`, allocator sites, no
+   function values from binary operators, no allocation at literal
+   locations), and the initial abstraction `AlphaFn.lits`.
+6. **`CoreJsAutomatonTotality.lean`** — monotonicity of every edge
+   contribution in the labeling (`AGraph.lmono`), arbitrary meets/joins of
+   configurations, the least analysis result `Labeling.least` (the meet of
+   all analysis results; `exists_least_analysisResult`,
+   `exists_valid_labeling`), the propagation operator `Labeling.step` and its
+   Kleene iterates (below `least`; a stable iterate *is* `least`), and
+   `least_fidReserved`. Termination of Kleene iteration is deliberately not
+   claimed: value sets range over an infinite domain and `opSemA` need not
+   widen.
+7. **`CoreJsAutomatonSoundness.lean`** — `SoundRun` (the conclusion),
+   `step_sound` (strong induction on derivation height), `sound`,
+   `sound_top` (whole program from `Conf.init s₀` against an
+   `AnalysisResult`), `sound_least` (against the least one), and
+   `SpecModel.satisfiable` (the specs are jointly satisfiable, so none of
+   this is vacuous). `step_sound` threads, besides `α`-relatedness: `hsub`
+   (the current statement's edges are graph edges), heap finiteness,
+   `AllocSafe`, and `FidCanon`.
 
-The concrete and abstract judgements are kept in lockstep: each abstract rule
+The concrete and abstract judgements are kept in lockstep: each abstract edge
 is named and shaped after its concrete counterpart, and both state the result
 configuration's components as variables fixed by equational premises. When you
-change one semantics, check the abstraction relation and the soundness cases.
+change one semantics, check the abstraction relation, the soundness cases, and
+the monotonicity/preservation lemmas in `CoreJsAutomatonTotality.lean` and at
+the end of `CoreJsAutomatonSemantics.lean`.
 
 ### The query language
 
-7. **`CoreJsQuerySyntax.lean`** — `Query Q(x⃗) { ∃y⃗: F₁ when I except F₂ }`:
+8. **`CoreJsQuerySyntax.lean`** — `Query Q(x⃗) { ∃y⃗: F₁ when I except F₂ }`:
    `QAct`, `Pred`, `Inv`, `Pat`, `Guarded`, `Query`, and the well-formedness
    predicates `Query.WF`/`QProg.WF` (all variables declared in `x⃗ ∪ y⃗`,
    arities match, no duplicates, callees only *later* in the program list) and
    the optional `Query.Safe` (range restriction). The semantics does *not*
    assume any of these.
-8. **`CoreJsQuerySemantics.lean`** — the satisfaction relations of Fig. 5 in
-   interval form `t, σ, ξ ⊨ F : i ⇝ j` (`Pat.Sat`/`Guarded.Sat`), over
-   execution records `Exec`/`Obs` (defined in `CoreJsSemantics.lean` — see
-   its entry above for why). Semantic decisions made with the user, worth
-   knowing before touching this file:
+9. **`CoreJsQuerySemantics.lean`** — the satisfaction relations in interval
+   form `t, σ, ξ ⊨ F : i ⇝ j` (`Pat.Sat`/`Guarded.Sat`), over execution
+   records `Exec`/`Obs` (defined in `CoreJsSemantics.lean` — see its entry
+   above for why). Semantic decisions made with the user, worth knowing
+   before touching this file:
    - `F₁ & F₂ : i ⇝ j` needs both sides matched from `i`, `j = max j₁ j₂`; one
      action may serve both sides (`a & a ≡ a`).
    - `except F'` is checked over the **whole trace** (`F'` matched from `0`, for
      every end point `k`), for nested queries as well as the top-level one, so a
      guard does not depend on where its query starts. It only constrains the
      guarded pattern it belongs to: under `Q ‖ F`, a failing `except` inside `Q`
-     just rules out that alternative. (Earlier it was checked from `i`; the
-     change makes guards position-independent, which the FO-LTL translation
-     relies on.)
+     just rules out that alternative. Position independence is what the FO-LTL
+     translation relies on.
    - `dep(x₁,x₂)` is plain membership `ξ x₂ ∈ σ.dep (ξ x₁)` — no closure in the
      semantics; transitivity of `dep` and reverse-closure of `ac` are the
      `Obs.WF` predicate. `sv` requires both values *defined* and equal.
@@ -144,11 +181,11 @@ change one semantics, check the abstraction relation and the soundness cases.
      `Θ` of invocations as a parameter. This is forced by strict positivity:
      `except` negates `Pat.Sat`, which cannot sit inside the inductive that
      defines it. Acyclicity is thereby built in.
-9. **`CoreJsQueryBridge.lean`** — `Reg.DepInv` (transitive `dep`, every
-   dependency target holds a value), `BigStep.depInv`, and the bridge theorems
-   `BigStep.obs_wf` / `obs_wf_empty` / `obs_wf_init`: a concrete run yields a
-   well-formed observation (needs `ConcreteSpec` and a finite starting heap).
-10. **`CoreJsQueryTests.lean`** — a compile-time regression suite: one program
+10. **`CoreJsQueryBridge.lean`** — `Reg.DepInv` (transitive `dep`, every
+    dependency target holds a value), `BigStep.depInv`, and the bridge theorems
+    `BigStep.obs_wf` / `obs_wf_empty` / `obs_wf_init`: a concrete run yields a
+    well-formed observation (needs `ConcreteSpec` and a finite starting heap).
+11. **`CoreJsQueryTests.lean`** — a compile-time regression suite: one program
     per statement shape run through `BigStep`, then positive and negative
     query tests over the runs of `pTaint`/`pObjRT`. The `bigstep` tactic builds
     a derivation automatically; `run tac` wraps it for goals of the form
@@ -162,7 +199,7 @@ change one semantics, check the abstraction relation and the soundness cases.
 
 ### FO-LTL over finite traces
 
-11. **`CoreJsFoLtl.lean`** — standard first-order past+future LTL over finite traces,
+12. **`CoreJsFoLtl.lean`** — standard first-order past+future LTL over finite traces,
     organized the way a logic text would present it, with an explicit table in the file
     header mapping each usual component (signature/terms/atomic formulas/formula
     grammar/structures/satisfaction) to its Lean definition:
@@ -200,51 +237,52 @@ change one semantics, check the abstraction relation and the soundness cases.
       actions, not one action): it is the logic's own class of models, independent of
       how one is produced. `Exec.toModel` is the intended-model construction connecting
       it to the query language; the eventual model-checking algorithm is being built on
-      a *separate* automaton structure, not on `Ltl`/`Model` — this file stays a
-      self-contained logic definition, not glued to that other development.
-12. **`CoreJsFoLtlTests.lean`** — compile-time tests on `eTaint`, an explicit record
+      the automaton (`AWalk` over a labeled `AGraph`), not on `Ltl`/`Model` — this file
+      stays a self-contained logic definition, not glued to that other development.
+13. **`CoreJsFoLtlTests.lean`** — compile-time tests on `eTaint`, an explicit record
     for the run of `pTaint` (linked to the real run by `link_eTaint`): sequencing,
     sentinel, state atoms, quantification, exclusivity, and the past operators
     (`Y`/`O`/`H`/`atStart`).
-13. **`CoreJsQueryToLtl.lean`** — the translation from queries into `Ltl LVar`
+14. **`CoreJsQueryToLtl.lean`** — the translation from queries into `Ltl LVar`
     (`LVar := Var ⊕ Nat`: original source names, or a synthetic tag freshly minted per
     invoked-query occurrence to avoid capture when inlining — see the file header for why
     this is needed independently of the in-place, non-prenex translation style), and the
-    **complete** theorem that it is semantics-preserving over execution records (via
+    theorem that it is semantics-preserving over execution records (via
     `Exec.toModel`) — for the *full* query language, including guards, locals and
     invocation, not just an invocation-free fragment.
     - `Pat.Tr ρ Δ F K n φ n'` / `Guarded.Tr ρ Δ g K n φ n'`: a *relation* (not a computable
-      function), continuation-style as `CoreJsQuerySemantics.lean`'s comment on `&`
-      anticipates. Genuinely mutually recursive with itself (a query's body may invoke
-      further queries), which is fine for a `Prop` — unlike `Pat.Sat`, it never negates
-      *itself* (a guard's `except` becomes `.not` applied to an already-produced formula,
-      ordinary data, not a negated occurrence of the relation), so it needs no external
-      `Interp`-style parameter.
+      function), continuation-style. Genuinely mutually recursive with itself (a query's
+      body may invoke further queries), which is fine for a `Prop` — unlike `Pat.Sat`, it
+      never negates *itself* (a guard's `except` becomes `.not` applied to an
+      already-produced formula, ordinary data, not a negated occurrence of the relation),
+      so it needs no external `Interp`-style parameter.
     - A guarded pattern `∃y⃗: F when I except F'` translates to
       `∃y⃗: I ∧ atStart(¬ tr(F',⊤)) ∧ tr(F,K)`, written *in place* at the invocation — this
-      is exactly why `except` was moved to whole-trace semantics and why `Ltl.atStart` was
-      added: both are needed together to make the `&` rule
+      is exactly why `except` has whole-trace semantics and why `Ltl.atStart` exists:
+      both are needed together to make the `&` rule
       (`tr(F₁&F₂,K) = tr(F₁,K) ∧ tr(F₂,K)`) exact without hoisting into any normal form.
     - `correct_all` (`PatCorrect`/`GuardedCorrect`, by strong induction on the remaining
-      program's length, since `Pat.Tr`/`Guarded.Tr` are mutually inductive and this Lean
-      version's `induction` tactic cannot induct on a mutual-family hypothesis directly)
-      proves every `Pat.Tr`/`Guarded.Tr` witness semantics-preserving for every
-      well-formed program; `exists_all` proves a witness always exists. Together,
-      `Query.tr_correct`/`Query.exists_tr_correct` give the headline result: for a
-      well-formed query at the head of a well-formed program, matching it on an execution
-      record agrees with the record's model satisfying the translated formula at the
-      query's own top environment (`Query.topEnv`). A worked example (`exSink`) exercises
-      this concretely. Read the file's own "Remaining work" (now a completed record, not a
-      plan) for the supporting machinery this needed: renaming/freshness, the
-      `updateFresh`/`Ren.sat_updateFresh_extendFresh` bridge to `LEnv.bind`, the
-      coincidence/locality lemmas, and `Ltl.Indep` (continuations must be insensitive to
-      fresh-tag updates for the guard case's `Mono` argument to transfer).
+      program's length) proves every `Pat.Tr`/`Guarded.Tr` witness semantics-preserving
+      for every well-formed program; `exists_all` proves a witness always exists.
+      Together, `Query.tr_correct`/`Query.exists_tr_correct` give the headline result:
+      for a well-formed query at the head of a well-formed program, matching it on an
+      execution record agrees with the record's model satisfying the translated formula
+      at the query's own top environment (`Query.topEnv`). A worked example (`exSink`)
+      exercises this concretely. The file's closing `## Proof structure` section lists
+      the supporting machinery: renaming/freshness, the `updateFresh`/
+      `Ren.sat_updateFresh_extendFresh` bridge to `LEnv.bind`, the coincidence/locality
+      lemmas, and `Ltl.Indep` (continuations must be insensitive to fresh-tag updates for
+      the guard case's `Mono` argument to transfer).
 
 ## Lean gotchas hit in this repository
 
 - **`omega` cannot reason about `=`/`≠` on `Loc`** (an `abbrev` for `Nat`); it
   handles `≤`/`<`. Convert with explicit `Nat` lemmas (`Nat.ne_of_gt`,
-  `Nat.le_trans`, …) or state such facts over `Nat`.
+  `Nat.le_trans`, `Nat.eq_of_mul_eq_mul_left`, …) or restate the fact over
+  `Nat` (`have h' : (a : Nat) = b := h`) first.
+- **`ALoc` is a `def`, not an `abbrev`**, for `Nat`: there are no numerals of
+  type `ALoc` (write `(1 : Nat)` where an `ALoc` is expected), and `omega`
+  does not see through it at all — restate over `Nat` first.
 - **Helper lemmas for dot-notation must live in the type's namespace.** A
   `theorem Guarded.Sat.simple` declared inside `namespace CoreJS.Tests` is
   *not* found by `.simple`/`h.simple`; declare it as
@@ -256,13 +294,28 @@ change one semantics, check the abstraction relation and the soundness cases.
   discover the witness (this is what `run` does).
 - Do not depend on `Reg`/`Heap` structure eta: `{ δ with ac := … }` is not
   definitionally `δ`. Use a congruence lemma (`Reg.DepInv.congr`) instead.
+- **Mutual inductives (`AExit`/`AEdge`/`ARet`, `Pat.Tr`/`Guarded.Tr`):** the
+  `induction` tactic cannot induct on a mutual-family hypothesis directly, but
+  a `mutual` block of theorems defined by pattern matching on the hypothesis
+  (structural recursion) works — see `AExit.closed`/`ARet.closed`,
+  `AEdge.lmono`.
+- **Spec structures with instance parameters** (`ConcreteSpec`,
+  `AbstractSpec`, `CrossSpec`): an anonymous constructor `⟨…⟩` for them
+  synthesizes the `[Concrete]`/`[Abstract]` argument by instance search, not
+  from the expected type. To build one for a specific instance, make the
+  instance local (`attribute [local instance] …`) — see `SpecModel`.
+- When a lemma's implicit configuration can be inferred from more than one
+  hypothesis, Lean picks the first; pass it explicitly (`(c := …)`) if that
+  is the wrong one (the call cases of `step_sound` do this).
 
 ## `sorry` policy
 
-`CoreJsAutomatonSoundness.lean` is a proof in progress and its `sorry`s are
-intentional placeholders for known-remaining work, not accidents — the file's
-own header explains this. Don't paper over a `sorry` with an `axiom` or a
-weakened statement to make the build "succeed"; either prove the case or leave
-it as `sorry` and note what's missing. There are no `axiom`s in the
-development; `grep -n sorry analysis/*.lean` shows exactly what remains. The
-query files (`CoreJsQuery*.lean`) and the concrete semantics are `sorry`-free.
+There are no `sorry`s and no `axiom`s in the development
+(`grep -n sorry analysis/*.lean` is empty; `#print axioms` on the headline
+theorems shows only `propext`, `Classical.choice`, `Quot.sound`). Keep it
+that way: if a proof cannot be completed, leave an explicit, commented `sorry`
+stating exactly what is missing rather than papering over it with an `axiom`
+or a weakened statement — but do not merge work in that state without saying
+so. New assumptions belong in a spec structure (`ConcreteSpec`,
+`AbstractSpec`, `CrossSpec`) and must stay jointly satisfiable: extend
+`SpecModel.satisfiable` when you add one.

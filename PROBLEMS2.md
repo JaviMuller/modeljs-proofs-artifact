@@ -8,6 +8,10 @@ being done, in the order the decisions came up. Each entry gives where the
 decision applies, the gap, the alternatives considered, and the decision
 taken, so a reader who disagrees can go back to that specific point.
 
+`DESIGN_AND_PLAN.md` and `PROBLEMS.md`, which this log cites by section and
+decision number, were deleted by Entry 4. They remain in git history: both
+are present in commit `542fa6f` and earlier (`git show 542fa6f:PROBLEMS.md`).
+
 ---
 
 ## Decision 1 — the gated return edges must read the *caller's* label, so contributions and labels take the whole labeling
@@ -543,5 +547,68 @@ target label by monotonicity, and reserves functions' locations by
 This is where the preservation-lemma formulation of Decision 4 pays off:
 the proof needs only "each edge preserves the property", never a new
 `Labeling.Valid` conjunct.
+
+---
+
+## Decision 19 — how the comment sweep applied TODO.md's rule
+
+**Where:** every file under `analysis/`; `lakefile.toml`. TODO.md Entry 4,
+plan step 3.
+
+The rule was to keep the underlying reasoning, rewritten to stand alone,
+whenever it is more than "because this is how the paper does it". Applied
+as follows:
+- *Stripped* (only a cross-reference): figure/definition/lemma labels on
+  section headers (`## Semantic domains (Fig. A2)`, `Lemma B9`–`B13`,
+  `Def. B4`/`B5`/`B8`), and the file headers' "formalisation of Figures …"
+  lists, replaced by plain descriptions of what each file contains.
+- *Kept, reworded to stand alone*: `Heap.setObjs` (left-to-right update, a
+  later binding wins, and it coincides with simultaneous update for distinct
+  property names); the big-step rules' equational premises (they let a
+  derivation be built rule by rule, as the tests' `bigstep` tactic does, and
+  let the abstract rules mirror the concrete ones); the site-index remark in
+  `CoreJsSyntax.lean` (why the index is explicit rather than derived from
+  syntax-tree position); the query semantics' "differences from the figure"
+  (each bullet carries its own reason, for example whole-trace `except` is
+  what makes guards position-independent for the FO-LTL translation); weak
+  abstract updates (one abstract location stands for many concrete ones).
+- *Removed references* to `DESIGN_AND_PLAN.md`/`PROBLEMS.md` decisions. Where
+  a constructor's doc comment justified itself by a decision number (the
+  loop back edges, the pass-through edge, the gated call edges, the implicit
+  return edge), the reason itself is now written out.
+- *Stale comments fixed*: `BigStepN`'s rationale named the deleted
+  `[Call-Fix]`/summary machinery, and is now the real current reason (the
+  `while` case of the soundness proof needs the induction hypothesis several
+  derivation levels down). The relation file's header claimed there is no
+  action or trace relation. The `lakefile.toml` comment described the
+  long-deleted `CoreJsAbstract*` files. `CoreJsQueryToLtl.lean`'s "Remaining
+  work: none" section is renamed "Proof structure".
+- The gate `grep -n sorry analysis/*.lean` also matched two prose mentions
+  ("`sorry`-free") in `CoreJsQueryToLtl.lean`. They were reworded so that the
+  gate is literally empty, not merely empty of real `sorry`s.
+
+The paper is still named once, in `README.md`, as the origin of the core
+language and the query language. That is provenance for a new reader, not a
+justification inside the code.
+
+---
+
+## Decision 20 — what the cleanup leaves in place
+
+- `PROBLEMS2.md` (this file) is kept: it is the decision log this round of
+  work was asked to produce. The code never refers to it. `CLAUDE.md` points
+  to it only as background for revisiting one of these decisions.
+- `TODO.md` is untouched. It was untracked when this work started, and
+  Entry 4 does not mention it. Whether to delete it, now that every entry is
+  implemented, is left to its author.
+- `CLAUDE.md` was updated per TODO.md plan step 4: the design-document
+  paragraph and every reference to the two documents are gone, the
+  architecture section describes the finished files (including the new
+  `CoreJsAutomatonTotality.lean`), the `sorry` policy states that there are
+  none, and the Lean gotchas hit during this work were added (`ALoc` is a
+  `def`; mutual inductives by structural recursion; spec structures'
+  anonymous constructors; pinning an ambiguous implicit argument).
+- `README.md` is new (plan step 5): what is proved, the assumptions, the
+  file layout and imports, and how to build.
 
 ---
