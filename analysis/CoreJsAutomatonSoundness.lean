@@ -117,7 +117,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
       {s : Stmt} {c : Conf} {r : Res} {α : AlphaFn},
       CallString.WF cs →
       α.Lits →
-      (∀ a b C, AEdge Γ cs entry pending s a b C → C (L a) ⊑ L b) →
+      (∀ a b C ℓ, AEdge Γ cs entry pending s a b C ℓ → C L ⊑ L b) →
       BigStepN Γ n c s r →
       AConf.Alpha α c (pending (L entry)) →
       ( (∃ x xpending, AExit Γ cs entry pending s x xpending ∧ r.out = .cont ∧
@@ -167,7 +167,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
         have hcα : AConf.Alpha α ⟨h, ρ.upd x l₂, δ⟩ (AConf.doLookupS x e p (pending (L entry))) :=
           ⟨hα.1, sto_upd_alpha hα.2.1 hmaps, hα.2.2⟩
         have hedge : (AConf.doLookupS x e p ∘ pending) (L entry) ⊑ L (.action cs κ) :=
-          hvalidS _ _ _ AEdge.lookupS
+          hvalidS _ _ _ _ AEdge.lookupS
         exact Or.inl ⟨.action cs κ, id, .lookupS, rfl, α, .refl α, hlit, hcα.le hedge⟩
     | @lookupD _ h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p he1 he2 hstr hobj hρ' =>
         subst hρ'
@@ -178,26 +178,26 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
         have hcα : AConf.Alpha α ⟨h, ρ.upd x l₃, δ⟩ (AConf.doLookupD x e₁ e₂ (pending (L entry))) :=
           ⟨hα.1, sto_upd_alpha hα.2.1 hmaps, hα.2.2⟩
         have hedge : (AConf.doLookupD x e₁ e₂ ∘ pending) (L entry) ⊑ L (.action cs κ) :=
-          hvalidS _ _ _ AEdge.lookupD
+          hvalidS _ _ _ _ AEdge.lookupD
         exact Or.inl ⟨.action cs κ, id, .lookupD, rfl, α, .refl α, hlit, hcα.le hedge⟩
     | @ret _ h ρ δ e l he =>
         exact Or.inr ⟨entry, pending, e, l, .ret, rfl, α, .refl α, hlit, hα,
           eval_alpha hlit hα.2.1 he⟩
     | @seqRet nred h h' ρ ρ' δ δ' s1 s2 t l Hstep1 =>
-        have hvalidS1 : ∀ a b C, AEdge Γ cs entry pending s1 a b C → C (L a) ⊑ L b :=
-          fun a b C he => hvalidS a b C (.seqLeft he)
+        have hvalidS1 : ∀ a b C ℓ, AEdge Γ cs entry pending s1 a b C ℓ → C L ⊑ L b :=
+          fun a b C ℓ he => hvalidS a b C ℓ (.seqLeft he)
         rcases IH nred (Nat.lt_succ_self _) hcs hlit hvalidS1 Hstep1 hα with
           ⟨_, _, _, hcont, _⟩ | ⟨rst, rpending, e', l', hARet1, hout, α', hext, hlit', hαres, hmaps⟩
         · exact absurd hcont (by simp)
         · exact Or.inr ⟨rst, rpending, e', l', .seqLeft hARet1, hout, α', hext, hlit', hαres, hmaps⟩
     | @seqCont nred h h' h'' ρ ρ' ρ'' δ δ' δ'' s1 s2 t1 t2 o Hstep1 Hstep2 =>
-        have hvalidS1 : ∀ a b C, AEdge Γ cs entry pending s1 a b C → C (L a) ⊑ L b :=
-          fun a b C he => hvalidS a b C (.seqLeft he)
+        have hvalidS1 : ∀ a b C ℓ, AEdge Γ cs entry pending s1 a b C ℓ → C L ⊑ L b :=
+          fun a b C ℓ he => hvalidS a b C ℓ (.seqLeft he)
         rcases IH nred (Nat.lt_succ_self _) hcs hlit hvalidS1 Hstep1 hα with
           ⟨x, xpending, hAExit1, _, α1, hext1, hlit1, hα1⟩
           | ⟨_, _, _, _, hARet1, hout, _⟩
-        · have hvalidS2 : ∀ a b C, AEdge Γ cs x xpending s2 a b C → C (L a) ⊑ L b :=
-            fun a b C he => hvalidS a b C (.seqRight hAExit1 he)
+        · have hvalidS2 : ∀ a b C ℓ, AEdge Γ cs x xpending s2 a b C ℓ → C L ⊑ L b :=
+            fun a b C ℓ he => hvalidS a b C ℓ (.seqRight hAExit1 he)
           rcases IH nred (Nat.lt_succ_self _) hcs hlit1 hvalidS2 Hstep2 hα1 with
               ⟨y, ypending, hAExit2, hout2, α2, hext2, hlit2, hαres⟩
             | ⟨rst, rpending, e', l, hARet2, hout2, α2, hext2, hlit2, hαres, hmaps⟩
@@ -225,7 +225,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
             (AConf.doUpdateS e1 p e2 (pending (L entry))) :=
           ⟨hα.1.setObj hval1 hval2, hα.2.1, hα.2.2⟩
         have hedge : (AConf.doUpdateS e1 p e2 ∘ pending) (L entry) ⊑ L (.action cs κ) :=
-          hvalidS _ _ _ AEdge.updateS
+          hvalidS _ _ _ _ AEdge.updateS
         exact Or.inl ⟨.action cs κ, id, .updateS, rfl, α, .refl α, hlit, hcα.le hedge⟩
     | @updateD _ h h' ρ δ κ e1 e2 e3 l1 l2 l3 p he1 he2 he3 hstr hh' =>
         subst hh'
@@ -237,30 +237,30 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
             (AConf.doUpdateD e1 e2 e3 (pending (L entry))) :=
           ⟨hα.1.setObjV hval1 hVmem hval3, hα.2.1, hα.2.2⟩
         have hedge : (AConf.doUpdateD e1 e2 e3 ∘ pending) (L entry) ⊑ L (.action cs κ) :=
-          hvalidS _ _ _ AEdge.updateD
+          hvalidS _ _ _ _ AEdge.updateD
         exact Or.inl ⟨.action cs κ, id, .updateD, rfl, α, .refl α, hlit, hcα.le hedge⟩
     | @ifTrue nred _ ρ δ κ e s1 s2 l r' he hval Hstep1 =>
-        have hedge_in : pending (L entry) ⊑ L (.ifThen cs κ) := hvalidS _ _ _ .ifThen
+        have hedge_in : pending (L entry) ⊑ L (.ifThen cs κ) := hvalidS _ _ _ _ .ifThen
         have hα' : AConf.Alpha α _ (L (.ifThen cs κ)) := hα.le hedge_in
-        have hvalidS1 : ∀ a b C, AEdge Γ cs (.ifThen cs κ) id s1 a b C → C (L a) ⊑ L b :=
-          fun a b C he => hvalidS a b C (.ifThenBody he)
+        have hvalidS1 : ∀ a b C ℓ, AEdge Γ cs (.ifThen cs κ) id s1 a b C ℓ → C L ⊑ L b :=
+          fun a b C ℓ he => hvalidS a b C ℓ (.ifThenBody he)
         rcases IH nred (Nat.lt_succ_self _) hcs hlit hvalidS1 Hstep1 hα' with
             ⟨x, xpending, hAExit1, hout, α', hext, hlit', hαres⟩
           | ⟨rst, rpending, e', l', hARet1, hout, α', hext, hlit', hαres, hmaps⟩
         · have hedge_out : xpending (L x) ⊑ L (.ifEnd cs κ) :=
-            hvalidS _ _ _ (.ifThenJoin hAExit1)
+            hvalidS _ _ _ _ (.ifThenJoin hAExit1)
           exact Or.inl ⟨.ifEnd cs κ, id, .ifElse, hout, α', hext, hlit', hαres.le hedge_out⟩
         · exact Or.inr ⟨rst, rpending, e', l', .ifThen hARet1, hout, α', hext, hlit', hαres, hmaps⟩
     | @ifFalse nred _ ρ δ κ e s1 s2 l r' he hval Hstep2 =>
-        have hedge_in : pending (L entry) ⊑ L (.ifElseB cs κ) := hvalidS _ _ _ .ifElseB
+        have hedge_in : pending (L entry) ⊑ L (.ifElseB cs κ) := hvalidS _ _ _ _ .ifElseB
         have hα' : AConf.Alpha α _ (L (.ifElseB cs κ)) := hα.le hedge_in
-        have hvalidS2 : ∀ a b C, AEdge Γ cs (.ifElseB cs κ) id s2 a b C → C (L a) ⊑ L b :=
-          fun a b C he => hvalidS a b C (.ifElseBBody he)
+        have hvalidS2 : ∀ a b C ℓ, AEdge Γ cs (.ifElseB cs κ) id s2 a b C ℓ → C L ⊑ L b :=
+          fun a b C ℓ he => hvalidS a b C ℓ (.ifElseBBody he)
         rcases IH nred (Nat.lt_succ_self _) hcs hlit hvalidS2 Hstep2 hα' with
             ⟨x, xpending, hAExit2, hout, α', hext, hlit', hαres⟩
           | ⟨rst, rpending, e', l', hARet2, hout, α', hext, hlit', hαres, hmaps⟩
         · have hedge_out : xpending (L x) ⊑ L (.ifEnd cs κ) :=
-            hvalidS _ _ _ (.ifElseBJoin hAExit2)
+            hvalidS _ _ _ _ (.ifElseBJoin hAExit2)
           exact Or.inl ⟨.ifEnd cs κ, id, .ifElse, hout, α', hext, hlit', hαres.le hedge_out⟩
         · exact Or.inr ⟨rst, rpending, e', l', .ifElseB hARet2, hout, α', hext, hlit', hαres, hmaps⟩
     | @whileDo nred h ρ δ κ e s r' Hstep =>
@@ -275,8 +275,10 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
         -- whatever `x` the previous iteration exited to.
         suffices hloop : ∀ (m : Nat), m ≤ nred → ∀ {pos : AState} {posPending : AConf → AConf}
             {c' : Conf} {r'' : Res} {αc : AlphaFn},
-            AEdge Γ cs entry pending (.whileDo κ e s) pos (.whileIn cs κ) posPending →
-            AEdge Γ cs entry pending (.whileDo κ e s) pos (.whileOut cs κ) posPending →
+            AEdge Γ cs entry pending (.whileDo κ e s) pos (.whileIn cs κ)
+              (fun L => posPending (L pos)) (fun _ => some .epsilon) →
+            AEdge Γ cs entry pending (.whileDo κ e s) pos (.whileOut cs κ)
+              (fun L => posPending (L pos)) (fun _ => some .epsilon) →
             BigStepN Γ m c' (.ifElse κ e (.seq s (.whileDo κ e s)) .skip) r'' →
             αc.Lits →
             AConf.Alpha αc c' (posPending (L pos)) →
@@ -297,13 +299,13 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
           cases Hstep' with
           | @ifFalse _ _ _ _ _ _ _ _ _ _ _ hval Hskip =>
               cases Hskip
-              have hineq : posPending (L pos) ⊑ L (.whileOut cs κ) := hvalidS _ _ _ hedgeOut
+              have hineq : posPending (L pos) ⊑ L (.whileOut cs κ) := hvalidS _ _ _ _ hedgeOut
               exact Or.inl ⟨.whileOut cs κ, id, .whileDo, rfl, αc, .refl αc, hlit, hα'.le hineq⟩
           | @ifTrue mm h1 ρ1 δ1 _ _ _ _ _ _ _ hval Hbody =>
-              have hineqIn : posPending (L pos) ⊑ L (.whileIn cs κ) := hvalidS _ _ _ hedgeIn
+              have hineqIn : posPending (L pos) ⊑ L (.whileIn cs κ) := hvalidS _ _ _ _ hedgeIn
               have hαIn : AConf.Alpha αc ⟨h1, ρ1, δ1⟩ (L (.whileIn cs κ)) := hα'.le hineqIn
-              have hvalidBody : ∀ a b C, AEdge Γ cs (.whileIn cs κ) id s a b C → C (L a) ⊑ L b :=
-                fun a b C he => hvalidS a b C (.whileBody he)
+              have hvalidBody : ∀ a b C ℓ, AEdge Γ cs (.whileIn cs κ) id s a b C ℓ → C L ⊑ L b :=
+                fun a b C ℓ he => hvalidS a b C ℓ (.whileBody he)
               cases Hbody with
               | @seqRet m1 _ _ _ _ _ _ _ _ _ _ Hs1 =>
                   rcases IH m1 (by omega) hcs hlit hvalidBody Hs1 hαIn with
@@ -337,11 +339,10 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
         have hargs := evals_alpha hlit hα.2.1 es hes
         have harity' : params.length = es.length := harity.trans (evalEs_length hes)
         have hΓparams : Γ.params f = params := by simp [Env.params, hΓf]
-        have hcand : IsCandidate Γ (pending (L entry)).heap (aevalE (pending (L entry)).sto e)
-            es.length f :=
+        have hcand : (pending (L entry)).Calls Γ e es.length f :=
           ⟨hVmem, by simp [hΓf], by rw [hΓparams, harity']⟩
         -- (2) relate the callee's initial store, and lift it to `L (entry cs_f)`.
-        have hedge_entry := hvalidS _ _ _ (AEdge.callEntry hΓf harity')
+        have hedge_entry := hvalidS _ _ _ _ (AEdge.callEntry hΓf harity')
         simp only [hcand, if_pos] at hedge_entry
         have hcα0 : AConf.Alpha α ⟨h, Sto.ofParams params ls, δ⟩
             { heap := (pending (L entry)).heap
@@ -351,7 +352,9 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
         have hα_entry_f := hcα0.le hedge_entry
         -- (3) descend into the callee body, at a *fresh* `hvalidS` from `Valid`.
         have hcsf : CallString.WF (targetCallString cs κ f) := targetCallString_wf hcs κ f
-        have hvalidBody := hvalid.2 f params body (targetCallString cs κ f) hΓf hcsf
+        have hvalidBody : ∀ a b C ℓ, AEdge Γ (targetCallString cs κ f)
+            (.entry (targetCallString cs κ f)) id body a b C ℓ → C L ⊑ L b :=
+          fun a b C ℓ he => hvalid a b C ℓ (.body hΓf hcsf he)
         rcases IH nred (Nat.lt_succ_self _) hcsf hlit hvalidBody Hstep hα_entry_f with
             ⟨_, _, _, hcont, _⟩
           | ⟨rst, rpending, e', l', hARet, hout, α', hext, hlit', hαres, hmaps⟩
@@ -364,8 +367,9 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
           -- pass-through edge (decision 3 of `PROBLEMS.md`).
           have heql : l = l' := by injection hout
           subst heql
-          have hedge_ret := hvalidS _ _ _ (AEdge.callRet hΓf harity' hARet)
-          have hedge_pass := hvalidS _ _ _ (AEdge.callPassThrough (x := x) (κ := κ) (e := e) (es := es))
+          have hedge_ret := hvalidS _ _ _ _ (AEdge.callRet hΓf harity' hARet)
+          simp only [hcand, if_pos] at hedge_ret
+          have hedge_pass := hvalidS _ _ _ _ (AEdge.callPassThrough (x := x) (κ := κ) (e := e) (es := es))
           refine Or.inl ⟨.cont cs κ, id, .call, rfl, α', hext, hlit', ?_, ?_, ?_⟩
           · exact hαres.1.le hedge_ret.1
           · intro y ly hy
@@ -390,10 +394,9 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
         have hargs := evals_alpha hlit hα.2.1 es hes
         have harity' : params.length = es.length := harity.trans (evalEs_length hes)
         have hΓparams : Γ.params f = params := by simp [Env.params, hΓf]
-        have hcand : IsCandidate Γ (pending (L entry)).heap (aevalE (pending (L entry)).sto e)
-            es.length f :=
+        have hcand : (pending (L entry)).Calls Γ e es.length f :=
           ⟨hVmem, by simp [hΓf], by rw [hΓparams, harity']⟩
-        have hedge_entry := hvalidS _ _ _ (AEdge.callEntry hΓf harity')
+        have hedge_entry := hvalidS _ _ _ _ (AEdge.callEntry hΓf harity')
         simp only [hcand, if_pos] at hedge_entry
         have hcα0 : AConf.Alpha α ⟨h, Sto.ofParams params ls, δ⟩
             { heap := (pending (L entry)).heap
@@ -402,12 +405,15 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstrac
           ⟨hα.1, sto_ofParams_alpha hargs params, hα.2.2⟩
         have hα_entry_f := hcα0.le hedge_entry
         have hcsf : CallString.WF (targetCallString cs κ f) := targetCallString_wf hcs κ f
-        have hvalidBody := hvalid.2 f params body (targetCallString cs κ f) hΓf hcsf
+        have hvalidBody : ∀ a b C ℓ, AEdge Γ (targetCallString cs κ f)
+            (.entry (targetCallString cs κ f)) id body a b C ℓ → C L ⊑ L b :=
+          fun a b C ℓ he => hvalid a b C ℓ (.body hΓf hcsf he)
         rcases IH nred (Nat.lt_succ_self _) hcsf hlit hvalidBody Hstep hα_entry_f with
             ⟨y, ypending, hAExit, hout, α', hext, hlit', hαres⟩
           | ⟨_, _, _, _, _, hout, _⟩
-        · have hedge_ret := hvalidS _ _ _ (AEdge.callImplicitRet hΓf harity' hAExit)
-          have hedge_pass := hvalidS _ _ _ (AEdge.callPassThrough (x := x) (κ := κ) (e := e) (es := es))
+        · have hedge_ret := hvalidS _ _ _ _ (AEdge.callImplicitRet hΓf harity' hAExit)
+          simp only [hcand, if_pos] at hedge_ret
+          have hedge_pass := hvalidS _ _ _ _ (AEdge.callPassThrough (x := x) (κ := κ) (e := e) (es := es))
           refine Or.inl ⟨.cont cs κ, id, .call, rfl, α', hext, hlit', ?_, ?_, ?_⟩
           · exact hαres.1.le hedge_ret.1
           · intro z lz hz
@@ -438,7 +444,7 @@ theorem sound [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : AbstractSpec
     {cs : CallString} {entry : AState} {pending : AConf → AConf} {s : Stmt}
     {c : Conf} {r : Res} {α : AlphaFn}
     (hcs : CallString.WF cs) (hlit : α.Lits)
-    (hvalidS : ∀ a b C, AEdge Γ cs entry pending s a b C → C (L a) ⊑ L b)
+    (hvalidS : ∀ a b C ℓ, AEdge Γ cs entry pending s a b C ℓ → C L ⊑ L b)
     (H : BigStep Γ c s r) (hα : AConf.Alpha α c (pending (L entry))) :
     ( (∃ x xpending, AExit Γ cs entry pending s x xpending ∧ r.out = .cont ∧
          ∃ α', α' ≥α α ∧ α'.Lits ∧
@@ -470,7 +476,7 @@ theorem sound_top [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstract
          ∃ α', α' ≥α α ∧ α'.Lits ∧
            AConf.Alpha α' ⟨r.heap, r.sto, r.reg⟩ (rpending (L rst)) ∧
            α'.MapsInto l (aevalE (rpending (L rst)).sto e')) ) :=
-  sound cspec aspec opspec hΓ hvalid CallString.WF.nil hlit hvalid.1 H (by simpa using hα)
+  sound cspec aspec opspec hΓ hvalid CallString.WF.nil hlit (fun a b C ℓ he => hvalid a b C ℓ (.top he)) H (by simpa using hα)
 
 /-!
 ## Totality (deferred, `sorry`)
