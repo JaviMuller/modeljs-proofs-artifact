@@ -69,27 +69,6 @@ theorem Reg.setDep_ne (δ : Reg) {a l : Loc} (d : LocSet) (h : a ≠ l) :
     (δ.setDep l d).dep a = δ.dep a := by
   simp [Reg.setDep, h]
 
-theorem Heap.setObjs_val (h : Heap) (l : Loc) (ps : List (PropName × Loc)) :
-    (h.setObjs l ps).val = h.val := by
-  induction ps generalizing h with
-  | nil => rfl
-  | cons p ps ih => exact ih _
-
-theorem Heap.setVal_defined {h : Heap} {l x : Loc} {v : Val} (hx : h.val x ≠ none) :
-    (h.setVal l v).val x ≠ none := by
-  by_cases e : x = l
-  · simp [Heap.setVal, e]
-  · simpa [Heap.setVal, e] using hx
-
-/-- Membership in the dependency set built by `[Binary Operation]`. -/
-theorem mem_binOpDep {δ : Reg} {l₁ l₂ l' : Loc} :
-    (δ.dep l₁ ∪ δ.dep l₂ ∪ {l₁, l₂}) l' ↔
-      δ.dep l₁ l' ∨ δ.dep l₂ l' ∨ l' = l₁ ∨ l' = l₂ := by
-  show (δ.dep l₁ l' ∨ δ.dep l₂ l') ∨ (l' = l₁ ∨ l' = l₂) ↔ _
-  constructor
-  · rintro ((h | h) | h | h) <;> simp [h]
-  · rintro (h | h | h | h) <;> simp [h]
-
 /-- `[Binary Operation]` preserves the invariant. -/
 theorem Reg.DepInv.binOp {h : Heap} {δ : Reg} {l l₁ l₂ : Loc} {v : Val}
     (hI : Reg.DepInv h δ) (hl : h.val l = none)

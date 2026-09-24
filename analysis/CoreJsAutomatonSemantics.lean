@@ -163,8 +163,7 @@ def AHeap.objOfV (h : AHeap) (L : ALocSet) (V : VSet) : ALocSet :=
 def AReg.depOf (δ : AReg) (L : ALocSet) : ALocSet :=
   fun l' => ∃ l, L l ∧ δ.dep l l'
 
-/-! ## Abstract updates (Fig. B6). All heap/register updates are weak (§5.1),
-    except `AReg.setDep`, used only by object initialisation. -/
+/-! ## Abstract updates (Fig. B6). All heap/register updates are weak (§5.1). -/
 
 def AHeap.weakSetVal (h : AHeap) (l : ALoc) (V : VSet) : AHeap :=
   { h with val := fun l' => if l' = l then VSet.join V (h.val l') else h.val l' }
@@ -184,9 +183,6 @@ def AHeap.weakSetObjs (h : AHeap) (l : ALoc) :
 
 def AReg.weakSetDep (δ : AReg) (l : ALoc) (d : ALocSet) : AReg :=
   { δ with dep := fun l' => if l' = l then d ∪ δ.dep l' else δ.dep l' }
-
-def AReg.setDep (δ : AReg) (l : ALoc) (d : ALocSet) : AReg :=
-  { δ with dep := fun l' => if l' = l then d else δ.dep l' }
 
 def ASto.upd (ρ : ASto) (x : Var) (L : ALocSet) : ASto :=
   fun y => if y = x then L else ρ y
@@ -282,13 +278,20 @@ def AConf.doBinOp [Abstract] (x : Var) (κ : Idx) (op : BinOp) (e₁ e₂ : Expr
     sto  := c.sto.upd x {l}
     reg  := c.reg.weakSetDep l (c.reg.depOf L₁ ∪ c.reg.depOf L₂ ∪ L₁ ∪ L₂) }
 
+/-- Object initialisation. Concretely the new object's dependencies are reset
+    to `∅`; abstractly this is a weak update, i.e. no change. A strong update
+    `setDep l ∅` would erase the dependencies of every *other* concrete
+    location the abstract location `l` stands for — in particular of one a
+    `binOp` allocated, whenever the two sites share an abstract location, or
+    the same concrete location re-used after an object literal with no fields
+    left it unused. -/
 def AConf.doObjLit [Abstract] (x : Var) (κ : Idx) (fs : List (PropName × Expr))
     (c : AConf) : AConf :=
   let Ls := aevalEs c.sto (fs.map Prod.snd)
   let l   := allocA c.heap κ
   { heap := c.heap.weakSetObjs l ((fs.map Prod.fst).zip Ls)
     sto  := c.sto.upd x {l}
-    reg  := c.reg.setDep l ∅ }
+    reg  := c.reg }
 
 def AConf.doLookupS [Abstract] (x : Var) (e : Expr) (p : PropName) (c : AConf) :
     AConf :=
@@ -614,11 +617,52 @@ inductive AGraph [Abstract] (Γ : Env) (s₀ : Stmt) :
 def Labeling.Valid [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) : Prop :=
   ∀ a b C ℓ, AGraph Γ s₀ a b C ℓ → C L ⊑ L b
 
+/-- The abstract counterpart of `Heap.init s`: each literal `v` of `s`, and
+    `undefined`, at `litLocA v`; no object has any property. -/
+def AHeap.init [Abstract] (s : Stmt) : AHeap where
+  obj := fun _ _ => ∅
+  val := fun a => .vals (fun v => v ∈ Val.undef :: s.lits ∧ litLocA v = a)
+
+/-- The abstract counterpart of `Conf.init s`. -/
+def AConf.init [Abstract] (s : Stmt) : AConf := ⟨AHeap.init s, ASto.bot, AReg.bot⟩
+
 /-- The top-level analysis result: `L` is a valid labeling for the program
-    `(Γ, s₀)` starting from the default initial abstract state at the top
-    level's own entry. -/
+    `(Γ, s₀)` whose top-level entry covers the initial configuration. -/
 def AnalysisResult [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) : Prop :=
-  Labeling.Valid Γ s₀ L ∧ L (.entry []) = AConf.bot
+  Labeling.Valid Γ s₀ L ∧ AConf.init s₀ ⊑ L (.entry [])
+
+/-! ## Walks
+
+A walk follows edges of the graph from state to state, taking an edge only
+if its label under `L` is defined. Its trace is the sequence of the labels'
+actions, `epsilon`s omitted. The labels are those of the fixed labeling `L`
+— the finite labeled automaton a model checker explores — not of any
+particular run. -/
+
+inductive AWalk [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) :
+    AState → AState → List AAct → Prop where
+  | nil {a} : AWalk Γ s₀ L a a []
+  | step {a b c C ℓ act acts} :
+      AGraph Γ s₀ a b C ℓ → ℓ L = some act → AWalk Γ s₀ L b c acts →
+      AWalk Γ s₀ L a c (act.visible ++ acts)
+
+theorem AWalk.append [Abstract] {Γ : Env} {s₀ : Stmt} {L : Labeling} {a b c : AState}
+    {t₁ t₂ : List AAct} (w₁ : AWalk Γ s₀ L a b t₁) (w₂ : AWalk Γ s₀ L b c t₂) :
+    AWalk Γ s₀ L a c (t₁ ++ t₂) := by
+  induction w₁ with
+  | nil => exact w₂
+  | step he hℓ _ ih => rw [List.append_assoc]; exact .step he hℓ (ih w₂)
+
+/-- A silent edge at the end of a walk leaves its trace unchanged. -/
+theorem AWalk.snoc_eps [Abstract] {Γ : Env} {s₀ : Stmt} {L : Labeling} {a b c : AState}
+    {acts : List AAct} {C ℓ} (w : AWalk Γ s₀ L a b acts) (he : AGraph Γ s₀ b c C ℓ)
+    (hℓ : ℓ L = some .epsilon) : AWalk Γ s₀ L a c acts := by
+  simpa [AAct.visible] using w.append (AWalk.step he hℓ .nil)
+
+theorem AWalk.single [Abstract] {Γ : Env} {s₀ : Stmt} {L : Labeling} {a b : AState}
+    {C ℓ act} (he : AGraph Γ s₀ a b C ℓ) (hℓ : ℓ L = some act) :
+    AWalk Γ s₀ L a b act.visible := by
+  simpa using AWalk.step he hℓ .nil
 
 /-! ## Properties of the accumulated transforms
 
@@ -756,5 +800,10 @@ theorem AGraph.fidReserved [Abstract] (aspec : AbstractSpec) {Γ : Env} {s₀ : 
   cases he with
   | top h => exact AEdge.fidReserved aspec hL h (fun _ h => h)
   | body _ _ h => exact AEdge.fidReserved aspec hL h (fun _ h => h)
+
+theorem AConf.FidReserved.init [Abstract] (aspec : AbstractSpec) (s : Stmt) :
+    (AConf.init s).FidReserved := by
+  intro f v hv
+  exact aspec.litLocA_fid f v hv.2.symm
 
 end CoreJS

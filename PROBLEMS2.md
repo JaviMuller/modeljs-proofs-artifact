@@ -177,3 +177,248 @@ holding `.fid f` is `litLoc (.fid f)`" (`Heap.FidCanon`). This is also
 weaker in the useful direction: the abstract side may still widen to `top`.
 
 ---
+
+## Decision 6 — `AlphaFn.DefinedIn` is not enough to extend `α` at an allocation; the invariant becomes `AlphaFn.AllocSafe`, backed by two new cross assumptions
+
+**Where:** `CoreJsAutomatonRelation.lean`, `AlphaFn.AllocSafe`,
+`AlphaFn.AllocSafe.extend`, `CrossSpec.allocC_lit`, `CrossSpec.allocC_site`.
+TODO.md Entry 2, "Dependency on the pre-existing `binOp`/`objLit` gap", plan
+steps 2.1–2.4.
+
+**The gap.** TODO.md proposes the invariant "every location in `α`'s domain
+is defined in the current heap" (`DefinedIn`). With it, `allocC_fresh`
+would give `l ∉ dom α` for the fresh location, so extending `α` there is
+safe. The invariant fails for two independent reasons.
+
+1. *It does not hold at the start.* TODO.md says it is trivial initially
+   because "α's domain is initially just the literals (`α.Lits`), all defined
+   in `Heap.init s`". But `α.Lits` fixes `α (litLoc v)` for *every* value
+   `v`, infinitely many. `Heap.init s` defines only `s`'s own literals and
+   `undefined`. Worse, nothing stops `allocC` from returning `litLoc v` for
+   some `v` whose location is unused. `α` is then already committed there to
+   `litLocA v`, not to the allocation site's abstract location.
+2. *It is not preserved.* An object literal with no fields,
+   `Heap.setObjs l []`, leaves the heap unchanged, so its location is in
+   `α`'s domain but not in use. A later allocation may return the same
+   location. For example, `x := {}; y := {}` with an allocator that ignores
+   the site index gives `x` and `y` the same concrete location, while the
+   abstract side keeps them at two different abstract locations. This
+   breaks soundness itself, not only the proof: continue with `x.p := 1;
+   z := y.p`. Concretely `z` is `1`. Abstractly `y`'s object has no `p`. The
+   test suite uses `objLit "o" 2 []` routinely, so empty object literals are
+   not a corner case.
+
+**Alternatives considered.**
+- Forbid empty object literals syntactically. Rejected: they are ordinary
+  JavaScript and common in the tests. It also does not fix problem 1.
+- Change the concrete `[Object Initialization]` rule to mark the location as
+  in use (for example with a dummy value). Rejected: this changes the
+  concrete semantics, its observations and the query tests, to work around
+  a proof obligation. Any marker value would also have to be abstracted.
+- Let `α` be a relation instead of a function. Rejected: the counterexample
+  above is a real aliasing unsoundness, and a multi-valued `α` does not
+  repair it.
+- **Chosen:** keep the concrete semantics and constrain the allocator:
+  - `CrossSpec.allocC_lit`: an allocation (on a finite heap) never returns a
+    literal location.
+  - `CrossSpec.allocC_site`: two allocations that return the same location
+    have the same *abstract* site (`allocA … κ = allocA … κ'`). This is the
+    weakest form that works. It holds trivially if the abstraction has a
+    single allocation site, and it holds for any "allocation-site-
+    partitioned" allocator. It allows the same concrete location to be
+    returned again, and only requires that doing so never asks `α` to change
+    its mind.
+  - `AlphaFn.AllocSafe α h`: every location `α` maps is in use in `h`, or a
+    literal location, or a location some allocation returns, mapped to that
+    allocation's abstract site. `AllocSafe.extend` then produces, at any
+    allocation on a finite heap, an extension `α' ≥α α` with
+    `α' (allocC h κ) = allocA _ κ` that stays allocation-safe for the heap
+    after the write.
+
+**How the invariant is maintained.** TODO.md plans a
+`BigStep.heap_defined_mono` lemma to carry `DefinedIn` across sub-runs. That
+lemma is not needed. The `α'` a sub-run produces is existential, so a
+monotonicity lemma about the *starting* `α` would not say anything about
+it. `step_sound` therefore *returns* `α'.AllocSafe r.heap` as part of its
+conclusion. The only monotonicity needed is at the leaves:
+`Heap.Defined.setVal`/`.setObj`/`.setObjs`. Finiteness of the current heap,
+which `allocC_fresh` needs, is threaded as a hypothesis and propagated with
+the existing `BigStep.finite`.
+
+---
+
+## Decision 7 — object initialisation's abstract register update must be weak
+
+**Where:** `CoreJsAutomatonSemantics.lean`, `AConf.doObjLit` (its `reg`
+component). `AReg.setDep` was removed, since nothing else used it.
+
+**The gap.** `doObjLit` did a strong update, `reg.setDep l ∅`, transcribed
+from the old abstract semantics. An abstract location stands for every
+concrete location allocated at sites it abstracts. Resetting its dependency
+set to `∅` erases the dependencies of every other such concrete location. A
+`binOp` result that shares the abstract location loses its dependencies,
+either because the two sites share an abstract location, or because the
+same concrete location was re-used after an empty object literal
+(Decision 6). `Reg.Alpha` is then false for that location, so `objLit`'s
+soundness case is unprovable. In general it is false.
+
+**Decision.** Make the update weak. Joining `∅` into the dependency set
+changes nothing, so `reg := c.reg`. The concrete side still resets to `∅`,
+and relating `∅` needs nothing (`Reg.Alpha.setDep_empty`). Precision is lost
+only when an object-literal site shares an abstract location with a site
+that records dependencies. When the sites are separated, the abstract
+dependency set at an object site is never written by anything else, so
+weak and strong updates agree.
+
+---
+
+## Decision 8 — `AnalysisResult` must cover the initial heap, not equal `⊥` at the top-level entry
+
+**Where:** `CoreJsAutomatonSemantics.lean`, `AHeap.init`, `AConf.init`,
+`AnalysisResult`; `CoreJsAutomatonRelation.lean`, `AConf.Alpha.init`.
+
+**The gap.** `AnalysisResult Γ s₀ L` required `L (.entry []) = AConf.bot`,
+and `sound_top` required `AConf.Alpha α c (L (.entry []))`. `Heap.Alpha α h
+AHeap.bot` holds only if `h` holds no value at all. Every well-formed heap
+holds `undefined` at `l_undef` (`Heap.WF`), and `Conf.init s` holds all of
+`s`'s literals. So `sound_top` applied to an `AnalysisResult` could only
+ever be instantiated with an empty heap, and was vacuous for every real
+program.
+
+**Decision.** `AHeap.init s` / `AConf.init s` are the abstract counterparts
+of `Heap.init s` / `Conf.init s`: each literal of `s`, and `undefined`, at
+its abstract location, with an empty store and register.
+`AnalysisResult Γ s₀ L := Labeling.Valid Γ s₀ L ∧ AConf.init s₀ ⊑ L (.entry [])`.
+`AConf.Alpha.init` relates `Conf.init s` to `AConf.init s` under the
+literal-only abstraction `AlphaFn.lits`. `sound_top` is now stated for a run
+from `Conf.init s₀` and is no longer vacuous. Invariant 4(b) holds of
+`AConf.init` (`AConf.FidReserved.init`); this is where Decision 3's
+`litLocA_fid` is needed.
+
+---
+
+## Decision 9 — the cross-spec: `OpSemSound` becomes `CrossSpec`, kept out of `ConcreteSpec`
+
+**Where:** `CoreJsAutomatonRelation.lean`, `CrossSpec`.
+
+**Decision.** The soundness proof's extra assumptions are collected in one
+structure. The old `OpSemSound.opSem_sound` becomes `CrossSpec.opSem_sound`,
+alongside `opSem_fid` (Decision 5), `allocC_lit` and `allocC_site`
+(Decision 6). `opSem_fid` and `allocC_lit` constrain only the concrete
+parameters, but they are deliberately not added to `ConcreteSpec`: the query
+bridge (`BigStep.obs_wf`, …) takes `ConcreteSpec` as a hypothesis, and adding
+fields it never uses would narrow those theorems for no reason. The
+structure moved from the soundness file to the relation file, because
+`AllocSafe.extend` needs it.
+
+---
+
+## Decision 10 — relating `call`/`ret` actions needs a concrete invariant: function values live only at their literal locations
+
+**Where:** `CoreJsSemantics.lean`, `Heap.FidCanon`, `BigStep.fidCanon`,
+`Heap.init_fidCanon`.
+
+**The gap.** An abstract `call`/`ret` label names the callee by the single
+location `litLocA (.fid f)` (Entry 1). The concrete action names it by the
+location `l_f` from which the call read `.fid f`. `Act.Alpha` needs
+`α l_f = litLocA (.fid f)`. `α.Lits` gives that only when
+`l_f = litLoc (.fid f)`. Assignments copy locations and so preserve that
+equality, but a binary operation whose result is a function value would put
+`.fid f` at a freshly allocated location, which `α` maps to an allocation
+site.
+
+**Decision.** `Heap.FidCanon h`: every location holding `.fid f` is
+`litLoc (.fid f)`. It holds for `Heap.init s`, and is preserved by every rule
+when `opSem` never produces a function value (`CrossSpec.opSem_fid`), since
+`binOp` is the only rule that writes a value. It is threaded through
+`step_sound` like heap finiteness.
+
+---
+
+## Decision 11 — walks: an inductive `AWalk` over `AGraph`, gated by the fixed labeling's labels
+
+**Where:** `CoreJsAutomatonSemantics.lean`, `AWalk`; TODO.md Entry 2, open
+sub-item "exact representation of a walk", and Entry 1's open sub-item on
+gating.
+
+**Decisions.**
+- *Representation.* An inductive `AWalk Γ s₀ L a b acts`, with `nil` and
+  `step` (take a graph edge whose label under `L` is `some act`, contributing
+  `act.visible`: nothing for `epsilon`). It mirrors how the rest of the
+  development defines relations, and makes concatenation (`AWalk.append`) a
+  short induction. A list of edge facts would need a separate "consecutive"
+  side condition.
+- *Gating reads `ℓ L`, the fixed labeling's labels, not a configuration
+  carried along the walk.* TODO.md Entry 2's sketch mentions "a running
+  configuration … composing `C`s". Entry 1's design item 5 instead says the
+  materialised action at an edge `a → b` is `ℓ (L a)`. These conflict. The
+  second is what a downstream model checker explores, a finite automaton
+  with fixed labels, so it was chosen. Composing contributions along a walk
+  would also not produce the labels `L` actually assigns.
+- *No `IsCandidate` monotonicity lemma is needed* for the soundness
+  direction (Entry 1's third open sub-item). At a real call, the candidate
+  check at `pending (L entry)` is derived directly from the run's
+  `α`-relatedness to that same label, the same way `callEntry`'s validity
+  step already did. Monotonicity is needed only for Entry 3's fixpoint, and
+  is proved there.
+- *Accepted over-approximation, made explicit.* `callPassThrough` is labeled
+  `epsilon` as TODO.md specifies, so a walk may skip a call's body. Walks may
+  also enter call-string instantiations no run reaches, since the graph
+  closes over all well-formed call strings. Both only add walks. The theorem
+  is existential ("some walk matches the run"), so neither affects it. They
+  are the same kind of imprecision the rest of the analysis already accepts.
+
+---
+
+## Decision 12 — the shape of the strengthened soundness theorem
+
+**Where:** `CoreJsAutomatonSoundness.lean`, `SoundRun`, `step_sound`,
+`sound`, `sound_top`.
+
+**Decisions.**
+- `SoundRun Γ s₀ L cs entry pending s start α r` names the conclusion. It is
+  the old disjunction (continued to an exit, or returned at a `ret`),
+  extended with `α'.AllocSafe r.heap` and "some walk from `start` to that
+  state has a trace `α'`-related to `r.trc`". The `start` parameter exists
+  for `whileDo`'s nested induction, whose walks start at the current
+  iteration's fan-out point rather than at `entry`.
+- `step_sound` is replaced by the stronger statement instead of adding a
+  second theorem, since the new statement implies the old one. Its
+  hypothesis `hvalidS` ("this statement's edges satisfy validity") becomes
+  `hsub` ("this statement's edges are graph edges"), from which validity
+  follows through `hvalid`, and which is what the walk needs.
+- `α'.Lits` is no longer part of the conclusion: it follows from `α' ≥α α`
+  (`AlphaFn.Lits.mono`). The unused `EnvSpec`/`AbstractSpec` hypotheses were
+  dropped.
+- TODO.md Entry 2, plan step 6: `sound` (derivation height quantified away)
+  and `sound_top` (whole program from `Conf.init s₀`, against an
+  `AnalysisResult`, with `α := AlphaFn.lits`) are kept as the usable
+  corollaries. They now carry the walk as well.
+
+---
+
+## Decision 13 — a satisfiability witness for all the assumptions
+
+**Where:** `CoreJsAutomatonSoundness.lean`, `SpecModel.satisfiable`.
+
+**Why.** Decisions 3, 5, 6 and 9 add assumptions. This repository has
+already had one specification that turned out to be unsatisfiable, which
+made every theorem assuming it vacuous (`ConcreteSpec.allocC_fresh`, per
+`CLAUDE.md`). `SpecModel.satisfiable` exhibits a `Concrete`/`Abstract` pair
+satisfying `ConcreteSpec`, `AbstractSpec` and `CrossSpec` together. Literals
+sit at even locations through an injective encoding of values. Allocation
+returns an odd location beyond a finite heap's support. There is a single
+abstract allocation site, each function has its own abstract location, and
+`⊕̂` always returns `⊤`. The witness is crude on purpose: it shows only
+consistency, not a useful analysis.
+
+---
+
+## Decision 14 — small relocations
+
+`Heap.setObjs_val`, `Heap.setVal_defined` and `mem_binOpDep` moved from
+`CoreJsQueryBridge.lean` to `CoreJsSemantics.lean`. The automaton soundness
+proof needs them too, and they mention only concrete-semantics notions. The
+bridge still finds them through its import chain.
+
+---

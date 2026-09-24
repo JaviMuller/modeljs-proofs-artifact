@@ -286,4 +286,280 @@ theorem AConf.Alpha.le {α : AlphaFn} {c ac ac'} (k : AConf.Alpha α c ac)
     (hle : ac ⊑ ac') : AConf.Alpha α c ac' :=
   ⟨k.1.le hle.1, k.2.1.le hle.2.1, k.2.2.le hle.2.2⟩
 
+/-! ## Heap update soundness at a fresh allocation (needed by `binOp`/`objLit`)
+
+Unlike `setObj`/`setObjV` above, these write at the location an allocation
+just returned, which `α` must already map to that allocation's abstract
+site (`AlphaFn.AllocSafe.extend` below provides such an `α`). -/
+
+theorem VSet.mem_join_left {V₁ V₂ : VSet} {v : Val} (h : V₁.Mem v) : (VSet.join V₁ V₂).Mem v := by
+  cases V₁ <;> cases V₂ <;> first | trivial | exact Or.inl h
+
+theorem VSet.mem_join_right {V₁ V₂ : VSet} {v : Val} (h : V₂.Mem v) : (VSet.join V₁ V₂).Mem v := by
+  cases V₁ <;> cases V₂ <;> first | trivial | exact Or.inr h
+
+theorem Heap.Alpha.setVal {α : AlphaFn} {h : Heap} {ah : AHeap} {l : Loc} {al : ALoc}
+    {v : Val} {V : VSet} (k : Heap.Alpha α h ah) (hl : α l = some al) (hv : V.Mem v) :
+    Heap.Alpha α (h.setVal l v) (ah.weakSetVal al V) := by
+  refine ⟨k.1, ?_⟩
+  intro l' v' hl'
+  by_cases e : l' = l
+  · subst e
+    simp only [Heap.setVal, if_pos] at hl'
+    cases hl'
+    exact ⟨al, hl, by simpa [AHeap.weakSetVal] using VSet.mem_join_left hv⟩
+  · have hl'' : h.val l' = some v' := by simpa [Heap.setVal, e] using hl'
+    obtain ⟨al', hal', hmem⟩ := k.2 l' v' hl''
+    refine ⟨al', hal', ?_⟩
+    by_cases e' : al' = al
+    · simpa [AHeap.weakSetVal, e'] using VSet.mem_join_right (V₁ := V) (e' ▸ hmem)
+    · simpa [AHeap.weakSetVal, e'] using hmem
+
+theorem Heap.Alpha.setObjs {α : AlphaFn} {l : Loc} {al : ALoc} (hl : α l = some al) :
+    ∀ (ps : List PropName) {h : Heap} {ah : AHeap} {ls : List Loc} {Ls : List ALocSet},
+      Heap.Alpha α h ah → LocsAlpha α ls Ls →
+      Heap.Alpha α (h.setObjs l (ps.zip ls)) (ah.weakSetObjs al (ps.zip Ls))
+  | [],      _, _, _,       _,       k, _  => k
+  | _ :: _,  _, _, [],      [],      k, _  => k
+  | _ :: ps, _, _, _ :: _,  _ :: _,  k, hLs =>
+      Heap.Alpha.setObjs hl ps (k.setObj ⟨al, hl, rfl⟩ hLs.1) hLs.2
+  | _ :: _,  _, _, [],      _ :: _,  _, hLs => hLs.elim
+  | _ :: _,  _, _, _ :: _,  [],      _, hLs => hLs.elim
+
+/-! ## Register update soundness (needed by `binOp`/`objLit`) -/
+
+theorem Reg.Alpha.binOp {α : AlphaFn} {δ : Reg} {aδ : AReg} {l l₁ l₂ : Loc} {al : ALoc}
+    {L₁ L₂ : ALocSet} (k : Reg.Alpha α δ aδ) (hl : α l = some al)
+    (h₁ : α.MapsInto l₁ L₁) (h₂ : α.MapsInto l₂ L₂) :
+    Reg.Alpha α (δ.setDep l (δ.dep l₁ ∪ δ.dep l₂ ∪ {l₁, l₂}))
+      (aδ.weakSetDep al (aδ.depOf L₁ ∪ aδ.depOf L₂ ∪ L₁ ∪ L₂)) := by
+  obtain ⟨al₁, hal₁, hL₁⟩ := h₁
+  obtain ⟨al₂, hal₂, hL₂⟩ := h₂
+  refine ⟨?_, k.2.1, k.2.2⟩
+  intro a b hab
+  by_cases ea : a = l
+  · subst ea
+    have hab' : (δ.dep l₁ ∪ δ.dep l₂ ∪ {l₁, l₂}) b := by simpa [Reg.setDep] using hab
+    have hnew : ∀ b', (aδ.depOf L₁ ∪ aδ.depOf L₂ ∪ L₁ ∪ L₂) b' →
+        (aδ.weakSetDep al (aδ.depOf L₁ ∪ aδ.depOf L₂ ∪ L₁ ∪ L₂)).dep al b' := by
+      intro b' hb'
+      simp only [AReg.weakSetDep, if_pos]
+      exact Or.inl hb'
+    rcases mem_binOpDep.1 hab' with hb | hb | rfl | rfl
+    · obtain ⟨a₁, b₁, ha₁, hb₁, hdep⟩ := k.1 _ _ hb
+      rw [hal₁] at ha₁; cases ha₁
+      exact ⟨al, b₁, hl, hb₁, hnew _ (Or.inl (Or.inl (Or.inl ⟨al₁, hL₁, hdep⟩)))⟩
+    · obtain ⟨a₂, b₂, ha₂, hb₂, hdep⟩ := k.1 _ _ hb
+      rw [hal₂] at ha₂; cases ha₂
+      exact ⟨al, b₂, hl, hb₂, hnew _ (Or.inl (Or.inl (Or.inr ⟨al₂, hL₂, hdep⟩)))⟩
+    · exact ⟨al, al₁, hl, hal₁, hnew _ (Or.inl (Or.inr hL₁))⟩
+    · exact ⟨al, al₂, hl, hal₂, hnew _ (Or.inr hL₂)⟩
+  · have hab' : δ.dep a b := by simpa [Reg.setDep, ea] using hab
+    obtain ⟨a₁, b₁, ha₁, hb₁, hdep⟩ := k.1 _ _ hab'
+    refine ⟨a₁, b₁, ha₁, hb₁, ?_⟩
+    by_cases e : a₁ = al
+    · simp only [AReg.weakSetDep, e, if_pos]
+      exact Or.inr (e ▸ hdep)
+    · simpa [AReg.weakSetDep, e] using hdep
+
+theorem Reg.Alpha.setDep_empty {α : AlphaFn} {δ : Reg} {aδ : AReg} {l : Loc}
+    (k : Reg.Alpha α δ aδ) : Reg.Alpha α (δ.setDep l ∅) aδ := by
+  refine ⟨?_, k.2.1, k.2.2⟩
+  intro a b hab
+  by_cases ea : a = l
+  · subst ea
+    have : (∅ : LocSet) b := by simpa [Reg.setDep] using hab
+    exact this.elim
+  · exact k.1 a b (by simpa [Reg.setDep, ea] using hab)
+
+/-! ## Keeping `α` extensible at allocations
+
+`α` is only ever extended at a location an allocation has just returned, and
+the extension must agree with whatever `α` already says there. A location an
+allocation returns is not in use in the current heap (`ConcreteSpec.
+allocC_fresh`) and is not a literal location (`CrossSpec.allocC_lit`,
+`CoreJsAutomatonSoundness.lean`). Neither fact on its own rules out that `α`
+already maps it: an object literal with no fields allocates a location and
+leaves it unused (`Heap.setObjs l []` is `h`), so a later allocation may
+return that same location again. `AllocSafe` therefore also admits a
+location some earlier allocation returned, provided `α` maps it to that
+allocation's abstract site. Re-allocating it is then harmless when the
+allocator's result determines the abstract site (`CrossSpec.allocC_site`). -/
+
+/-- Every location `α` maps is in use in `h`, a literal location, or a location
+    some allocation returns, mapped to that allocation's abstract site. -/
+def AlphaFn.AllocSafe [Concrete] [Abstract] (α : AlphaFn) (h : Heap) : Prop :=
+  ∀ l al, α l = some al →
+    h.Defined l ∨ (∃ v, l = Concrete.litLoc v) ∨
+    ∃ (h₀ : Heap) (κ : Idx), h₀.Finite ∧ Concrete.allocC h₀ κ = l ∧
+      al = Abstract.allocA AHeap.bot κ
+
+/-- `AllocSafe` survives any heap change that keeps every in-use location in
+    use. -/
+theorem AlphaFn.AllocSafe.mono_heap [Concrete] [Abstract] {α : AlphaFn} {h h' : Heap}
+    (k : α.AllocSafe h) (hd : ∀ l, h.Defined l → h'.Defined l) : α.AllocSafe h' := by
+  intro l al hl
+  rcases k l al hl with hdef | hrest
+  · exact Or.inl (hd l hdef)
+  · exact Or.inr hrest
+
+theorem AlphaFn.Lits.mono [Concrete] [Abstract] {α α' : AlphaFn} (he : α' ≥α α)
+    (k : α.Lits) : α'.Lits :=
+  fun v => he _ _ (k v)
+
+/-! ## Assumptions relating the concrete and abstract parameters
+
+Beyond `ConcreteSpec` and `AbstractSpec`, which each constrain one side, the
+soundness proof needs the two sides' binary operators and allocators to
+agree, and two further facts about the concrete parameters that the query
+development has no use for (kept here rather than in `ConcreteSpec` so that
+the query bridge's theorems do not acquire hypotheses they never use). -/
+
+structure CrossSpec [Concrete] [Abstract] : Prop where
+  /-- `⊕̂` soundly over-approximates `⊕`. -/
+  opSem_sound : ∀ op v₁ v₂ (V₁ V₂ : VSet), V₁.Mem v₁ → V₂.Mem v₂ →
+    (Abstract.opSemA op V₁ V₂).Mem (Concrete.opSem op v₁ v₂)
+  /-- Binary operators never produce a function value, so a function value
+      lives only at its own literal location (`Heap.FidCanon`). -/
+  opSem_fid : ∀ op v₁ v₂ f, Concrete.opSem op v₁ v₂ ≠ .fid f
+  /-- An allocation never returns a literal location. -/
+  allocC_lit : ∀ h κ v, h.Finite → Concrete.allocC h κ ≠ Concrete.litLoc v
+  /-- Two allocations that return the same location have the same abstract
+      site: re-allocating a location (possible after an object literal with
+      no fields, which leaves its location unused) never needs `α` to
+      re-map it. -/
+  allocC_site : ∀ (h h' : Heap) κ κ' (ah ah' : AHeap), h.Finite → h'.Finite →
+    Concrete.allocC h κ = Concrete.allocC h' κ' → Abstract.allocA ah κ = Abstract.allocA ah' κ'
+
+/-- Extending `α` at a fresh allocation: `α` is extended (or already agrees)
+    to map the allocated location to its abstract site, and stays
+    allocation-safe for any heap that keeps in use what the current one does. -/
+theorem AlphaFn.AllocSafe.extend [Concrete] [Abstract] (cspec : ConcreteSpec)
+    (xspec : CrossSpec) {α : AlphaFn} {h : Heap} (k : α.AllocSafe h) (hfin : h.Finite)
+    (κ : Idx) (ah : AHeap) :
+    ∃ α', α' ≥α α ∧ α' (Concrete.allocC h κ) = some (Abstract.allocA ah κ) ∧
+      ∀ h' : Heap, (∀ l, h.Defined l → h'.Defined l) → α'.AllocSafe h' := by
+  let l := Concrete.allocC h κ
+  let α' : AlphaFn := fun l' => if l' = l then some (Abstract.allocA ah κ) else α l'
+  have hsite : Abstract.allocA AHeap.bot κ = Abstract.allocA ah κ :=
+    xspec.allocC_site h h κ κ _ _ hfin hfin rfl
+  refine ⟨α', ?_, if_pos rfl, ?_⟩
+  · intro l' al hl'
+    by_cases e : l' = l
+    · subst e
+      simp only [α', if_pos]
+      rcases k _ al hl' with hdef | ⟨v, hv⟩ | ⟨h₀, κ₀, hfin₀, hl₀, hal⟩
+      · exact absurd hdef (Heap.not_defined_of_fresh (cspec.allocC_fresh h κ hfin))
+      · exact absurd hv (xspec.allocC_lit h κ v hfin)
+      · rw [hal]
+        exact congrArg some (xspec.allocC_site h₀ h κ₀ κ AHeap.bot ah hfin₀ hfin hl₀).symm
+    · simpa [α', e] using hl'
+  · intro h' hd l' al hl'
+    by_cases e : l' = l
+    · subst e
+      simp only [α', if_pos, Option.some.injEq] at hl'
+      exact Or.inr (Or.inr ⟨h, κ, hfin, rfl, hl' ▸ hsite.symm⟩)
+    · have : α l' = some al := by simpa [α', e] using hl'
+      rcases k l' al this with hdef | hrest
+      · exact Or.inl (hd l' hdef)
+      · exact Or.inr hrest
+
+/-! ## The initial abstraction
+
+At the start of a run `α` maps exactly the literal locations, each to its
+abstract counterpart. -/
+
+open Classical in
+/-- `α` defined exactly on literal locations: `l_v ↦ litLocA v`. -/
+noncomputable def AlphaFn.lits [Concrete] [Abstract] : AlphaFn := fun l =>
+  if h : ∃ v, Concrete.litLoc v = l then some (Abstract.litLocA (Classical.choose h)) else none
+
+theorem AlphaFn.lits_lits [Concrete] [Abstract] (cspec : ConcreteSpec) :
+    (AlphaFn.lits : AlphaFn).Lits := by
+  intro v
+  have h : ∃ w, Concrete.litLoc w = Concrete.litLoc v := ⟨v, rfl⟩
+  simp only [AlphaFn.lits, dif_pos h]
+  rw [cspec.litLoc_inj _ _ (Classical.choose_spec h)]
+
+theorem AlphaFn.lits_allocSafe [Concrete] [Abstract] (h : Heap) :
+    (AlphaFn.lits : AlphaFn).AllocSafe h := by
+  intro l al hl
+  by_cases e : ∃ v, Concrete.litLoc v = l
+  · obtain ⟨v, hv⟩ := e
+    exact Or.inr (Or.inl ⟨v, hv.symm⟩)
+  · simp [AlphaFn.lits, e] at hl
+
+/-- The initial configuration of a run relates to the initial abstract
+    configuration. -/
+theorem AConf.Alpha.init [Concrete] [Abstract] (cspec : ConcreteSpec) (s : Stmt) :
+    AConf.Alpha AlphaFn.lits (Conf.init s) (AConf.init s) := by
+  refine ⟨⟨?_, ?_⟩, ?_, ?_, ?_, ?_⟩
+  · intro l p l' h; exact absurd h (by simp [Conf.init, Heap.init])
+  rotate_left
+  · intro x l h; exact absurd h (by simp [Conf.init, Sto.empty])
+  · intro l₁ l₂ h; exact (h : False).elim
+  · intro l h; exact (h : False).elim
+  · intro l h; exact (h : False).elim
+  intro l v hl
+  have hl' : (Val.undef :: s.lits).find? (fun w => Concrete.litLoc w == l) = some v := hl
+  have hmem := List.mem_of_find?_eq_some hl'
+  have hp := List.find?_some hl'
+  simp only [beq_iff_eq] at hp
+  subst hp
+  exact ⟨Abstract.litLocA v, AlphaFn.lits_lits cspec v, hmem, rfl⟩
+
+/-! ## Actions and traces
+
+The abstraction relation extended pointwise to trace actions, and then to
+traces: a concrete trace relates to a list of abstract actions when both
+have the same length and their actions relate position by position. A
+callee position relates exactly (`α lf = some alf`), since the abstract
+action names a single location there. -/
+
+def Act.Alpha (α : AlphaFn) : Act → AAct → Prop
+  | .lookup l₁ l₂ l₃, .lookup L₁ L₂ L₃ =>
+      α.MapsInto l₁ L₁ ∧ α.MapsInto l₂ L₂ ∧ α.MapsInto l₃ L₃
+  | .update l₁ l₂ l₃, .update L₁ L₂ L₃ =>
+      α.MapsInto l₁ L₁ ∧ α.MapsInto l₂ L₂ ∧ α.MapsInto l₃ L₃
+  | .call lf ls, .call alf Ls => α lf = some alf ∧ LocsAlpha α ls Ls
+  | .ret lf l, .ret alf L     => α lf = some alf ∧ α.MapsInto l L
+  | _, _                      => False
+
+theorem Act.Alpha.mono {α α' : AlphaFn} (he : α' ≥α α) :
+    ∀ {a : Act} {A : AAct}, Act.Alpha α a A → Act.Alpha α' a A
+  | .lookup _ _ _, .lookup _ _ _, k => ⟨k.1.mono he, k.2.1.mono he, k.2.2.mono he⟩
+  | .update _ _ _, .update _ _ _, k => ⟨k.1.mono he, k.2.1.mono he, k.2.2.mono he⟩
+  | .call _ _,     .call _ _,     k => ⟨he _ _ k.1, k.2.mono he⟩
+  | .ret _ _,      .ret _ _,      k => ⟨he _ _ k.1, k.2.mono he⟩
+
+/-- Position-by-position relation of concrete to abstract action lists. -/
+def ActsAlpha (α : AlphaFn) : List Act → List AAct → Prop
+  | [],      []      => True
+  | a :: as, A :: As => Act.Alpha α a A ∧ ActsAlpha α as As
+  | _,       _       => False
+
+theorem ActsAlpha.mono {α α' : AlphaFn} (he : α' ≥α α) :
+    ∀ {as : List Act} {As : List AAct}, ActsAlpha α as As → ActsAlpha α' as As
+  | [],      [],      _ => trivial
+  | _ :: _,  _ :: _,  k => ⟨k.1.mono he, ActsAlpha.mono he k.2⟩
+
+theorem ActsAlpha.append {α : AlphaFn} :
+    ∀ {as₁ as₂ : List Act} {As₁ As₂ : List AAct},
+      ActsAlpha α as₁ As₁ → ActsAlpha α as₂ As₂ → ActsAlpha α (as₁ ++ as₂) (As₁ ++ As₂)
+  | [],      _, [],      _, _,  k₂ => k₂
+  | _ :: _,  _, _ :: _,  _, k₁, k₂ => ⟨k₁.1, ActsAlpha.append k₁.2 k₂⟩
+
+/-- A concrete trace relates to a list of abstract actions. -/
+def Trc.Alpha (α : AlphaFn) (t : Trc) (As : List AAct) : Prop :=
+  ActsAlpha α t.toList As
+
+theorem Trc.Alpha.mono {α α' : AlphaFn} (he : α' ≥α α) {t : Trc} {As : List AAct}
+    (k : Trc.Alpha α t As) : Trc.Alpha α' t As :=
+  ActsAlpha.mono he k
+
+theorem Trc.Alpha.seq {α : AlphaFn} {t₁ t₂ : Trc} {As₁ As₂ : List AAct}
+    (k₁ : Trc.Alpha α t₁ As₁) (k₂ : Trc.Alpha α t₂ As₂) :
+    Trc.Alpha α (.seq t₁ t₂) (As₁ ++ As₂) :=
+  ActsAlpha.append k₁ k₂
+
 end CoreJS

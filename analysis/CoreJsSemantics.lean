@@ -112,6 +112,52 @@ theorem Heap.Finite.exists_fresh {h : Heap} (hf : h.Finite) :
   obtain ⟨n, hn⟩ := hf
   exact ⟨n, hn n (Nat.le_refl n)⟩
 
+theorem Heap.setObjs_val (h : Heap) (l : Loc) (ps : List (PropName × Loc)) :
+    (h.setObjs l ps).val = h.val := by
+  induction ps generalizing h with
+  | nil => rfl
+  | cons p ps ih => exact ih _
+
+theorem Heap.setVal_defined {h : Heap} {l x : Loc} {v : Val} (hx : h.val x ≠ none) :
+    (h.setVal l v).val x ≠ none := by
+  by_cases e : x = l
+  · simp [Heap.setVal, e]
+  · simpa [Heap.setVal, e] using hx
+
+/-- `l` is in use in `h`: it holds a value, or an object property. -/
+def Heap.Defined (h : Heap) (l : Loc) : Prop :=
+  h.val l ≠ none ∨ ∃ p, h.obj l p ≠ none
+
+theorem Heap.Defined.setVal {h : Heap} {x : Loc} (hx : h.Defined x) (l : Loc) (v : Val) :
+    (h.setVal l v).Defined x := by
+  rcases hx with hx | hx
+  · exact Or.inl (Heap.setVal_defined hx)
+  · exact Or.inr hx
+
+theorem Heap.Defined.setObj {h : Heap} {x : Loc} (hx : h.Defined x) (l : Loc) (p : PropName)
+    (l' : Loc) : (h.setObj l p l').Defined x := by
+  rcases hx with hx | ⟨q, hq⟩
+  · exact Or.inl hx
+  · refine Or.inr ⟨q, ?_⟩
+    by_cases e : x = l ∧ q = p
+    · simp [Heap.setObj, e]
+    · simpa [Heap.setObj, e] using hq
+
+theorem Heap.Defined.setObjs {h : Heap} {x : Loc} (hx : h.Defined x) (l : Loc) :
+    ∀ ps : List (PropName × Loc), (h.setObjs l ps).Defined x
+  | []           => hx
+  | (p, l') :: ps => (hx.setObj l p l').setObjs l ps
+
+theorem Heap.setVal_defined_self (h : Heap) (l : Loc) (v : Val) : (h.setVal l v).Defined l :=
+  Or.inl (by simp [Heap.setVal])
+
+/-- A freshly allocated location (`ConcreteSpec.allocC_fresh`) is not in use. -/
+theorem Heap.not_defined_of_fresh {h : Heap} {l : Loc}
+    (hf : h.val l = none ∧ ∀ p, h.obj l p = none) : ¬ h.Defined l := by
+  rintro (hv | ⟨p, hp⟩)
+  · exact hv hf.1
+  · exact hp (hf.2 p)
+
 /-- Taint registers `δ ∈ Reg`:
     * `dep` — dependencies between values (`l₂ ∈ δ.dep l₁`: the value in `l₁`
       was computed from the one in `l₂`);
@@ -127,6 +173,15 @@ structure Reg where
 /-- `δ[dep ↦ δ.dep[l ↦ d]]`. -/
 def Reg.setDep (δ : Reg) (l : Loc) (d : LocSet) : Reg :=
   { δ with dep := fun l' => if l' = l then d else δ.dep l' }
+
+/-- Membership in the dependency set built by `[Binary Operation]`. -/
+theorem mem_binOpDep {δ : Reg} {l₁ l₂ l' : Loc} :
+    (δ.dep l₁ ∪ δ.dep l₂ ∪ {l₁, l₂}) l' ↔
+      δ.dep l₁ l' ∨ δ.dep l₂ l' ∨ l' = l₁ ∨ l' = l₂ := by
+  show (δ.dep l₁ l' ∨ δ.dep l₂ l') ∨ (l' = l₁ ∨ l' = l₂) ↔ _
+  constructor
+  · rintro ((h | h) | h | h) <;> simp [h]
+  · rintro (h | h | h | h) <;> simp [h]
 
 /-- Trace actions `a ∈ Act`. -/
 inductive Act where
@@ -263,6 +318,13 @@ theorem exists_allocator :
   intro h κ hf
   simp only [hf, dif_pos]
   exact Classical.choose_spec hf.exists_fresh
+
+/-- Every location holding a function value is that function's own literal
+    location. Holds initially (`Heap.init_fidCanon`) and along every run whose
+    binary operators never produce a function value (`BigStep.fidCanon`), since
+    no other rule writes a value. -/
+def Heap.FidCanon [Concrete] (h : Heap) : Prop :=
+  ∀ l f, h.val l = some (.fid f) → l = litLoc (.fid f)
 
 /-! ## Expression evaluation (Fig. A3)
 
@@ -786,6 +848,48 @@ theorem BigStep.finite [Concrete] {Γ : Env} {c : Conf} {s : Stmt} {r : Res}
   | ret _ => exact id
   | setTaint _ _ => exact id
   | setSink _ _ => exact id
+
+/-- Every rule of the concrete semantics preserves `Heap.FidCanon`, provided
+    binary operators never produce a function value. -/
+theorem BigStep.fidCanon [Concrete] (hop : ∀ op v₁ v₂ f, opSem op v₁ v₂ ≠ .fid f)
+    {Γ : Env} {c : Conf} {s : Stmt} {r : Res}
+    (hb : BigStep Γ c s r) : c.heap.FidCanon → r.heap.FidCanon := by
+  induction hb with
+  | skip => exact id
+  | assign _ _ => exact id
+  | @binOp h h' ρ ρ' δ δ' x κ op e₁ e₂ l₁ l₂ v₁ v₂ l v d _ _ _ _ _ hv hh' _ _ _ =>
+      intro hc l' f hl'
+      subst hh'
+      by_cases e : l' = l
+      · simp only [Heap.setVal, e, if_pos] at hl'
+        exact absurd (hv.symm.trans (Option.some.inj hl')) (hop _ _ _ _)
+      · exact hc l' f (by simpa [Heap.setVal, e] using hl')
+  | objLit _ _ hh' _ _ =>
+      intro hc l' f hl'
+      subst hh'
+      exact hc l' f (by rw [Heap.setObjs_val] at hl'; exact hl')
+  | lookupS _ _ _ => exact id
+  | lookupD _ _ _ _ _ => exact id
+  | updateS _ _ hh' => intro hc l' f hl'; subst hh'; exact hc l' f hl'
+  | updateD _ _ _ _ hh' => intro hc l' f hl'; subst hh'; exact hc l' f hl'
+  | seqRet _ ih => exact ih
+  | seqCont _ _ ih₁ ih₂ => exact fun hf => ih₂ (ih₁ hf)
+  | callRet _ _ _ _ _ _ _ ih => exact ih
+  | callCont _ _ _ _ _ _ _ ih => exact ih
+  | ifTrue _ _ _ ih => exact ih
+  | ifFalse _ _ _ ih => exact ih
+  | whileDo _ ih => exact ih
+  | ret _ => exact id
+  | setTaint _ _ => exact id
+  | setSink _ _ => exact id
+
+/-- `Heap.init s` holds a function value only at that function's literal
+    location. -/
+theorem Heap.init_fidCanon [Concrete] (s : Stmt) : (Heap.init s).FidCanon := by
+  intro l f hl
+  have hp := List.find?_some hl
+  simp only [beq_iff_eq] at hp
+  exact hp.symm
 
 /-- Notation for the big-step judgement:
     `Γ ⊢ c ⇓[s] r` is `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`. -/
