@@ -16,15 +16,16 @@
      non-matching cases.
 
   The `Concrete` instance below is *test-only*: it is not injective on `Val`,
-  so it does not satisfy `ConcreteSpec`, and the bridge theorems of
-  `CoreJsQueryBridge.lean` cannot be applied to it.  Its allocator hands out
+  so it does not satisfy `ConcreteSpec`, and the well-formedness theorems for
+  run records (`BigStep.obs_wf`, in `CoreJsSemantics.lean`) cannot be applied
+  to it.  Its allocator hands out
   consecutive fresh locations per allocation site, which is all the programs
   below need.
 
   Plain Lean 4 — no Mathlib required.
 -/
 
-import CoreJsQueryBridge
+import Queries.QueryLanguage.CoreJsQuerySemantics
 
 namespace CoreJS.Tests
 

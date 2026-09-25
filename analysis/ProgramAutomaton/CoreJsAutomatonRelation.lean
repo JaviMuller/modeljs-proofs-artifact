@@ -18,7 +18,7 @@
   value carried on a result.
 -/
 
-import CoreJsAutomatonSemantics
+import ProgramAutomaton.CoreJsAutomatonSemantics
 
 namespace CoreJS
 
@@ -407,7 +407,8 @@ Beyond `ConcreteSpec` and `AbstractSpec`, which each constrain one side, the
 soundness proof needs the two sides' binary operators and allocators to
 agree, and two further facts about the concrete parameters that the query
 development has no use for (kept here rather than in `ConcreteSpec` so that
-the query bridge's theorems do not acquire hypotheses they never use). -/
+the run-record theorems of `CoreJsSemantics.lean` (`BigStep.obs_wf`, …) do
+not acquire hypotheses they never use). -/
 
 structure CrossSpec [Concrete] [Abstract] : Prop where
   /-- `⊕̂` soundly over-approximates `⊕`. -/

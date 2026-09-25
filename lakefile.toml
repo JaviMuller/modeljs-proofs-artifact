@@ -4,21 +4,21 @@ defaultTargets = ["Analysis"]
 [[lean_lib]]
 name = "Analysis"
 srcDir = "analysis"
-# Every module of the library must be listed here: a file under analysis/
-# that is not listed is silently skipped by `lake build`.
+# Every module of the library must be listed here, by its path under
+# analysis/ with `/` replaced by `.`: a file that is not listed is silently
+# skipped by `lake build`.
 globs = [
-    "CoreJsSyntax",
-    "CoreJsSemantics",
-    "CoreJsAutomatonSyntax",
-    "CoreJsAutomatonSemantics",
-    "CoreJsAutomatonRelation",
-    "CoreJsAutomatonTotality",
-    "CoreJsAutomatonSoundness",
-    "CoreJsQuerySyntax",
-    "CoreJsQuerySemantics",
-    "CoreJsQueryBridge",
-    "CoreJsQueryTests",
-    "CoreJsFoLtl",
-    "CoreJsFoLtlTests",
-    "CoreJsQueryToLtl",
+    "CoreJS.CoreJsSyntax",
+    "CoreJS.CoreJsSemantics",
+    "ProgramAutomaton.CoreJsAutomatonSyntax",
+    "ProgramAutomaton.CoreJsAutomatonSemantics",
+    "ProgramAutomaton.CoreJsAutomatonRelation",
+    "ProgramAutomaton.CoreJsAutomatonTotality",
+    "ProgramAutomaton.CoreJsAutomatonSoundness",
+    "Queries.QueryLanguage.CoreJsQuerySyntax",
+    "Queries.QueryLanguage.CoreJsQuerySemantics",
+    "Queries.QueryLanguage.CoreJsQueryTests",
+    "Queries.FoLtl.CoreJsFoLtl",
+    "Queries.FoLtl.CoreJsFoLtlTests",
+    "Queries.FoLtl.CoreJsQueryToLtl",
 ]

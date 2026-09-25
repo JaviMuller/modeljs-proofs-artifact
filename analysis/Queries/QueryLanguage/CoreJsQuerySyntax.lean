@@ -20,7 +20,7 @@
   Plain Lean 4 — no Mathlib required.
 -/
 
-import CoreJsSyntax
+import CoreJS.CoreJsSyntax
 
 namespace CoreJS
 

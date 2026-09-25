@@ -16,8 +16,8 @@ the operational guidance for working on the code.
   through the labeled automaton) and a totality theorem (every program has a
   least analysis result);
 - a *query language* for describing vulnerable behaviours, with a satisfaction
-  relation over execution records (trace + taint observation), a bridge from
-  concrete runs to such records, and a semantics-preserving translation into
+  relation over execution records (trace + taint observation; every concrete
+  run yields a well-formed one), and a semantics-preserving translation into
   first-order LTL over finite traces.
 
 There is no application code — the entire deliverable is the Lean source under
@@ -30,8 +30,8 @@ entry before revisiting one of those decisions.
 ## Build / check commands
 
 - Build everything: `lake build`
-- Type-check a single file: `lake env lean analysis/<File>.lean` (its imports
-  must already be built, i.e. run `lake build` first).
+- Type-check a single file: `lake env lean analysis/<Dir>/<File>.lean` (its
+  imports must already be built, i.e. run `lake build` first).
 - `lean-toolchain` pins `leanprover/lean4:v4.32.1`; use `lake`/`lean` via
   `elan`, no other setup is required.
 
@@ -39,12 +39,29 @@ entry before revisiting one of those decisions.
 
 `globs` enumerates every module of the `Analysis` library; a `.lean` file that
 is not listed is silently skipped by `lake build`. **When adding a file under
-`analysis/`, add its module name (no extension) to `globs`.** The list is
-currently complete.
+`analysis/`, add its module name to `globs`**: its path under `analysis/`,
+without extension, with `/` replaced by `.` (e.g.
+`ProgramAutomaton.CoreJsAutomatonSemantics`); `import` lines use the same
+names. The list is currently complete.
+
+### Layout
+
+Sources live under `analysis/` in four directories (module names never
+contain spaces, hence the camel case):
+
+- `CoreJS/` — the language and its concrete semantics
+  (`CoreJsSyntax`, `CoreJsSemantics`);
+- `ProgramAutomaton/` — the automaton-based analysis (`CoreJsAutomaton*`);
+- `Queries/QueryLanguage/` — queries, their semantics, and the query tests
+  (`CoreJsQuery{Syntax,Semantics,Tests}`);
+- `Queries/FoLtl/` — FO-LTL, its tests, and the query-to-FO-LTL translation
+  (`CoreJsFoLtl`, `CoreJsFoLtlTests`, `CoreJsQueryToLtl`).
 
 ## Architecture
 
-All files are in `namespace CoreJS`. What each file imports:
+All files are in `namespace CoreJS` (the namespace is unrelated to the
+`CoreJS/` directory). What each file imports, by file name (the directories
+are listed above):
 
 - `CoreJsSemantics` ← `CoreJsSyntax`
 - `CoreJsAutomatonSyntax` ← `CoreJsSyntax`
@@ -54,8 +71,7 @@ All files are in `namespace CoreJS`. What each file imports:
 - `CoreJsAutomatonSoundness` ← `CoreJsAutomatonRelation`, `CoreJsAutomatonTotality`
 - `CoreJsQuerySyntax` ← `CoreJsSyntax`
 - `CoreJsQuerySemantics` ← `CoreJsSemantics`, `CoreJsQuerySyntax`
-- `CoreJsQueryBridge` ← `CoreJsQuerySemantics`
-- `CoreJsQueryTests` ← `CoreJsQueryBridge`
+- `CoreJsQueryTests` ← `CoreJsQuerySemantics`
 - `CoreJsFoLtl` ← `CoreJsSemantics`
 - `CoreJsFoLtlTests` ← `CoreJsQueryTests`, `CoreJsFoLtl`
 - `CoreJsQueryToLtl` ← `CoreJsQuerySemantics`, `CoreJsFoLtl`
@@ -94,7 +110,12 @@ sit on top of the concrete semantics.
      `CoreJsQuerySemantics.lean`, even though the query language is their
      first consumer: they are built entirely from `Trc`/`Heap`/`Reg` (no
      dependency on the query syntax), and both `CoreJsQuerySemantics.lean`
-     and `CoreJsFoLtl.lean` need them independently.
+     and `CoreJsFoLtl.lean` need them independently. The same goes for the
+     record of a concrete run, `Exec.ofRes`, and its well-formedness:
+     `Reg.DepInv` (transitive `dep`, every dependency target holds a value),
+     `BigStep.depInv`, and `BigStep.obs_wf` / `obs_wf_empty` / `obs_wf_init`
+     (a run yields a well-formed observation; needs `ConcreteSpec` and a
+     finite starting heap), at the end of the file.
 
 ### The automaton-based analysis
 
@@ -181,25 +202,21 @@ the end of `CoreJsAutomatonSemantics.lean`.
      `Θ` of invocations as a parameter. This is forced by strict positivity:
      `except` negates `Pat.Sat`, which cannot sit inside the inductive that
      defines it. Acyclicity is thereby built in.
-10. **`CoreJsQueryBridge.lean`** — `Reg.DepInv` (transitive `dep`, every
-    dependency target holds a value), `BigStep.depInv`, and the bridge theorems
-    `BigStep.obs_wf` / `obs_wf_empty` / `obs_wf_init`: a concrete run yields a
-    well-formed observation (needs `ConcreteSpec` and a finite starting heap).
-11. **`CoreJsQueryTests.lean`** — a compile-time regression suite: one program
+10. **`CoreJsQueryTests.lean`** — a compile-time regression suite: one program
     per statement shape run through `BigStep`, then positive and negative
     query tests over the runs of `pTaint`/`pObjRT`. The `bigstep` tactic builds
     a derivation automatically; `run tac` wraps it for goals of the form
     `∃ r, BigStep … r ∧ P r`; `obs_simp [q]`/`tr_simp` discharge observation
     and trace facts. Its `Concrete` instance is test-only and does **not**
-    satisfy `ConcreteSpec` (non-injective `litLoc`), so the bridge theorems are
-    not exercised by it. Function bodies in its `Γ₀` must mention no literals
-    (`Heap.init` only holds the main statement's literals).
+    satisfy `ConcreteSpec` (non-injective `litLoc`), so `BigStep.obs_wf` and
+    its variants are not exercised by it. Function bodies in its `Γ₀` must
+    mention no literals (`Heap.init` only holds the main statement's literals).
     After changing the semantics, `lake build` this file: a failure here means
     a rule or query semantics changed behaviourally.
 
 ### FO-LTL over finite traces
 
-12. **`CoreJsFoLtl.lean`** — standard first-order past+future LTL over finite traces,
+11. **`CoreJsFoLtl.lean`** — standard first-order past+future LTL over finite traces,
     organized the way a logic text would present it, with an explicit table in the file
     header mapping each usual component (signature/terms/atomic formulas/formula
     grammar/structures/satisfaction) to its Lean definition:
@@ -239,11 +256,11 @@ the end of `CoreJsAutomatonSemantics.lean`.
       it to the query language; the eventual model-checking algorithm is being built on
       the automaton (`AWalk` over a labeled `AGraph`), not on `Ltl`/`Model` — this file
       stays a self-contained logic definition, not glued to that other development.
-13. **`CoreJsFoLtlTests.lean`** — compile-time tests on `eTaint`, an explicit record
+12. **`CoreJsFoLtlTests.lean`** — compile-time tests on `eTaint`, an explicit record
     for the run of `pTaint` (linked to the real run by `link_eTaint`): sequencing,
     sentinel, state atoms, quantification, exclusivity, and the past operators
     (`Y`/`O`/`H`/`atStart`).
-14. **`CoreJsQueryToLtl.lean`** — the translation from queries into `Ltl LVar`
+13. **`CoreJsQueryToLtl.lean`** — the translation from queries into `Ltl LVar`
     (`LVar := Var ⊕ Nat`: original source names, or a synthetic tag freshly minted per
     invoked-query occurrence to avoid capture when inlining — see the file header for why
     this is needed independently of the in-place, non-prenex translation style), and the
@@ -311,7 +328,7 @@ the end of `CoreJsAutomatonSemantics.lean`.
 ## `sorry` policy
 
 There are no `sorry`s and no `axiom`s in the development
-(`grep -n sorry analysis/*.lean` is empty; `#print axioms` on the headline
+(`grep -rn sorry analysis` is empty; `#print axioms` on the headline
 theorems shows only `propext`, `Classical.choice`, `Quot.sound`). Keep it
 that way: if a proof cannot be completed, leave an explicit, commented `sorry`
 stating exactly what is missing rather than papering over it with an `axiom`

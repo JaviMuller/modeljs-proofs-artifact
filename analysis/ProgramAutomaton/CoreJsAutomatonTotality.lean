@@ -27,7 +27,7 @@
   (`least_fidReserved`, invariant `AConf.FidReserved`).
 -/
 
-import CoreJsAutomatonSemantics
+import ProgramAutomaton.CoreJsAutomatonSemantics
 
 namespace CoreJS
 

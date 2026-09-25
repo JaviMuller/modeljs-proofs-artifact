@@ -51,8 +51,8 @@
   Plain Lean 4 — no Mathlib required.
 -/
 
-import CoreJsSemantics
-import CoreJsQuerySyntax
+import CoreJS.CoreJsSemantics
+import Queries.QueryLanguage.CoreJsQuerySyntax
 
 namespace CoreJS
 

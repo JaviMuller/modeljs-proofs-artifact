@@ -23,8 +23,8 @@
   Plain Lean 4 — no Mathlib required.
 -/
 
-import CoreJsAutomatonSyntax
-import CoreJsSemantics
+import ProgramAutomaton.CoreJsAutomatonSyntax
+import CoreJS.CoreJsSemantics
 
 namespace CoreJS
 

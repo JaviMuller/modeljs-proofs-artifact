@@ -11,8 +11,8 @@
   Plain Lean 4 — no Mathlib required.
 -/
 
-import CoreJsQueryTests
-import CoreJsFoLtl
+import Queries.QueryLanguage.CoreJsQueryTests
+import Queries.FoLtl.CoreJsFoLtl
 
 namespace CoreJS.Tests
 

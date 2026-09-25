@@ -57,7 +57,7 @@ describe patterns over execution records, i.e. traces together with taint
 observations.
 
 - **Runs yield well-formed records** (`BigStep.obs_wf_init`,
-  `CoreJsQueryBridge.lean`).
+  `CoreJsSemantics.lean`).
 - **Translation into FO-LTL** (`Query.tr_correct`, `Query.exists_tr_correct`,
   `CoreJsQueryToLtl.lean`). Every well-formed query has a translation into
   first-order past/future LTL over finite traces, and a record matches the
@@ -67,26 +67,39 @@ observations.
 
 ## Repository layout
 
-All sources are in `analysis/`, in namespace `CoreJS`.
+All sources are in `analysis/`, in namespace `CoreJS`, split into four
+directories:
+
+```
+analysis/
+├── CoreJS/                 the language and its concrete semantics
+├── Queries/
+│   ├── QueryLanguage/      queries, their semantics, tests
+│   └── FoLtl/              FO-LTL, its tests, the query translation
+└── ProgramAutomaton/       the automaton-based analysis
+```
 
 | File | Contents |
 |---|---|
+| **`CoreJS/`** | |
 | `CoreJsSyntax.lean` | values, expressions, operators, statements (every construct the automaton needs to name carries a site index) |
-| `CoreJsSemantics.lean` | semantic domains, execution records, `Concrete`/`ConcreteSpec`, the big-step semantics and its height-indexed copy, invariants preserved by runs |
+| `CoreJsSemantics.lean` | semantic domains, execution records, `Concrete`/`ConcreteSpec`, the big-step semantics and its height-indexed copy, invariants preserved by runs, concrete runs as well-formed execution records |
+| **`ProgramAutomaton/`** | |
 | `CoreJsAutomatonSyntax.lean` | call strings and automaton states |
 | `CoreJsAutomatonSemantics.lean` | abstract domains, `Abstract`/`AbstractSpec`, abstract actions, edges, the graph, labelings and their validity, analysis results, walks |
 | `CoreJsAutomatonRelation.lean` | the abstraction relation on configurations and traces, `CrossSpec`, the allocation invariant |
 | `CoreJsAutomatonTotality.lean` | monotonicity, the least analysis result, the fixpoint/Kleene reading |
 | `CoreJsAutomatonSoundness.lean` | the soundness theorems, the satisfiability witness |
+| **`Queries/QueryLanguage/`** | |
 | `CoreJsQuerySyntax.lean` | queries and their well-formedness |
 | `CoreJsQuerySemantics.lean` | satisfaction of queries over execution records |
-| `CoreJsQueryBridge.lean` | concrete runs as well-formed execution records |
 | `CoreJsQueryTests.lean` | compile-time regression tests for the concrete and query semantics |
+| **`Queries/FoLtl/`** | |
 | `CoreJsFoLtl.lean` | first-order LTL over finite traces, and records as its models |
 | `CoreJsFoLtlTests.lean` | compile-time tests for the logic |
 | `CoreJsQueryToLtl.lean` | the query-to-FO-LTL translation and its correctness |
 
-Imports (`A ← B, C`: `A` imports `B` and `C`):
+Imports, by file name (`A ← B, C`: `A` imports `B` and `C`):
 
 ```
 CoreJsSemantics           ← CoreJsSyntax
@@ -97,8 +110,7 @@ CoreJsAutomatonTotality   ← CoreJsAutomatonSemantics
 CoreJsAutomatonSoundness  ← CoreJsAutomatonRelation, CoreJsAutomatonTotality
 CoreJsQuerySyntax         ← CoreJsSyntax
 CoreJsQuerySemantics      ← CoreJsSemantics, CoreJsQuerySyntax
-CoreJsQueryBridge         ← CoreJsQuerySemantics
-CoreJsQueryTests          ← CoreJsQueryBridge
+CoreJsQueryTests          ← CoreJsQuerySemantics
 CoreJsFoLtl               ← CoreJsSemantics
 CoreJsFoLtlTests          ← CoreJsQueryTests, CoreJsFoLtl
 CoreJsQueryToLtl          ← CoreJsQuerySemantics, CoreJsFoLtl
@@ -121,9 +133,10 @@ automatically. Nothing else is needed.
 
 ```sh
 lake build                               # check everything
-lake env lean analysis/CoreJsSemantics.lean   # check one file (after `lake build`)
+lake env lean analysis/CoreJS/CoreJsSemantics.lean   # check one file (after `lake build`)
 ```
 
 The test files are checked at compile time: if `lake build` succeeds, the
-tests pass. Every module must be listed in `lakefile.toml`'s `globs`, because
+tests pass. Every module must be listed in `lakefile.toml`'s `globs` (by its
+path under `analysis/`, dots for slashes, e.g. `CoreJS.CoreJsSyntax`), because
 an unlisted file is silently skipped.

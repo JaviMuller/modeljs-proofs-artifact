@@ -35,8 +35,8 @@
   location is the one the abstract `call`/`ret` labels name).
 -/
 
-import CoreJsAutomatonRelation
-import CoreJsAutomatonTotality
+import ProgramAutomaton.CoreJsAutomatonRelation
+import ProgramAutomaton.CoreJsAutomatonTotality
 
 namespace CoreJS
 
