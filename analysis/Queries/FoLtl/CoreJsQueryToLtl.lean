@@ -504,7 +504,7 @@ theorem Ltl.Indep.exN {φ : Ltl LVar} {n : Nat} :
     ∀ {vs : List LVar}, (∀ v ∈ vs, ∀ m, v = Sum.inr m → m < n) → φ.Indep n →
       (Ltl.exN vs φ).Indep n
   | [],      _,   h => h
-  | v :: vs, hvs, h =>
+  | v :: _, hvs, h =>
       Ltl.Indep.ex (hvs v (List.mem_cons_self ..))
         (Ltl.Indep.exN (fun v' hv' => hvs v' (List.mem_cons_of_mem _ hv')) h)
 
