@@ -415,7 +415,10 @@ structure CrossSpec [Concrete] [Abstract] : Prop where
   opSem_sound : ∀ op v₁ v₂ (V₁ V₂ : VSet), V₁.Mem v₁ → V₂.Mem v₂ →
     (Abstract.opSemA op V₁ V₂).Mem (Concrete.opSem op v₁ v₂)
   /-- Binary operators never produce a function value, so a function value
-      lives only at its own literal location (`Heap.FidCanon`). -/
+      lives only at its own literal location (`Heap.FidCanon`). In particular
+      `and`/`or` are value-producing operators here: JS's short-circuit
+      `&&`/`||`, which return an operand (possibly a function), are not
+      modelled. -/
   opSem_fid : ∀ op v₁ v₂ f, Concrete.opSem op v₁ v₂ ≠ .fid f
   /-- An allocation never returns a literal location. -/
   allocC_lit : ∀ h κ v, h.Finite → Concrete.allocC h κ ≠ Concrete.litLoc v
