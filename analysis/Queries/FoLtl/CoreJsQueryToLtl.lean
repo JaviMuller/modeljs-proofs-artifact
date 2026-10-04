@@ -8,17 +8,17 @@
 
   ## Results
 
-  The translation relation `Pat.Tr`/`Guarded.Tr` (this file's main definitions)
+  The translation relation `Pat.Tr`/`QBody.Tr` (this file's main definitions)
   is exercised end to end via concrete witnesses covering every pattern
   combinator, `except`, and invocation with parameter renaming
   (`## Sanity check`).
 
   The *general* correctness theorem holds for the *entire* query
   language including guards, locals and invocation, not just the
-  invocation-free fragment: `correct_all` (`PatCorrect`/`GuardedCorrect`, by
+  invocation-free fragment: `correct_all` (`PatCorrect`/`QBodyCorrect`, by
   strong induction on the remaining program's length) shows every `Pat.Tr`/
-  `Guarded.Tr` witness is semantics-preserving for every well-formed program.
-  `exists_all` (`PatExists`/`GuardedExists`) shows a translation witness
+  `QBody.Tr` witness is semantics-preserving for every well-formed program.
+  `exists_all` (`PatExists`/`QBodyExists`) shows a translation witness
   always exists. Together these give the headline result,
   `Query.tr_correct`/`Query.exists_tr_correct`: for a well-formed query `q`
   at the head of a well-formed program, matching `q` on an execution record
@@ -40,7 +40,7 @@
   tr (F₁;F₂)  K = tr F₁ (tr F₂ K)
   tr (F₁‖F₂)  K = tr F₁ K ∨ tr F₂ K
   tr (F₁&F₂)  K = tr F₁ K ∧ tr F₂ K
-  tr (Q(z⃗))   K = (the guarded translation of Q's body, params bound to z⃗)
+  tr (Q(z⃗))   K = (the translation of Q's body, params bound to z⃗)
   ```
 
   `F₁ & F₂` ends at `max j₁ j₂`, and `K(max j₁ j₂) ⟺ K j₁ ∧ K j₂` only when `K`
@@ -54,7 +54,7 @@
 
   ## Guards, locals, invocation
 
-  A guarded pattern `∃y⃗: F when I except F'` translates, with continuation
+  A query body `∃y⃗: F when I except F'` translates, with continuation
   `K`, to
 
   ```
@@ -65,7 +65,7 @@
   written *in place* wherever the query occurs — no hoisting into any normal
   form is needed, matching `CoreJsFoLtl.lean`'s past operators.
 
-  Invoking `Q(z⃗)` inlines `Q`'s guarded pattern under a *fresh* renaming: `Q`'s
+  Invoking `Q(z⃗)` inlines `Q`'s body under a *fresh* renaming: `Q`'s
   parameters resolve to the caller's arguments (through the caller's own
   renaming) and `Q`'s locals get brand-new synthetic names, so that inlining
   can never capture a variable free in the surrounding formula (see `LVar`,
@@ -86,9 +86,9 @@ namespace CoreJS
 /-! ## Variables of the translated formula -/
 
 /-- Variables of the translated formula: either an original source variable
-    (a top-level query's own parameter or local, or anything resolving back to
-    one through substitution), or a synthetic name freshly minted for one
-    particular occurrence of an invoked query's own local. -/
+    (a top-level query's own parameter), or a synthetic name freshly minted
+    for one particular occurrence of a query body's local — the
+    top-level query's own locals included (`QBody.Tr` always renames them). -/
 abbrev LVar := Var ⊕ Nat
 
 instance : DecidableEq LVar := inferInstanceAs (DecidableEq (Var ⊕ Nat))
@@ -110,7 +110,7 @@ def Ren.ofParams : List Var → List LVar → Ren
 
 /-- Extend `ρ` with fresh synthetic names for `locals`, starting at `n`
     (`locals[k] ↦ Sum.inr (n + k)`, by first-match exactly as `LEnv.bind`); used for a
-    guarded pattern's own `∃y⃗`. -/
+    query body's own `∃y⃗`. -/
 def Ren.extendFresh (ρ : Ren) : List Var → Nat → Ren
   | [],       _ => ρ
   | y :: ys,  n => fun x => if x = y then Sum.inr n else Ren.extendFresh ρ ys (n + 1) x
@@ -131,8 +131,8 @@ theorem freshVars_length (locals : List α) (n : Nat) : (freshVars locals n).len
 The invariant that makes inlining capture-free: at the point a renaming `ρ` is
 used with fresh-counter `n`, every synthetic tag `ρ` already produces is below
 `n` — so allocating new tags at `n, n+1, …` can never collide with one `ρ`
-already uses. `Pat.Tr ρ Δ F K n φ n'`/`Guarded.Tr ρ Δ g K n φ n'` preserve it
-(`Pat.Tr.fresh`/`Guarded.Tr.fresh` below): `φ`'s own tags stay confined to
+already uses. `Pat.Tr ρ Δ F K n φ n'`/`QBody.Tr ρ Δ P K n φ n'` preserve it
+(`Pat.Tr.fresh`/`QBody.Tr.fresh` below): `φ`'s own tags stay confined to
 `[n, n')`, and this is exactly what makes the valuation-update lemmas
 (`Ltl.sat_exN`, `Ren.updateFresh_comp_extendFresh`) go through. -/
 
@@ -275,7 +275,7 @@ theorem Ren.sat_updateFresh_extendFresh :
     "not found" fallback (`Sum.inl x`) and `LEnv.empty`'s (`0`) have no reason to agree
     under an arbitrary `ξ`, which is exactly why this is *not* claimed for every `x` (a
     declared query body never evaluates `ρ` outside its own parameters/locals, so this is
-    all `Guarded.sat_coincide` ever needs it for). -/
+    all `QBody.sat_coincide` ever needs it for). -/
 theorem Ren.sat_ofParams (ξ : LVar → Loc) :
     ∀ (params : List Var) (args : List LVar), params.length = args.length → ∀ x ∈ params,
       ξ (Ren.ofParams params args x) = LEnv.bind LEnv.empty params (args.map ξ) x
@@ -293,9 +293,9 @@ theorem Ren.sat_ofParams (ξ : LVar → Loc) :
 /-! ### Insensitivity of a formula to updates at fresh tags it does not itself use
 
 A *continuation* `K` threaded into a translation step is built *before* the
-current guarded pattern's own fresh tags exist, so its truth must not depend
+current query body's own fresh tags exist, so its truth must not depend
 on what they are eventually set to — otherwise wrapping it under a further
-`∃y⃗` (as `Guarded.Tr` does) could silently change its meaning. `Ltl.Indep φ n`
+`∃y⃗` (as `QBody.Tr` does) could silently change its meaning. `Ltl.Indep φ n`
 captures this: `φ` cannot tell `ξ` apart from any `updateFresh ξ m ls` with
 `m ≥ n`. It grows monotonically as more fresh tags are consumed
 (`Ltl.Indep.mono`), and — critically for `Ltl.ex`/`Ltl.all` — binding one of
@@ -554,7 +554,7 @@ theorem QProg.interp_findRest (t : List Act) (σ : Obs) (Q : QName) (ls : List L
     ∀ {Δ : QProg} {q : Query} {Δ' : QProg}, QProg.findRest? Q Δ = some (q, Δ') →
       (QProg.interp t σ Δ Q ls i j ↔
         ls.length = q.params.length ∧
-        Guarded.Sat (QProg.interp t σ Δ') t σ (LEnv.empty.bind q.params ls) q.body i j)
+        QBody.Sat (QProg.interp t σ Δ') t σ (LEnv.empty.bind q.params ls) q.body i j)
   | [], q, Δ', h => by simp [QProg.findRest?] at h
   | q₀ :: Δ₀, q, Δ', h => by
       simp only [QProg.findRest?] at h
@@ -605,9 +605,9 @@ theorem QProg.find?_eq_some_iff_findRest? {Q : QName} :
 def Pat.CallsOK (Δ : QProg) (F : Pat) : Prop :=
   ∀ c ∈ F.calls, ∃ q Δ', QProg.findRest? c.1 Δ = some (q, Δ') ∧ q.params.length = c.2.length
 
-/-- The same, for a guarded pattern's body and excluded pattern. -/
-def Guarded.CallsOK (Δ : QProg) (g : Guarded) : Prop :=
-  ∀ c ∈ g.calls, ∃ q Δ', QProg.findRest? c.1 Δ = some (q, Δ') ∧ q.params.length = c.2.length
+/-- The same, for a query body's pattern and excluded pattern. -/
+def QBody.CallsOK (Δ : QProg) (P : QBody) : Prop :=
+  ∀ c ∈ P.calls, ∃ q Δ', QProg.findRest? c.1 Δ = some (q, Δ') ∧ q.params.length = c.2.length
 
 theorem Pat.CallsOK.seq {Δ : QProg} {F₁ F₂ : Pat} (h : Pat.CallsOK Δ (.seq F₁ F₂)) :
     Pat.CallsOK Δ F₁ ∧ Pat.CallsOK Δ F₂ :=
@@ -621,18 +621,18 @@ theorem Pat.CallsOK.both {Δ : QProg} {F₁ F₂ : Pat} (h : Pat.CallsOK Δ (.bo
     Pat.CallsOK Δ F₁ ∧ Pat.CallsOK Δ F₂ :=
   ⟨fun c hc => h c (List.mem_append.2 (Or.inl hc)), fun c hc => h c (List.mem_append.2 (Or.inr hc))⟩
 
-theorem Guarded.CallsOK.body {Δ : QProg} {g : Guarded} (h : Guarded.CallsOK Δ g) :
-    Pat.CallsOK Δ g.body :=
+theorem QBody.CallsOK.pattern {Δ : QProg} {P : QBody} (h : QBody.CallsOK Δ P) :
+    Pat.CallsOK Δ P.pattern :=
   fun c hc => h c (List.mem_append.2 (Or.inl hc))
 
-theorem Guarded.CallsOK.except {Δ : QProg} {g : Guarded} {F' : Pat} (h : Guarded.CallsOK Δ g)
-    (he : g.except = some F') : Pat.CallsOK Δ F' :=
+theorem QBody.CallsOK.except {Δ : QProg} {P : QBody} {F' : Pat} (h : QBody.CallsOK Δ P)
+    (he : P.except = some F') : Pat.CallsOK Δ F' :=
   fun c hc => h c (List.mem_append.2 (Or.inr (by rw [he]; exact hc)))
 
 /-- A query found via `findRest?`'s own invocations are answerable in the rest of the
     program it may itself invoke — `Query.CallsOK` restated via `findRest?`. -/
-theorem Query.CallsOK.guarded {Δ : QProg} {q : Query} (h : q.CallsOK Δ) :
-    Guarded.CallsOK Δ q.body :=
+theorem Query.CallsOK.body {Δ : QProg} {q : Query} (h : q.CallsOK Δ) :
+    QBody.CallsOK Δ q.body :=
   fun c hc => by
     obtain ⟨q', hfind, harity⟩ := h c hc
     obtain ⟨Δ', hfind'⟩ := QProg.find?_eq_some_iff_findRest?.1 hfind
@@ -640,8 +640,8 @@ theorem Query.CallsOK.guarded {Δ : QProg} {q : Query} (h : q.CallsOK Δ) :
 
 /-! ## The translation relation
 
-`Pat.Tr ρ Δ F K n φ n'` / `Guarded.Tr ρ Δ g K n φ n'`: "`φ` is a translation of
-`F`/`g` (whose free variables are named through `ρ`, and which may invoke the
+`Pat.Tr ρ Δ F K n φ n'` / `QBody.Tr ρ Δ P K n φ n'`: "`φ` is a translation of
+`F`/`P` (whose free variables are named through `ρ`, and which may invoke the
 queries of `Δ`) with continuation `K`, using fresh synthetic names starting at
 `n` and reaching (but not using) `n'`".
 
@@ -649,7 +649,7 @@ This is a genuine *relation*, not a recursive function: a query's own body may
 invoke queries arbitrarily deep in `Δ`, and proving that recursion terminates
 needs `QProg.WF` (acyclicity) — exactly the reason `CoreJsQuerySemantics.lean`
 also parametrises `Pat.Sat` by an externally supplied interpretation rather
-than computing one inline.  Unlike that case, `Pat.Tr`/`Guarded.Tr` never
+than computing one inline.  Unlike that case, `Pat.Tr`/`QBody.Tr` never
 negates *itself* (a guard's `except` becomes `.not` applied to an already
 *produced* formula — ordinary data, not a negated occurrence of the relation),
 so, unlike `Pat.Sat`, no such external parameter is needed: the two relations
@@ -664,13 +664,13 @@ inductive Pat.Tr : Ren → QProg → Pat → Ltl LVar → Nat → Ltl LVar → N
   /-- `a` -/
   | act {ρ Δ a K n} :
       Pat.Tr ρ Δ (.act a) K n (Ltl.F (.and (.atom (a.toAtom ρ)) (.next K))) n
-  /-- `Q(z⃗)`: look up `Q` in `Δ`, and inline its guarded pattern under a fresh
+  /-- `Q(z⃗)`: look up `Q` in `Δ`, and inline its body under a fresh
       renaming (its parameters resolve to the caller's arguments, resolved
       through `ρ`). -/
   | query {ρ Δ Q zs K n φ n' q Δ'} :
       QProg.findRest? Q Δ = some (q, Δ') →
       zs.length = q.params.length →
-      Guarded.Tr (Ren.ofParams q.params (zs.map ρ)) Δ' q.body K n φ n' →
+      QBody.Tr (Ren.ofParams q.params (zs.map ρ)) Δ' q.body K n φ n' →
       Pat.Tr ρ Δ (.query Q zs) K n φ n'
   /-- `F₁ ; F₂` -/
   | seq {ρ Δ F₁ F₂ K n φ₂ n₁ φ n'} :
@@ -688,21 +688,21 @@ inductive Pat.Tr : Ren → QProg → Pat → Ltl LVar → Nat → Ltl LVar → N
       Pat.Tr ρ Δ F₂ K n₁ φ₂ n₂ →
       Pat.Tr ρ Δ (.both F₁ F₂) K n (.and φ₁ φ₂) n₂
 
-inductive Guarded.Tr : Ren → QProg → Guarded → Ltl LVar → Nat → Ltl LVar → Nat → Prop where
+inductive QBody.Tr : Ren → QProg → QBody → Ltl LVar → Nat → Ltl LVar → Nat → Prop where
   /-- No `except`: `∃y⃗: I ∧ tr(F, K)`. -/
-  | noExcept {ρ Δ g K n φ_body n₁ ρ'} (hex : g.except = none)
-      (hρ' : ρ' = ρ.extendFresh g.locals n) :
-      Pat.Tr ρ' Δ g.body K (n + g.locals.length) φ_body n₁ →
-      Guarded.Tr ρ Δ g K n
-        (Ltl.exN (freshVars g.locals n) (.and (Inv.tr ρ' g.when) φ_body)) n₁
+  | noExcept {ρ Δ P K n φ_pat n₁ ρ'} (hex : P.except = none)
+      (hρ' : ρ' = ρ.extendFresh P.locals n) :
+      Pat.Tr ρ' Δ P.pattern K (n + P.locals.length) φ_pat n₁ →
+      QBody.Tr ρ Δ P K n
+        (Ltl.exN (freshVars P.locals n) (.and (Inv.tr ρ' P.when) φ_pat)) n₁
   /-- `except F'`: `∃y⃗: I ∧ atStart(¬ tr(F', ⊤)) ∧ tr(F, K)`. -/
-  | withExcept {ρ Δ g F' K n φ_body n₁ φ_ex n₂ ρ'} (hex : g.except = some F')
-      (hρ' : ρ' = ρ.extendFresh g.locals n) :
-      Pat.Tr ρ' Δ g.body K (n + g.locals.length) φ_body n₁ →
+  | withExcept {ρ Δ P F' K n φ_pat n₁ φ_ex n₂ ρ'} (hex : P.except = some F')
+      (hρ' : ρ' = ρ.extendFresh P.locals n) :
+      Pat.Tr ρ' Δ P.pattern K (n + P.locals.length) φ_pat n₁ →
       Pat.Tr ρ' Δ F' .tt n₁ φ_ex n₂ →
-      Guarded.Tr ρ Δ g K n
-        (Ltl.exN (freshVars g.locals n)
-          (.and (Inv.tr ρ' g.when) (.and (Ltl.atStart (.not φ_ex)) φ_body))) n₂
+      QBody.Tr ρ Δ P K n
+        (Ltl.exN (freshVars P.locals n)
+          (.and (Inv.tr ρ' P.when) (.and (Ltl.atStart (.not φ_ex)) φ_pat))) n₂
 
 end
 
@@ -712,7 +712,7 @@ end
     `0`, run against the rest of the program `Δ` (what `q` may itself
     invoke). -/
 def Query.Tr (Δ : QProg) (q : Query) (φ : Ltl LVar) : Prop :=
-  ∃ n', Guarded.Tr Sum.inl Δ q.body .tt 0 φ n'
+  ∃ n', QBody.Tr Sum.inl Δ q.body .tt 0 φ n'
 
 /-! ## Sanity check: the translation exists for the program's own test queries
 
@@ -729,26 +729,26 @@ section examples
 def exSink : Query where
   name := "Sink"
   params := ["f", "x"]
-  body := { body := .act (.call "f" ["x"]),
+  body := { pattern := .act (.call "f" ["x"]),
             when := .and (.pred (.sk "f")) (.pred (.ac "x")) }
 
 /-- `Seq(f,x,r) { Call(f,[x]) ; Retn(f,r) }` -/
 def exSeq : Query where
   name := "Seq"
   params := ["f", "x", "r"]
-  body := { body := .seq (.act (.call "f" ["x"])) (.act (.retn "f" "r")) }
+  body := { pattern := .seq (.act (.call "f" ["x"])) (.act (.retn "f" "r")) }
 
 /-- `ExceptHit(f,x,r) { Call(f,[x]) except Retn(f,r) }` -/
 def exExceptHit : Query where
   name := "ExceptHit"
   params := ["f", "x", "r"]
-  body := { body := .act (.call "f" ["x"]), except := some (.act (.retn "f" "r")) }
+  body := { pattern := .act (.call "f" ["x"]), except := some (.act (.retn "f" "r")) }
 
 /-- `Outer(g,y) { Sink(g,y) ; Retn(g,y) }`, invoking `exSink`. -/
 def exOuter : Query where
   name := "Outer"
   params := ["g", "y"]
-  body := { body := .seq (.query "Sink" ["g", "y"]) (.act (.retn "g" "y")) }
+  body := { pattern := .seq (.query "Sink" ["g", "y"]) (.act (.retn "g" "y")) }
 
 example : ∃ φ, exSink.Tr [] φ :=
   ⟨_, _, .noExcept rfl rfl .act⟩
@@ -818,7 +818,7 @@ theorem Mono.and {ν : Type} [DecidableEq ν] {m : Model} {ξ : ν → Loc} {φ 
 
 /-- An `n`-insensitive `K` is Mono at `ξ` iff it is Mono at any `updateFresh`-modified
     valuation, for any range at or above `n` — used when the recursive correctness fact
-    for a guarded pattern's body is applied at `updateFresh ξ n ls` rather than `ξ`
+    for a query body's pattern is applied at `updateFresh ξ n ls` rather than `ξ`
     itself. -/
 theorem Ltl.Indep.mono_iff {K : Ltl LVar} {n : Nat} (hKI : K.Indep n) {m : Model}
     {ξ : LVar → Loc} {k : Nat} (hk : n ≤ k) (ls : List Loc) :
@@ -967,20 +967,20 @@ theorem Pat.tr_correct {Δ : QProg} (e : Exec) (Θ : Interp) (hΘ : Θ.Ok e.trc.
 
 /-! ## The general correctness theorem
 
-`Pat.Tr`/`Guarded.Tr` are mutually inductive `Prop`s, and this Lean version's
+`Pat.Tr`/`QBody.Tr` are mutually inductive `Prop`s, and this Lean version's
 `induction` tactic does not support inducting on a mutual-family hypothesis
 directly (confirmed experimentally). The two correctness facts are therefore
 proved together by *explicit* strong induction on `Δ.length`, with an
 ordinary structural induction on the (non-mutual) `Pat` syntax nested inside
 each step: a query invocation strictly shortens `Δ` (`QProg.findRest?_length_lt`)
-and defers to `Guarded.Tr`'s correctness at that smaller level; every other
-case keeps `Δ` fixed and recurses on `Pat`/`Guarded`'s own structure.
+and defers to `QBody.Tr`'s correctness at that smaller level; every other
+case keeps `Δ` fixed and recurses on `Pat`/`QBody`'s own structure.
 
 Each fact carries *four* conjuncts, not just the expected correctness `iff`:
 the fresh counter only grows (`n ≤ n'`), the produced formula is `Indep n'`,
 the produced formula is `Mono`-preserving for *any* valuation whenever the
-continuation is (needed because a guarded pattern's `∃y⃗` re-derives its
-body's correctness at `updateFresh ξ n ls`, a valuation different from the
+continuation is (needed because a query body's `∃y⃗` re-derives its
+pattern's correctness at `updateFresh ξ n ls`, a valuation different from the
 one the outer goal is stated at), and the correctness `iff` itself. -/
 
 /-- An invariant's translation is position-independent (`Inv.sat_tr`'s right-hand side
@@ -1005,22 +1005,22 @@ def PatCorrect (N : Nat) : Prop :=
       ((∃ j, Pat.Sat (QProg.interp e.trc.toList e.obs Δ) e.trc.toList e.obs (ξ ∘ ρ) F i j ∧
              K.Sat e.toModel ξ j) ↔ φ.Sat e.toModel ξ i)
 
-/-- The same, for `Guarded.Tr`/`Guarded.Sat`. -/
-def GuardedCorrect (N : Nat) : Prop :=
+/-- The same, for `QBody.Tr`/`QBody.Sat`. -/
+def QBodyCorrect (N : Nat) : Prop :=
   ∀ (e : Exec) (Δ : QProg) (ρ : Ren), Δ.length ≤ N → QProg.WF Δ →
-  ∀ (g : Guarded) (n : Nat) (K φ : Ltl LVar) (n' : Nat),
-    ρ.Fresh n → K.Indep n → Guarded.Tr ρ Δ g K n φ n' →
+  ∀ (P : QBody) (n : Nat) (K φ : Ltl LVar) (n' : Nat),
+    ρ.Fresh n → K.Indep n → QBody.Tr ρ Δ P K n φ n' →
     n ≤ n' ∧ φ.Indep n' ∧
     (∀ ξ, Mono e.toModel ξ K → Mono e.toModel ξ φ) ∧
     ∀ (ξ : LVar → Loc), Mono e.toModel ξ K → ∀ i, i ≤ e.toModel.len →
-      ((∃ j, Guarded.Sat (QProg.interp e.trc.toList e.obs Δ) e.trc.toList e.obs (ξ ∘ ρ) g i j ∧
+      ((∃ j, QBody.Sat (QProg.interp e.trc.toList e.obs Δ) e.trc.toList e.obs (ξ ∘ ρ) P i j ∧
              K.Sat e.toModel ξ j) ↔ φ.Sat e.toModel ξ i)
 
-theorem correct_all : ∀ N, PatCorrect N ∧ GuardedCorrect N := by
+theorem correct_all : ∀ N, PatCorrect N ∧ QBodyCorrect N := by
   intro N
   induction N using Nat.strongRecOn with
   | _ N ih =>
-    have ihGuarded : ∀ M, M < N → GuardedCorrect M := fun M hM => (ih M hM).2
+    have ihQBody : ∀ M, M < N → QBodyCorrect M := fun M hM => (ih M hM).2
     have hP : PatCorrect N := by
       intro e Δ ρ hΔlen hΔwf F
       have hΘ : (QProg.interp e.trc.toList e.obs Δ).Ok e.trc.toList := QProg.interp_ok Δ _ _
@@ -1051,7 +1051,7 @@ theorem correct_all : ∀ N, PatCorrect N ∧ GuardedCorrect N := by
       | query Q zs =>
         intro n K φ n' hfresh hKI hTr
         cases hTr with
-        | query hFind hLen hGTr =>
+        | query hFind hLen hQBTr =>
           rename_i q Δ'
           have hlt : Δ'.length < Δ.length := QProg.findRest?_length_lt hFind
           have hltN : Δ'.length < N := Nat.lt_of_lt_of_le hlt hΔlen
@@ -1061,8 +1061,8 @@ theorem correct_all : ∀ N, PatCorrect N ∧ GuardedCorrect N := by
           have hfresh' : (Ren.ofParams q.params (zs.map ρ)).Fresh n :=
             Ren.Fresh.ofParams (Ren.Fresh.map hfresh zs)
           obtain ⟨hnn', hφIndep, hφMono, hcorr⟩ :=
-            ihGuarded Δ'.length hltN e Δ' (Ren.ofParams q.params (zs.map ρ))
-              (Nat.le_refl _) hΔ'wf q.body n K φ n' hfresh' hKI hGTr
+            ihQBody Δ'.length hltN e Δ' (Ren.ofParams q.params (zs.map ρ))
+              (Nat.le_refl _) hΔ'wf q.body n K φ n' hfresh' hKI hQBTr
           refine ⟨hnn', hφIndep, hφMono, fun ξ hK i hi => ?_⟩
           rw [← hcorr ξ hK i hi]
           have hzslen : q.params.length = (zs.map ρ).length := by simp [hLen]
@@ -1072,21 +1072,21 @@ theorem correct_all : ∀ N, PatCorrect N ∧ GuardedCorrect N := by
           · rintro ⟨j, hsq, hKj⟩
             rw [Pat.sat_query,
               QProg.interp_findRest e.trc.toList e.obs Q (zs.map (ξ ∘ ρ)) i j hFind] at hsq
-            obtain ⟨_, hgs⟩ := hsq
+            obtain ⟨_, hPs⟩ := hsq
             refine ⟨j, ?_, hKj⟩
-            refine (Guarded.sat_coincide (ξ₁ := LEnv.empty.bind q.params (zs.map (ξ ∘ ρ)))
-              (ξ₂ := ξ ∘ Ren.ofParams q.params (zs.map ρ)) ?_).1 hgs
+            refine (QBody.sat_coincide (ξ₁ := LEnv.empty.bind q.params (zs.map (ξ ∘ ρ)))
+              (ξ₂ := ξ ∘ Ren.ofParams q.params (zs.map ρ)) ?_).1 hPs
             intro x hx hxl
             rcases hdecl.2 x hx with hxp | hxl'
             · rw [Function.comp_apply, hmapeq, ← Ren.sat_ofParams ξ q.params (zs.map ρ) hzslen x hxp]
             · exact absurd hxl' hxl
-          · rintro ⟨j, hgs, hKj⟩
+          · rintro ⟨j, hPs, hKj⟩
             refine ⟨j, ?_, hKj⟩
             rw [Pat.sat_query,
               QProg.interp_findRest e.trc.toList e.obs Q (zs.map (ξ ∘ ρ)) i j hFind]
             refine ⟨by simp [hLen], ?_⟩
-            refine (Guarded.sat_coincide (ξ₁ := ξ ∘ Ren.ofParams q.params (zs.map ρ))
-              (ξ₂ := LEnv.empty.bind q.params (zs.map (ξ ∘ ρ))) ?_).1 hgs
+            refine (QBody.sat_coincide (ξ₁ := ξ ∘ Ren.ofParams q.params (zs.map ρ))
+              (ξ₂ := LEnv.empty.bind q.params (zs.map (ξ ∘ ρ))) ?_).1 hPs
             intro x hx hxl
             rcases hdecl.2 x hx with hxp | hxl'
             · rw [Function.comp_apply, hmapeq, ← Ren.sat_ofParams ξ q.params (zs.map ρ) hzslen x hxp]
@@ -1155,65 +1155,65 @@ theorem correct_all : ∀ N, PatCorrect N ∧ GuardedCorrect N := by
             have b₂ := Pat.Sat.bound hΘ h₂ (by omega : i ≤ e.trc.toList.length)
             exact ⟨max j₁ j₂, ⟨j₁, j₂, h₁, h₂, rfl⟩,
               (Mono.and_iff_max hK (by omega) (by omega)).2 ⟨hj₁, hj₂⟩⟩
-    have hG : GuardedCorrect N := by
-      intro e Δ ρ hΔlen hΔwf g n K φ n' hfresh hKI hTr
+    have hB : QBodyCorrect N := by
+      intro e Δ ρ hΔlen hΔwf P n K φ n' hfresh hKI hTr
       cases hTr with
-      | @noExcept _ _ _ _ _ φ_body _ ρ' hex hρ' hBodyTr =>
-        have hfresh' : ρ'.Fresh (n + g.locals.length) := hρ' ▸ hfresh.extendFresh g.locals
-        have hKI' : K.Indep (n + g.locals.length) := hKI.mono (Nat.le_add_right _ _)
-        obtain ⟨hn_n', hφbI, hφbMono, hcorrBody⟩ :=
-          hP e Δ ρ' hΔlen hΔwf g.body (n + g.locals.length) K φ_body n' hfresh' hKI' hBodyTr
+      | @noExcept _ _ _ _ _ φ_pat _ ρ' hex hρ' hPatTr =>
+        have hfresh' : ρ'.Fresh (n + P.locals.length) := hρ' ▸ hfresh.extendFresh P.locals
+        have hKI' : K.Indep (n + P.locals.length) := hKI.mono (Nat.le_add_right _ _)
+        obtain ⟨hn_n', hφpI, hφpMono, hcorrPat⟩ :=
+          hP e Δ ρ' hΔlen hΔwf P.pattern (n + P.locals.length) K φ_pat n' hfresh' hKI' hPatTr
         have hnn' : n ≤ n' := Nat.le_trans (Nat.le_add_right _ _) hn_n'
         refine ⟨hnn',
-          Ltl.Indep.exN (fun v hv m hm => Nat.lt_of_lt_of_le (freshVars_lt g.locals n v hv m hm) hn_n')
-            ((Ltl.Indep.inv hfresh' g.when).mono hn_n' |>.and hφbI),
+          Ltl.Indep.exN (fun v hv m hm => Nat.lt_of_lt_of_le (freshVars_lt P.locals n v hv m hm) hn_n')
+            ((Ltl.Indep.inv hfresh' P.when).mono hn_n' |>.and hφpI),
           fun ξ hK => ?_, fun ξ hK i hi => ?_⟩
         · intro p q hqp hp h
           rw [Ltl.sat_exN_fresh] at h ⊢
           obtain ⟨ls, hlen, hψ⟩ := h
           refine ⟨ls, hlen, ?_⟩
           have hKls : Mono e.toModel (updateFresh ξ n ls) K := (hKI.mono_iff (Nat.le_refl n) ls).1 hK
-          exact (Mono.inv ρ' g.when e.toModel (updateFresh ξ n ls) |>.and
-            (hφbMono (updateFresh ξ n ls) hKls)) p q hqp hp hψ
+          exact (Mono.inv ρ' P.when e.toModel (updateFresh ξ n ls) |>.and
+            (hφpMono (updateFresh ξ n ls) hKls)) p q hqp hp hψ
         · rw [Ltl.sat_exN_fresh]
           constructor
-          · rintro ⟨j, hgs, hKj⟩
-            cases hgs with
-            | @mk _ ξ'' ls' _ _ hlen' hξ'' hbody hwhen _ =>
-              have hcomp : updateFresh ξ n ls' ∘ ρ' = LEnv.bind (ξ ∘ ρ) g.locals ls' := by
-                rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh g.locals hfresh hlen' ξ)
+          · rintro ⟨j, hPs, hKj⟩
+            cases hPs with
+            | @mk _ ξ'' ls' _ _ hlen' hξ'' hpat hwhen _ =>
+              have hcomp : updateFresh ξ n ls' ∘ ρ' = LEnv.bind (ξ ∘ ρ) P.locals ls' := by
+                rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh P.locals hfresh hlen' ξ)
               have hKls' : Mono e.toModel (updateFresh ξ n ls') K :=
                 (hKI.mono_iff (Nat.le_refl n) ls').1 hK
               have hKj' : K.Sat e.toModel (updateFresh ξ n ls') j :=
                 (hKI e.toModel ξ n ls' (Nat.le_refl n) j).1 hKj
               refine ⟨ls', hlen', ?_⟩
               simp only [Ltl.Sat]
-              refine ⟨?_, (hcorrBody (updateFresh ξ n ls') hKls' i hi).1 ⟨j, ?_, hKj'⟩⟩
+              refine ⟨?_, (hcorrPat (updateFresh ξ n ls') hKls' i hi).1 ⟨j, ?_, hKj'⟩⟩
               · rw [Inv.sat_tr, hcomp]; rw [hξ''] at hwhen; exact hwhen
-              · rw [hcomp]; rw [hξ''] at hbody; exact hbody
+              · rw [hcomp]; rw [hξ''] at hpat; exact hpat
           · rintro ⟨ls, hlen, hψ⟩
             simp only [Ltl.Sat] at hψ
-            obtain ⟨hwhen, hbody⟩ := hψ
-            have hcomp : updateFresh ξ n ls ∘ ρ' = LEnv.bind (ξ ∘ ρ) g.locals ls := by
-              rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh g.locals hfresh hlen ξ)
+            obtain ⟨hwhen, hpat⟩ := hψ
+            have hcomp : updateFresh ξ n ls ∘ ρ' = LEnv.bind (ξ ∘ ρ) P.locals ls := by
+              rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh P.locals hfresh hlen ξ)
             have hKls' : Mono e.toModel (updateFresh ξ n ls) K :=
               (hKI.mono_iff (Nat.le_refl n) ls).1 hK
-            obtain ⟨j, hbody', hKj'⟩ := (hcorrBody (updateFresh ξ n ls) hKls' i hi).2 hbody
-            refine ⟨j, Guarded.Sat.mk hlen rfl ?_ ?_ (by simp [hex]),
+            obtain ⟨j, hpat', hKj'⟩ := (hcorrPat (updateFresh ξ n ls) hKls' i hi).2 hpat
+            refine ⟨j, QBody.Sat.mk hlen rfl ?_ ?_ (by simp [hex]),
               (hKI e.toModel ξ n ls (Nat.le_refl n) j).2 hKj'⟩
-            · rw [hcomp] at hbody'; exact hbody'
+            · rw [hcomp] at hpat'; exact hpat'
             · rw [Inv.sat_tr] at hwhen; rw [hcomp] at hwhen; exact hwhen
-      | @withExcept _ _ _ F' _ _ φ_body n₁ φ_ex _ ρ' hex hρ' hBodyTr hExTr =>
-        have hfresh' : ρ'.Fresh (n + g.locals.length) := hρ' ▸ hfresh.extendFresh g.locals
-        have hKI' : K.Indep (n + g.locals.length) := hKI.mono (Nat.le_add_right _ _)
-        obtain ⟨hn_n₁, hφbI, hφbMono, hcorrBody⟩ :=
-          hP e Δ ρ' hΔlen hΔwf g.body (n + g.locals.length) K φ_body n₁ hfresh' hKI' hBodyTr
+      | @withExcept _ _ _ F' _ _ φ_pat n₁ φ_ex _ ρ' hex hρ' hPatTr hExTr =>
+        have hfresh' : ρ'.Fresh (n + P.locals.length) := hρ' ▸ hfresh.extendFresh P.locals
+        have hKI' : K.Indep (n + P.locals.length) := hKI.mono (Nat.le_add_right _ _)
+        obtain ⟨hn_n₁, hφpI, hφpMono, hcorrPat⟩ :=
+          hP e Δ ρ' hΔlen hΔwf P.pattern (n + P.locals.length) K φ_pat n₁ hfresh' hKI' hPatTr
         have hfresh₁ : ρ'.Fresh n₁ := hfresh'.mono hn_n₁
         obtain ⟨hn₁_n', hφexI, hφexMono, hcorrEx⟩ :=
           hP e Δ ρ' hΔlen hΔwf F' n₁ Ltl.tt φ_ex n' hfresh₁ (Ltl.Indep.tt n₁) hExTr
         have hnn₁ : n ≤ n₁ := Nat.le_trans (Nat.le_add_right _ _) hn_n₁
         have hnn' : n ≤ n' := Nat.le_trans hnn₁ hn₁_n'
-        have hnbody_n' : n + g.locals.length ≤ n' := Nat.le_trans hn_n₁ hn₁_n'
+        have hnpat_n' : n + P.locals.length ≤ n' := Nat.le_trans hn_n₁ hn₁_n'
         have hExIff : ∀ ξ' : LVar → Loc,
             (∃ j, Pat.Sat (QProg.interp e.trc.toList e.obs Δ) e.trc.toList e.obs (ξ' ∘ ρ') F' 0 j) ↔
               φ_ex.Sat e.toModel ξ' 0 := by
@@ -1221,9 +1221,9 @@ theorem correct_all : ∀ N, PatCorrect N ∧ GuardedCorrect N := by
           simpa [Ltl.Sat] using hcorrEx ξ' (Mono.tt _ _) 0 (Nat.zero_le _)
         refine ⟨hnn',
           Ltl.Indep.exN
-            (fun v hv m hm => Nat.lt_of_lt_of_le (freshVars_lt g.locals n v hv m hm) hnbody_n')
-            (((Ltl.Indep.inv hfresh' g.when).mono hnbody_n').and
-              ((Ltl.Indep.atStart hφexI.not).and (hφbI.mono hn₁_n'))),
+            (fun v hv m hm => Nat.lt_of_lt_of_le (freshVars_lt P.locals n v hv m hm) hnpat_n')
+            (((Ltl.Indep.inv hfresh' P.when).mono hnpat_n').and
+              ((Ltl.Indep.atStart hφexI.not).and (hφpI.mono hn₁_n'))),
           fun ξ hK => ?_, fun ξ hK i hi => ?_⟩
         · intro p q hqp hp h
           rw [Ltl.sat_exN_fresh] at h ⊢
@@ -1231,49 +1231,49 @@ theorem correct_all : ∀ N, PatCorrect N ∧ GuardedCorrect N := by
           refine ⟨ls, hlen, ?_⟩
           have hKls : Mono e.toModel (updateFresh ξ n ls) K :=
             (hKI.mono_iff (Nat.le_refl n) ls).1 hK
-          exact ((Mono.inv ρ' g.when e.toModel (updateFresh ξ n ls)).and
+          exact ((Mono.inv ρ' P.when e.toModel (updateFresh ξ n ls)).and
             ((Mono.atStart e.toModel (updateFresh ξ n ls) _).and
-              (hφbMono (updateFresh ξ n ls) hKls))) p q hqp hp hψ
+              (hφpMono (updateFresh ξ n ls) hKls))) p q hqp hp hψ
         · rw [Ltl.sat_exN_fresh]
           constructor
-          · rintro ⟨j, hgs, hKj⟩
-            cases hgs with
-            | @mk _ ξ'' ls' _ _ hlen' hξ'' hbody hwhen hexcept =>
-              have hcomp : updateFresh ξ n ls' ∘ ρ' = LEnv.bind (ξ ∘ ρ) g.locals ls' := by
-                rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh g.locals hfresh hlen' ξ)
+          · rintro ⟨j, hPs, hKj⟩
+            cases hPs with
+            | @mk _ ξ'' ls' _ _ hlen' hξ'' hpat hwhen hexcept =>
+              have hcomp : updateFresh ξ n ls' ∘ ρ' = LEnv.bind (ξ ∘ ρ) P.locals ls' := by
+                rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh P.locals hfresh hlen' ξ)
               have hKls' : Mono e.toModel (updateFresh ξ n ls') K :=
                 (hKI.mono_iff (Nat.le_refl n) ls').1 hK
               have hKj' : K.Sat e.toModel (updateFresh ξ n ls') j :=
                 (hKI e.toModel ξ n ls' (Nat.le_refl n) j).1 hKj
               refine ⟨ls', hlen', ?_⟩
               simp only [Ltl.Sat]
-              refine ⟨?_, ?_, (hcorrBody (updateFresh ξ n ls') hKls' i hi).1 ⟨j, ?_, hKj'⟩⟩
+              refine ⟨?_, ?_, (hcorrPat (updateFresh ξ n ls') hKls' i hi).1 ⟨j, ?_, hKj'⟩⟩
               · rw [Inv.sat_tr, hcomp]; rw [hξ''] at hwhen; exact hwhen
               · rw [Ltl.sat_atStart, Ltl.Sat, ← hExIff (updateFresh ξ n ls'), hcomp]
                 exact fun ⟨k, hk⟩ => hexcept F' hex k (hξ'' ▸ hk)
-              · rw [hcomp]; rw [hξ''] at hbody; exact hbody
+              · rw [hcomp]; rw [hξ''] at hpat; exact hpat
           · rintro ⟨ls, hlen, hψ⟩
             simp only [Ltl.Sat] at hψ
-            obtain ⟨hwhen, hnotex, hbody⟩ := hψ
-            have hcomp : updateFresh ξ n ls ∘ ρ' = LEnv.bind (ξ ∘ ρ) g.locals ls := by
-              rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh g.locals hfresh hlen ξ)
+            obtain ⟨hwhen, hnotex, hpat⟩ := hψ
+            have hcomp : updateFresh ξ n ls ∘ ρ' = LEnv.bind (ξ ∘ ρ) P.locals ls := by
+              rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh P.locals hfresh hlen ξ)
             have hKls : Mono e.toModel (updateFresh ξ n ls) K :=
               (hKI.mono_iff (Nat.le_refl n) ls).1 hK
-            obtain ⟨j, hbody', hKj'⟩ := (hcorrBody (updateFresh ξ n ls) hKls i hi).2 hbody
-            refine ⟨j, Guarded.Sat.mk hlen rfl ?_ ?_ ?_,
+            obtain ⟨j, hpat', hKj'⟩ := (hcorrPat (updateFresh ξ n ls) hKls i hi).2 hpat
+            refine ⟨j, QBody.Sat.mk hlen rfl ?_ ?_ ?_,
               (hKI e.toModel ξ n ls (Nat.le_refl n) j).2 hKj'⟩
-            · rw [hcomp] at hbody'; exact hbody'
+            · rw [hcomp] at hpat'; exact hpat'
             · rw [Inv.sat_tr] at hwhen; rw [hcomp] at hwhen; exact hwhen
             · intro F'' hF'' k hk
               have hFeq : F'' = F' := by rw [hex] at hF''; exact (Option.some.inj hF'').symm
               subst hFeq
               rw [Ltl.sat_atStart, Ltl.Sat, ← hExIff (updateFresh ξ n ls), hcomp] at hnotex
               exact hnotex ⟨k, hk⟩
-    exact ⟨hP, hG⟩
+    exact ⟨hP, hB⟩
 
 /-! ## Existence
 
-Every well-formed query program has a `Guarded.Tr` witness: the same strong induction as
+Every well-formed query program has a `QBody.Tr` witness: the same strong induction as
 `correct_all`, but *constructing* a derivation instead of consuming one — mechanically
 simpler, since existence needs no `Mono`/`Indep` bookkeeping (`correct_all` supplies those
 for free once a witness exists). -/
@@ -1284,17 +1284,17 @@ def PatExists (N : Nat) : Prop :=
   ∀ (F : Pat), Pat.CallsOK Δ F →
   ∀ (ρ : Ren) (K : Ltl LVar) (n : Nat), ∃ φ n', Pat.Tr ρ Δ F K n φ n'
 
-/-- The same, for `Guarded.Tr`. -/
-def GuardedExists (N : Nat) : Prop :=
+/-- The same, for `QBody.Tr`. -/
+def QBodyExists (N : Nat) : Prop :=
   ∀ (Δ : QProg), Δ.length ≤ N → QProg.WF Δ →
-  ∀ (g : Guarded), Guarded.CallsOK Δ g →
-  ∀ (ρ : Ren) (K : Ltl LVar) (n : Nat), ∃ φ n', Guarded.Tr ρ Δ g K n φ n'
+  ∀ (P : QBody), QBody.CallsOK Δ P →
+  ∀ (ρ : Ren) (K : Ltl LVar) (n : Nat), ∃ φ n', QBody.Tr ρ Δ P K n φ n'
 
-theorem exists_all : ∀ N, PatExists N ∧ GuardedExists N := by
+theorem exists_all : ∀ N, PatExists N ∧ QBodyExists N := by
   intro N
   induction N using Nat.strongRecOn with
   | _ N ih =>
-    have ihGuarded : ∀ M, M < N → GuardedExists M := fun M hM => (ih M hM).2
+    have ihQBody : ∀ M, M < N → QBodyExists M := fun M hM => (ih M hM).2
     have hP : PatExists N := by
       intro Δ hΔlen hΔwf F
       induction F with
@@ -1307,8 +1307,8 @@ theorem exists_all : ∀ N, PatExists N ∧ GuardedExists N := by
         have hltN : Δ'.length < N := Nat.lt_of_lt_of_le hlt hΔlen
         have hdw := hΔwf.findRest hfind
         obtain ⟨φ, n', hTr⟩ :=
-          ihGuarded Δ'.length hltN Δ' (Nat.le_refl _) hdw.2 q.body
-            hdw.1.2.guarded (Ren.ofParams q.params (zs.map ρ)) K n
+          ihQBody Δ'.length hltN Δ' (Nat.le_refl _) hdw.2 q.body
+            hdw.1.2.body (Ren.ofParams q.params (zs.map ρ)) K n
         exact ⟨φ, n', .query hfind harity.symm hTr⟩
       | seq F₁ F₂ ih₁ ih₂ =>
         intro hcalls ρ K n
@@ -1328,20 +1328,20 @@ theorem exists_all : ∀ N, PatExists N ∧ GuardedExists N := by
         obtain ⟨φ₁, n₁, hTr₁⟩ := ih₁ h1 ρ K n
         obtain ⟨φ₂, n₂, hTr₂⟩ := ih₂ h2 ρ K n₁
         exact ⟨_, n₂, .both hTr₁ hTr₂⟩
-    have hG : GuardedExists N := by
-      intro Δ hΔlen hΔwf g hcalls ρ K n
-      cases he : g.except with
+    have hB : QBodyExists N := by
+      intro Δ hΔlen hΔwf P hcalls ρ K n
+      cases he : P.except with
       | none =>
-        obtain ⟨φ_body, n₁, hTr⟩ :=
-          hP Δ hΔlen hΔwf g.body hcalls.body (ρ.extendFresh g.locals n) K (n + g.locals.length)
+        obtain ⟨φ_pat, n₁, hTr⟩ :=
+          hP Δ hΔlen hΔwf P.pattern hcalls.pattern (ρ.extendFresh P.locals n) K (n + P.locals.length)
         exact ⟨_, n₁, .noExcept he rfl hTr⟩
       | some F' =>
-        obtain ⟨φ_body, n₁, hTr1⟩ :=
-          hP Δ hΔlen hΔwf g.body hcalls.body (ρ.extendFresh g.locals n) K (n + g.locals.length)
+        obtain ⟨φ_pat, n₁, hTr1⟩ :=
+          hP Δ hΔlen hΔwf P.pattern hcalls.pattern (ρ.extendFresh P.locals n) K (n + P.locals.length)
         obtain ⟨φ_ex, n₂, hTr2⟩ :=
-          hP Δ hΔlen hΔwf F' (hcalls.except he) (ρ.extendFresh g.locals n) Ltl.tt n₁
+          hP Δ hΔlen hΔwf F' (hcalls.except he) (ρ.extendFresh P.locals n) Ltl.tt n₁
         exact ⟨_, n₂, .withExcept he rfl hTr1 hTr2⟩
-    exact ⟨hP, hG⟩
+    exact ⟨hP, hB⟩
 
 /-! ## The headline theorem
 
@@ -1367,7 +1367,7 @@ theorem Query.topEnv_comp_inl (q : Query) (ls : List Loc) :
     exactly satisfaction of the translated formula, for any execution record and any
     arguments of the right arity. -/
 theorem Query.tr_correct {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ))
-    {φ : Ltl LVar} {n' : Nat} (hTr : Guarded.Tr Sum.inl Δ q.body Ltl.tt 0 φ n')
+    {φ : Ltl LVar} {n' : Nat} (hTr : QBody.Tr Sum.inl Δ q.body Ltl.tt 0 φ n')
     (e : Exec) (ls : List Loc) (hlen : ls.length = q.params.length) :
     Exec.Matches (q :: Δ) e q.name ls ↔ φ.Holds e.toModel (q.topEnv ls) := by
   have hΔwf : QProg.WF Δ := hwf.2.2
@@ -1379,20 +1379,20 @@ theorem Query.tr_correct {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ))
   simp only [Exec.Matches, QProg.interp, Ltl.Holds]
   rw [← this]
   constructor
-  · rintro ⟨j, hlen', hgs⟩; exact ⟨j, hgs⟩
-  · rintro ⟨j, hgs⟩; exact ⟨j, hlen, hgs⟩
+  · rintro ⟨j, hlen', hPs⟩; exact ⟨j, hPs⟩
+  · rintro ⟨j, hPs⟩; exact ⟨j, hlen, hPs⟩
 
 /-- **The general theorem.** For every well-formed query, a semantics-preserving
-    translation into `Ltl LVar` exists, and (unwinding `Guarded.Tr`'s own definition)
-    can be *computed*: it agrees with `Pat.Sat`/`Guarded.Sat` for every execution record,
-    not just ones produced by the concrete semantics of `CoreJsSemantics.lean`. -/
+    translation into `Ltl LVar` exists: it agrees with `Pat.Sat`/`QBody.Sat` for every
+    execution record, not just ones produced by the concrete semantics of
+    `CoreJsSemantics.lean`.  `Query.tr` computes it (`Query.tr_computed_correct`). -/
 theorem Query.exists_tr_correct {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ)) :
-    ∃ (φ : Ltl LVar) (n' : Nat), Guarded.Tr Sum.inl Δ q.body Ltl.tt 0 φ n' ∧
+    ∃ (φ : Ltl LVar) (n' : Nat), QBody.Tr Sum.inl Δ q.body Ltl.tt 0 φ n' ∧
       ∀ (e : Exec) (ls : List Loc), ls.length = q.params.length →
         (Exec.Matches (q :: Δ) e q.name ls ↔ φ.Holds e.toModel (q.topEnv ls)) := by
   have hΔwf : QProg.WF Δ := hwf.2.2
   obtain ⟨φ, n', hTr⟩ :=
-    (exists_all Δ.length).2 Δ (Nat.le_refl _) hΔwf q.body hwf.1.2.guarded
+    (exists_all Δ.length).2 Δ (Nat.le_refl _) hΔwf q.body hwf.1.2.body
       Sum.inl Ltl.tt 0
   exact ⟨φ, n', hTr, fun e ls hlen => Query.tr_correct hwf hTr e ls hlen⟩
 
@@ -1408,10 +1408,10 @@ theorem exSink_WF : QProg.WF [exSink] := by
   · constructor
     · decide
     · intro v hv
-      simp [Guarded.vars, exSink, Pat.vars, QAct.vars, Inv.vars, Pred.vars] at hv
+      simp [QBody.vars, exSink, Pat.vars, QAct.vars, Inv.vars, Pred.vars] at hv
       rcases hv with h | h | h | h <;> simp [h, exSink]
   · intro c hc
-    simp [Guarded.calls, exSink, Pat.calls] at hc
+    simp [QBody.calls, exSink, Pat.calls] at hc
   · decide
 
 /-- The call, on a sink, of an attacker-controlled value. -/
@@ -1437,11 +1437,387 @@ example :
       ⟨rfl, .mk (ls := []) rfl rfl (.act (by decide) (by decide) (by decide)) ⟨rfl, rfl⟩
         (fun F' h => nomatch h)⟩
   · rw [← hcorr eSinkMiss [205, 1101] rfl]
-    rintro ⟨j, hlen, hgs⟩
-    cases hgs with
+    rintro ⟨j, hlen, hPs⟩
+    cases hPs with
     | mk _ hξ' _ hwhen _ =>
       simp only [hξ', exSink, Inv.Sat, Pred.Sat, eSinkMiss, LEnv.bind, LEnv.empty] at hwhen
       exact hwhen.1
+
+/-! ## Computing the translation
+
+`Pat.Tr`/`QBody.Tr` are the specification; `Pat.tr`/`QBody.tr` compute it.
+Recursion is well founded on `(Δ.length, sizeOf F)`: an invocation continues
+with the strictly shorter rest of the program (`QProg.findRest?_length_lt`),
+every other case with a sub-term.  The result is `none` exactly when an
+invocation names no query of `Δ` or passes the wrong number of arguments,
+which `QProg.WF` rules out.
+
+The function and the relation agree: whatever `Pat.tr` returns is a
+derivation (`Pat.tr_sound`), and every derivation is what `Pat.tr` returns
+(`Pat.Tr.tr_eq`, so the relation is functional).  With `exists_all`, the
+latter makes `Pat.tr` total on well-formed programs, and
+`Query.tr_computed_correct` restates the headline theorem for the computed
+formula. -/
+
+mutual
+
+/-- Compute `tr(F, K)` with renaming `ρ` and fresh tags from `n`: the formula and
+    the next unused tag. -/
+def Pat.tr (ρ : Ren) (Δ : QProg) : Pat → Ltl LVar → Nat → Option (Ltl LVar × Nat)
+  | .eps, K, n => some (K, n)
+  | .act a, K, n => some (Ltl.F (.and (.atom (a.toAtom ρ)) (.next K)), n)
+  | .query Q zs, K, n =>
+      match _hfind : QProg.findRest? Q Δ with
+      | some (q, Δ') =>
+          if zs.length = q.params.length then
+            QBody.tr (Ren.ofParams q.params (zs.map ρ)) Δ' q.body K n
+          else none
+      | none => none
+  | .seq F₁ F₂, K, n =>
+      match Pat.tr ρ Δ F₂ K n with
+      | some (φ₂, n₁) => Pat.tr ρ Δ F₁ φ₂ n₁
+      | none => none
+  | .alt F₁ F₂, K, n =>
+      match Pat.tr ρ Δ F₁ K n with
+      | some (φ₁, n₁) =>
+          match Pat.tr ρ Δ F₂ K n₁ with
+          | some (φ₂, n₂) => some (.or φ₁ φ₂, n₂)
+          | none => none
+      | none => none
+  | .both F₁ F₂, K, n =>
+      match Pat.tr ρ Δ F₁ K n with
+      | some (φ₁, n₁) =>
+          match Pat.tr ρ Δ F₂ K n₁ with
+          | some (φ₂, n₂) => some (.and φ₁ φ₂, n₂)
+          | none => none
+      | none => none
+termination_by F => (Δ.length, sizeOf F)
+decreasing_by
+  all_goals first
+    | exact Prod.Lex.left _ _ (QProg.findRest?_length_lt _hfind)
+    | (apply Prod.Lex.right; simp_wf; omega)
+
+/-- Compute the translation of a query body `∃y⃗: F when I except F'`. -/
+def QBody.tr (ρ : Ren) (Δ : QProg) : QBody → Ltl LVar → Nat → Option (Ltl LVar × Nat)
+  | ⟨locals, pattern, when, except⟩, K, n =>
+      match except with
+      | none =>
+          match Pat.tr (ρ.extendFresh locals n) Δ pattern K (n + locals.length) with
+          | some (φ_pat, n₁) =>
+              some (Ltl.exN (freshVars locals n)
+                (.and (Inv.tr (ρ.extendFresh locals n) when) φ_pat), n₁)
+          | none => none
+      | some F' =>
+          match Pat.tr (ρ.extendFresh locals n) Δ pattern K (n + locals.length) with
+          | some (φ_pat, n₁) =>
+              match Pat.tr (ρ.extendFresh locals n) Δ F' .tt n₁ with
+              | some (φ_ex, n₂) =>
+                  some (Ltl.exN (freshVars locals n)
+                    (.and (Inv.tr (ρ.extendFresh locals n) when)
+                      (.and (Ltl.atStart (.not φ_ex)) φ_pat)), n₂)
+              | none => none
+          | none => none
+termination_by P => (Δ.length, sizeOf P)
+decreasing_by all_goals (apply Prod.Lex.right; simp_wf; omega)
+
+end
+
+/-- Compute the translation of a top-level query, as `Query.Tr` specifies it. -/
+def Query.tr (Δ : QProg) (q : Query) : Option (Ltl LVar) :=
+  (QBody.tr Sum.inl Δ q.body .tt 0).map Prod.fst
+
+/-- A formula variable as text: a source name as itself, a fresh tag `k` as `#k`. -/
+def LVar.toStr : LVar → String
+  | .inl x => x
+  | .inr k => s!"#{k}"
+
+/-- The translation of a top-level query as text (for `#eval`). -/
+def Query.trStr (Δ : QProg) (q : Query) : String :=
+  match Query.tr Δ q with
+  | some φ => φ.toStr LVar.toStr
+  | none   => "(no translation: an invocation is unresolved or has the wrong arity)"
+
+/-- Every derivation is what `Pat.tr`/`QBody.tr` compute, for programs of length `≤ N`;
+    in particular `Pat.Tr`/`QBody.Tr` are functional. -/
+theorem tr_complete_all : ∀ N,
+    (∀ (Δ : QProg), Δ.length ≤ N → ∀ (ρ : Ren) (F : Pat) (K : Ltl LVar) (n : Nat) φ n',
+      Pat.Tr ρ Δ F K n φ n' → Pat.tr ρ Δ F K n = some (φ, n')) ∧
+    (∀ (Δ : QProg), Δ.length ≤ N → ∀ (ρ : Ren) (P : QBody) (K : Ltl LVar) (n : Nat) φ n',
+      QBody.Tr ρ Δ P K n φ n' → QBody.tr ρ Δ P K n = some (φ, n')) := by
+  intro N
+  induction N using Nat.strongRecOn with
+  | _ N ih =>
+    have hP : ∀ (Δ : QProg), Δ.length ≤ N → ∀ (ρ : Ren) (F : Pat) (K : Ltl LVar) (n : Nat) φ n',
+        Pat.Tr ρ Δ F K n φ n' → Pat.tr ρ Δ F K n = some (φ, n') := by
+      intro Δ hΔlen ρ F
+      induction F with
+      | eps => intro K n φ n' hTr; cases hTr; rw [Pat.tr]
+      | act a => intro K n φ n' hTr; cases hTr; rw [Pat.tr]
+      | query Q zs =>
+        intro K n φ n' hTr
+        cases hTr with
+        | query hfind hlen hQBTr =>
+          rename_i q Δ'
+          have hlt : Δ'.length < N :=
+            Nat.lt_of_lt_of_le (QProg.findRest?_length_lt hfind) hΔlen
+          rw [Pat.tr]
+          split
+          · rename_i q' Δ'' h
+            rw [hfind] at h
+            injection h with h
+            injection h with h1 h2
+            subst h1; subst h2
+            rw [if_pos hlen]
+            exact (ih Δ'.length hlt).2 Δ' (Nat.le_refl _) _ _ _ _ _ _ hQBTr
+          · rename_i h
+            rw [hfind] at h
+            nomatch h
+      | seq F₁ F₂ ih₁ ih₂ =>
+        intro K n φ n' hTr
+        cases hTr with
+        | seq hTr₂ hTr₁ =>
+          rw [Pat.tr, ih₂ _ _ _ _ hTr₂]
+          exact ih₁ _ _ _ _ hTr₁
+      | alt F₁ F₂ ih₁ ih₂ =>
+        intro K n φ n' hTr
+        cases hTr with
+        | alt hTr₁ hTr₂ =>
+          rw [Pat.tr, ih₁ _ _ _ _ hTr₁]
+          simp only
+          rw [ih₂ _ _ _ _ hTr₂]
+      | both F₁ F₂ ih₁ ih₂ =>
+        intro K n φ n' hTr
+        cases hTr with
+        | both hTr₁ hTr₂ =>
+          rw [Pat.tr, ih₁ _ _ _ _ hTr₁]
+          simp only
+          rw [ih₂ _ _ _ _ hTr₂]
+    refine ⟨hP, ?_⟩
+    intro Δ hΔlen ρ P K n φ n' hTr
+    obtain ⟨locals, pattern, when, except⟩ := P
+    cases hTr with
+    | noExcept hex hρ' hpat =>
+      simp only at hex
+      subst hex; subst hρ'
+      rw [QBody.tr.eq_def]
+      simp only
+      rw [hP Δ hΔlen _ _ _ _ _ _ hpat]
+    | withExcept hex hρ' hpat hex' =>
+      simp only at hex
+      subst hex; subst hρ'
+      rw [QBody.tr.eq_def]
+      simp only
+      rw [hP Δ hΔlen _ _ _ _ _ _ hpat]
+      simp only
+      rw [hP Δ hΔlen _ _ _ _ _ _ hex']
+
+theorem Pat.Tr.tr_eq {ρ : Ren} {Δ : QProg} {F : Pat} {K : Ltl LVar} {n : Nat} {φ : Ltl LVar}
+    {n' : Nat} (h : Pat.Tr ρ Δ F K n φ n') : Pat.tr ρ Δ F K n = some (φ, n') :=
+  (tr_complete_all Δ.length).1 Δ (Nat.le_refl _) ρ F K n φ n' h
+
+theorem QBody.Tr.tr_eq {ρ : Ren} {Δ : QProg} {P : QBody} {K : Ltl LVar} {n : Nat} {φ : Ltl LVar}
+    {n' : Nat} (h : QBody.Tr ρ Δ P K n φ n') : QBody.tr ρ Δ P K n = some (φ, n') :=
+  (tr_complete_all Δ.length).2 Δ (Nat.le_refl _) ρ P K n φ n' h
+
+/-- Whatever `Pat.tr`/`QBody.tr` return is a derivation, for programs of length `≤ N`
+    (the same strong induction on program length as `correct_all`). -/
+theorem tr_sound_all : ∀ N,
+    (∀ (Δ : QProg), Δ.length ≤ N → ∀ (ρ : Ren) (F : Pat) (K : Ltl LVar) (n : Nat) φ n',
+      Pat.tr ρ Δ F K n = some (φ, n') → Pat.Tr ρ Δ F K n φ n') ∧
+    (∀ (Δ : QProg), Δ.length ≤ N → ∀ (ρ : Ren) (P : QBody) (K : Ltl LVar) (n : Nat) φ n',
+      QBody.tr ρ Δ P K n = some (φ, n') → QBody.Tr ρ Δ P K n φ n') := by
+  intro N
+  induction N using Nat.strongRecOn with
+  | _ N ih =>
+    have hP : ∀ (Δ : QProg), Δ.length ≤ N → ∀ (ρ : Ren) (F : Pat) (K : Ltl LVar) (n : Nat) φ n',
+        Pat.tr ρ Δ F K n = some (φ, n') → Pat.Tr ρ Δ F K n φ n' := by
+      intro Δ hΔlen ρ F
+      induction F with
+      | eps =>
+        intro K n φ n' h
+        rw [Pat.tr] at h
+        injection h with h
+        injection h with h1 h2
+        subst h1; subst h2
+        exact .eps
+      | act a =>
+        intro K n φ n' h
+        rw [Pat.tr] at h
+        injection h with h
+        injection h with h1 h2
+        subst h1; subst h2
+        exact .act
+      | query Q zs =>
+        intro K n φ n' h
+        rw [Pat.tr] at h
+        split at h
+        · rename_i q Δ' hfind
+          split at h
+          · rename_i hlen
+            have hlt : Δ'.length < N :=
+              Nat.lt_of_lt_of_le (QProg.findRest?_length_lt hfind) hΔlen
+            exact .query hfind hlen ((ih Δ'.length hlt).2 Δ' (Nat.le_refl _) _ _ _ _ _ _ h)
+          · nomatch h
+        · nomatch h
+      | seq F₁ F₂ ih₁ ih₂ =>
+        intro K n φ n' h
+        rw [Pat.tr] at h
+        split at h
+        · rename_i φ₂ n₁ h₂
+          exact .seq (ih₂ K n φ₂ n₁ h₂) (ih₁ φ₂ n₁ φ n' h)
+        · nomatch h
+      | alt F₁ F₂ ih₁ ih₂ =>
+        intro K n φ n' h
+        rw [Pat.tr] at h
+        split at h
+        · rename_i φ₁ n₁ h₁
+          split at h
+          · rename_i φ₂ n₂ h₂
+            injection h with h
+            injection h with h1 h2
+            subst h1; subst h2
+            exact .alt (ih₁ K n φ₁ n₁ h₁) (ih₂ K n₁ φ₂ n₂ h₂)
+          · nomatch h
+        · nomatch h
+      | both F₁ F₂ ih₁ ih₂ =>
+        intro K n φ n' h
+        rw [Pat.tr] at h
+        split at h
+        · rename_i φ₁ n₁ h₁
+          split at h
+          · rename_i φ₂ n₂ h₂
+            injection h with h
+            injection h with h1 h2
+            subst h1; subst h2
+            exact .both (ih₁ K n φ₁ n₁ h₁) (ih₂ K n₁ φ₂ n₂ h₂)
+          · nomatch h
+        · nomatch h
+    refine ⟨hP, ?_⟩
+    intro Δ hΔlen ρ P K n φ n' h
+    obtain ⟨locals, pattern, when, except⟩ := P
+    rw [QBody.tr.eq_def] at h
+    cases except with
+    | none =>
+      simp only at h
+      split at h
+      · rename_i φ_pat n₁ hpat
+        injection h with h
+        injection h with h1 h2
+        subst h1; subst h2
+        exact .noExcept rfl rfl (hP Δ hΔlen _ _ _ _ _ _ hpat)
+      · nomatch h
+    | some F' =>
+      simp only at h
+      split at h
+      · rename_i φ_pat n₁ hpat
+        split at h
+        · rename_i φ_ex n₂ hex
+          injection h with h
+          injection h with h1 h2
+          subst h1; subst h2
+          exact .withExcept rfl rfl (hP Δ hΔlen _ _ _ _ _ _ hpat) (hP Δ hΔlen _ _ _ _ _ _ hex)
+        · nomatch h
+      · nomatch h
+
+theorem Pat.tr_sound {ρ : Ren} {Δ : QProg} {F : Pat} {K : Ltl LVar} {n : Nat} {φ : Ltl LVar}
+    {n' : Nat} (h : Pat.tr ρ Δ F K n = some (φ, n')) : Pat.Tr ρ Δ F K n φ n' :=
+  (tr_sound_all Δ.length).1 Δ (Nat.le_refl _) ρ F K n φ n' h
+
+theorem QBody.tr_sound {ρ : Ren} {Δ : QProg} {P : QBody} {K : Ltl LVar} {n : Nat} {φ : Ltl LVar}
+    {n' : Nat} (h : QBody.tr ρ Δ P K n = some (φ, n')) : QBody.Tr ρ Δ P K n φ n' :=
+  (tr_sound_all Δ.length).2 Δ (Nat.le_refl _) ρ P K n φ n' h
+
+/-- `Query.tr` computes exactly the translations `Query.Tr` specifies. -/
+theorem Query.tr_eq_some_iff {Δ : QProg} {q : Query} {φ : Ltl LVar} :
+    Query.tr Δ q = some φ ↔ Query.Tr Δ q φ := by
+  constructor
+  · intro h
+    simp only [Query.tr, Option.map_eq_some_iff] at h
+    obtain ⟨⟨φ', n'⟩, h, rfl⟩ := h
+    exact ⟨n', QBody.tr_sound h⟩
+  · rintro ⟨n', hTr⟩
+    simp [Query.tr, QBody.Tr.tr_eq hTr]
+
+/-- **The headline theorem, computed.** For a well-formed query, `Query.tr` succeeds,
+    and the formula it returns is semantics-preserving over every execution record. -/
+theorem Query.tr_computed_correct {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ)) :
+    ∃ φ, Query.tr Δ q = some φ ∧
+      ∀ (e : Exec) (ls : List Loc), ls.length = q.params.length →
+        (Exec.Matches (q :: Δ) e q.name ls ↔ φ.Holds e.toModel (q.topEnv ls)) := by
+  obtain ⟨φ, n', hTr, hcorr⟩ := Query.exists_tr_correct hwf
+  exact ⟨φ, Query.tr_eq_some_iff.2 ⟨n', hTr⟩, hcorr⟩
+
+/-! ### Computed translations
+
+What `Query.tr` produces for the example queries above and for three more, as
+compile-time checks (`#guard`): a change to the translation that alters any of
+these formulas fails the build.  The empty `when` shows up as `⊤ ∧ …`, and
+`F (a ∧ X ⊤)` is the translation of an action with nothing after it. -/
+
+section computed
+
+-- `Sink(f,x) { Call(f,[x]) when sk(f) ∧ ac(x) }`: no locals, so no `∃`.
+#guard Query.trStr [] exSink ==
+  "((sk(f) ∧ ac(x)) ∧ F (call(f, [x]) ∧ X ⊤))"
+
+-- `;` nests the second action inside the first one's continuation.
+#guard Query.trStr [] exSeq ==
+  "(⊤ ∧ F (call(f, [x]) ∧ X F (retn(f, r) ∧ X ⊤)))"
+
+-- `except` becomes `atStart(¬ …)`: checked from boundary `0`, wherever it sits.
+#guard Query.trStr [] exExceptHit ==
+  "(⊤ ∧ (atStart(¬F (retn(f, r) ∧ X ⊤)) ∧ F (call(f, [x]) ∧ X ⊤)))"
+
+-- Invocation inlines `Sink`'s body with its parameters `f, x` renamed to the
+-- caller's `g, y`.
+#guard Query.trStr [exSink] exOuter ==
+  "(⊤ ∧ ((sk(g) ∧ ac(y)) ∧ F (call(g, [y]) ∧ X F (retn(g, y) ∧ X ⊤))))"
+
+-- Without `Sink` in the program, the invocation is unresolved: no translation.
+#guard (Query.tr [] exOuter).isNone
+
+/-- `SanCalled() { ∃s, z: Call(s, [z]) when hv(s, fid san) }`: `san` is called with
+    some argument. -/
+def exSanCalled : Query where
+  name := "SanCalled"
+  params := []
+  body := { locals := ["s", "z"], pattern := .act (.call "s" ["z"]),
+            when := .pred (.hv "s" (.fid "san")) }
+
+/-- `Unsanitized() { ∃g, y: Call(g, [y]) when hv(g, fid f) except SanCalled() }`:
+    `f` is called, and `san` is never called with *any* argument. -/
+def exUnsanitized : Query where
+  name := "Unsanitized"
+  params := []
+  body := { locals := ["g", "y"], pattern := .act (.call "g" ["y"]),
+            when := .pred (.hv "g" (.fid "f")), except := some (.query "SanCalled" []) }
+
+-- `SanCalled`'s locals become the fresh tags `#2`, `#3`, quantified *inside* the
+-- `¬`: "no `z` at all", which a local of `Unsanitized` itself could not express.
+#guard Query.trStr [exSanCalled] exUnsanitized ==
+  "(∃#0. (∃#1. (hv(#0, fid f) ∧ (atStart(¬(∃#2. (∃#3. (hv(#2, fid san) ∧ " ++
+    "F (call(#2, [#3]) ∧ X ⊤))))) ∧ F (call(#0, [#1]) ∧ X ⊤)))))"
+
+/-- `Ret(a) { ∃y: Retn(y, a) }`: some function returns `a`. -/
+def exRet : Query where
+  name := "Ret"
+  params := ["a"]
+  body := { locals := ["y"], pattern := .act (.retn "y" "a") }
+
+/-- `RetThenCall(x, y) { Ret(x) ; Call(y, [x]) }`: `x` is returned by some function,
+    then the caller's `y` is called with it. -/
+def exRetThenCall : Query where
+  name := "RetThenCall"
+  params := ["x", "y"]
+  body := { pattern := .seq (.query "Ret" ["x"]) (.act (.call "y" ["x"])) }
+
+-- `Ret`'s local is the fresh tag `#0`, so the continuation's `y` (the caller's
+-- parameter) is not captured by it.
+#guard Query.trStr [exRet] exRetThenCall ==
+  "(⊤ ∧ (∃#0. (⊤ ∧ F (retn(#0, x) ∧ X F (call(y, [x]) ∧ X ⊤)))))"
+
+end computed
+
 /-!
 ## Proof structure
 
@@ -1456,7 +1832,7 @@ only the standard Lean core axioms `propext`, `Classical.choice`,
 * `QAct.toAtom`/`Pred.tr`/`Inv.tr`, the leaf translations, and `Inv.sat_tr`/
   `Pred.sat_tr`/`QAct.sat_toAtom` relating them to `Inv.Sat`/`Pred.Sat`/
   `Act.inst` under `ξ ∘ ρ`.
-* `Pat.Tr`/`Guarded.Tr`, the translation relation itself, covering the *full*
+* `Pat.Tr`/`QBody.Tr`, the translation relation itself, covering the *full*
   query language (actions, `;`/`‖`/`&`, `exists`/`when`/`except`, invocation).
 * The freshness invariant `Ren.Fresh` and its preservation across
   `Ren.ofParams`/`Ren.extendFresh` (`Ren.Fresh.ofParams`/`.extendFresh`/
@@ -1464,16 +1840,16 @@ only the standard Lean core axioms `propext`, `Classical.choice`,
   fresh range) with `updateFresh_nil`/`_cons`, `Ltl.sat_exN_fresh`,
   `Ren.Fresh.upd_comp` and `Ren.sat_updateFresh_extendFresh` — together,
   these connect the *translation's* fresh-tag `∃` to the *semantics'*
-  `LEnv.bind` for a guarded pattern's own locals.
+  `LEnv.bind` for a query body's own locals.
 * `QProg.findRest?_length_lt` (the well-founded measure: invoking a query
   strictly shortens the remaining program), `QProg.interp_findRest`
   (unfolding `QProg.interp` at a query found this way), and
   `QProg.WF.findRest` (a query found via `findRest?` in a well-formed
   program is itself well-formed, against the *shorter* remaining program) —
-  together these are what the `query`/`Guarded.Tr` case needs to relate
-  `Pat.Sat`'s `Θ`-call to `Guarded.Sat` on the shorter `Δ'`.
+  together these are what the `query`/`QBody.Tr` case needs to relate
+  `Pat.Sat`'s `Θ`-call to `QBody.Sat` on the shorter `Δ'`.
 * A **coincidence/locality package** (`Pat.sat_coincide`/`Pred.sat_coincide`/
-  `Inv.sat_coincide`/`Guarded.sat_coincide`): satisfaction depends on a
+  `Inv.sat_coincide`/`QBody.sat_coincide`): satisfaction depends on a
   valuation only through its values on the pattern's own free variables
   outside a guard's own locals. This is what makes `Ren.ofParams`'s
   "not found" fallback harmless: composed with `Query.Declared q` (a query's
@@ -1488,16 +1864,16 @@ only the standard Lean core axioms `propext`, `Classical.choice`,
   original `ξ`, and without `Indep` there is no way to relate `Mono ξ K` to
   `Mono (updateFresh ξ n ls) K`. `Mono.F`/`Mono.or`/`Mono.and` and
   `Ltl.Indep.mono_iff` package this transfer.
-* `correct_all` (`PatCorrect N ∧ GuardedCorrect N`, proved for every `N` by
+* `correct_all` (`PatCorrect N ∧ QBodyCorrect N`, proved for every `N` by
   `Nat.strongRecOn` on `N`, with `Pat` handled by ordinary structural
-  induction inside each step, since `Pat.Tr`/`Guarded.Tr` are mutually
+  induction inside each step, since `Pat.Tr`/`QBody.Tr` are mutually
   inductive `Prop`s and this Lean version's `induction` tactic does not
   support inducting on a mutual-family hypothesis directly — confirmed
-  experimentally): every `Pat.Tr`/`Guarded.Tr` witness, for a program of any
+  experimentally): every `Pat.Tr`/`QBody.Tr` witness, for a program of any
   length, is semantics-preserving.
-* `exists_all` (`PatExists N ∧ GuardedExists N`, same induction skeleton,
+* `exists_all` (`PatExists N ∧ QBodyExists N`, same induction skeleton,
   no `Mono`/`Indep`/freshness bookkeeping needed): a translation witness
-  exists for every well-formed pattern/guarded pattern over every
+  exists for every well-formed pattern/query body over every
   well-formed program.
 * The headline theorems, combining both: `Query.tr_correct` (given a
   witness, matching a well-formed top-level query agrees with the witness

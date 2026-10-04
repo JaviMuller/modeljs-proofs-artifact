@@ -242,23 +242,23 @@ value `b`, `16` the location of the literal `6`, `0` the location of
 /-- A query with (optionally) an invariant, an excluded pattern and locals. -/
 def mkQ (name : QName) (params : List Var) (F : Pat) (I : Inv := .tt)
     (E : Option Pat := none) (locals : List Var := []) : Query :=
-  ⟨name, params, { locals, body := F, when := I, except := E }⟩
+  ⟨name, params, { locals, pattern := F, when := I, except := E }⟩
 
 /-- `Q` matches the execution record of the run of `s` on the arguments `ls`. -/
 def QRuns (s : Stmt) (Δ : QProg) (Q : QName) (ls : List Loc) (b : Prop) : Prop :=
   Runs s fun r => Exec.Matches Δ (Exec.ofRes r) Q ls ↔ b
 
 /-- Matching a query with no locals: body, invariant, and (absent) `except`. -/
-theorem _root_.CoreJS.Guarded.Sat.simple {Θ t σ ξ} {g : Guarded} {i j : Nat} (hl : g.locals = [])
-    (hn : g.except = none) (hb : Pat.Sat Θ t σ ξ g.body i j) (hi : Inv.Sat σ ξ g.when) :
-    Guarded.Sat Θ t σ ξ g i j :=
+theorem _root_.CoreJS.QBody.Sat.simple {Θ t σ ξ} {P : QBody} {i j : Nat} (hl : P.locals = [])
+    (hn : P.except = none) (hb : Pat.Sat Θ t σ ξ P.pattern i j) (hi : Inv.Sat σ ξ P.when) :
+    QBody.Sat Θ t σ ξ P i j :=
   .mk (ls := []) (by simp [hl]) (by rw [hl]; rfl) hb hi (by simp [hn])
 
 /-- Inversion for a query with no locals. -/
-theorem _root_.CoreJS.Guarded.Sat.invert {Θ t σ ξ} {g : Guarded} {i j : Nat} (hl : g.locals = [])
-    (h : Guarded.Sat Θ t σ ξ g i j) :
-    Pat.Sat Θ t σ ξ g.body i j ∧ Inv.Sat σ ξ g.when ∧
-      ∀ F', g.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ F' 0 k := by
+theorem _root_.CoreJS.QBody.Sat.invert {Θ t σ ξ} {P : QBody} {i j : Nat} (hl : P.locals = [])
+    (h : QBody.Sat Θ t σ ξ P i j) :
+    Pat.Sat Θ t σ ξ P.pattern i j ∧ Inv.Sat σ ξ P.when ∧
+      ∀ F', P.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ F' 0 k := by
   cases h with
   | mk hlen hξ hb hi he =>
     rw [hl] at hlen hξ
@@ -280,17 +280,17 @@ macro_rules
   | `(tactic| tr_simp $[$loc]?) =>
     `(tactic| simp +decide [Exec.ofRes, Trc.toList, LEnv.bind, LEnv.empty, QAct.inst] $[$loc]?)
 
-/-- Head query of a program matches: unfold and supply the guarded pattern. -/
+/-- Head query of a program matches: unfold and supply the query body. -/
 theorem matches_of {q : Query} {Δ : QProg} {e : Exec} {ls : List Loc} {j : Nat}
     (hlen : ls.length = q.params.length)
-    (h : Guarded.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
+    (h : QBody.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
            (LEnv.empty.bind q.params ls) q.body 0 j) :
     Exec.Matches (q :: Δ) e q.name ls :=
   (Exec.Matches.iff_head q Δ e ls).2 ⟨hlen, j, h⟩
 
-/-- Head query of a program does not match: the guarded pattern has no match. -/
+/-- Head query of a program does not match: the query body has no match. -/
 theorem not_matches_of {q : Query} {Δ : QProg} {e : Exec} {ls : List Loc}
-    (h : ∀ j, ¬ Guarded.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
+    (h : ∀ j, ¬ QBody.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
            (LEnv.empty.bind q.params ls) q.body 0 j) :
     ¬ Exec.Matches (q :: Δ) e q.name ls := by
   rintro ⟨j, hj⟩
@@ -304,7 +304,7 @@ def qSink : Query :=
 
 theorem q_sink : Runs pTaint fun r => Exec.Matches [qSink] (Exec.ofRes r) "Sink" [204, 1100] := by
   run exact matches_of (j := 1) rfl
-        (Guarded.Sat.simple rfl rfl (.act (by decide) (by decide) (by decide)) (by obs_simp [qSink]))
+        (QBody.Sat.simple rfl rfl (.act (by decide) (by decide) (by decide)) (by obs_simp [qSink]))
 
 /-- The same with `¬ac(x)`: no match, since `1100` is attacker-controlled. -/
 def qSinkClean : Query :=
@@ -332,7 +332,7 @@ theorem q_sink_wrongArg : Runs pTaint fun r =>
 def qSeq : Query := mkQ "Seq" ["f", "x", "r"] (.seq (.act (.call "f" ["x"])) (.act (.retn "f" "r")))
 theorem q_seq : Runs pTaint fun r => Exec.Matches [qSeq] (Exec.ofRes r) "Seq" [204, 1100, 0] := by
   run exact matches_of (j := 2) rfl
-        (Guarded.Sat.simple rfl rfl (.seq (k := 1) (.act (by decide) (by decide) (by decide))
+        (QBody.Sat.simple rfl rfl (.seq (k := 1) (.act (by decide) (by decide) (by decide))
           (.act (by decide) (by decide) (by decide))) (by obs_simp [qSeq]))
 
 /-- `Retn(f,r) ; Call(f,[x])`: the actions occur in the other order. -/
@@ -353,13 +353,13 @@ theorem q_seqRev_no : Runs pTaint fun r =>
 def qAlt : Query := mkQ "Alt" ["f", "x"] (.alt (.act (.retn "f" "x")) (.act (.call "f" ["x"])))
 theorem q_alt : Runs pTaint fun r => Exec.Matches [qAlt] (Exec.ofRes r) "Alt" [204, 1100] := by
   run exact matches_of (j := 1) rfl
-        (Guarded.Sat.simple rfl rfl (.altR (.act (by decide) (by decide) (by decide))) (by obs_simp [qAlt]))
+        (QBody.Sat.simple rfl rfl (.altR (.act (by decide) (by decide) (by decide))) (by obs_simp [qAlt]))
 
 /-- `Retn(f,r) & Call(f,[x])`: both performed, in either order; ends at the later. -/
 def qBoth : Query := mkQ "Both" ["f", "x", "r"] (.both (.act (.retn "f" "r")) (.act (.call "f" ["x"])))
 theorem q_both : Runs pTaint fun r => Exec.Matches [qBoth] (Exec.ofRes r) "Both" [204, 1100, 0] := by
   run exact matches_of (j := 2) rfl
-        (Guarded.Sat.simple rfl rfl (.both (j₁ := 2) (j₂ := 1) (.act (by decide) (by decide) (by decide))
+        (QBody.Sat.simple rfl rfl (.both (j₁ := 2) (j₂ := 1) (.act (by decide) (by decide) (by decide))
           (.act (by decide) (by decide) (by decide)) rfl) (by obs_simp [qBoth]))
 
 /-- `a & a` is matched as soon as `a` is: one action serves both sides. -/
@@ -367,13 +367,13 @@ def qBothSelf : Query := mkQ "BothSelf" ["f", "x"] (.both (.act (.call "f" ["x"]
 theorem q_bothSelf : Runs pTaint fun r =>
     Exec.Matches [qBothSelf] (Exec.ofRes r) "BothSelf" [204, 1100] := by
   run exact matches_of (j := 1) rfl
-        (Guarded.Sat.simple rfl rfl (.both (j₁ := 1) (j₂ := 1) (.act (by decide) (by decide) (by decide))
+        (QBody.Sat.simple rfl rfl (.both (j₁ := 1) (j₂ := 1) (.act (by decide) (by decide) (by decide))
           (.act (by decide) (by decide) (by decide)) rfl) (by obs_simp [qBothSelf]))
 
 /-- `ε` is matched by every execution. -/
 def qEps : Query := mkQ "Eps" [] .eps
 theorem q_eps : Runs pTaint fun r => Exec.Matches [qEps] (Exec.ofRes r) "Eps" [] := by
-  run exact matches_of (j := 0) rfl (Guarded.Sat.simple rfl rfl .eps (by obs_simp [qEps]))
+  run exact matches_of (j := 0) rfl (QBody.Sat.simple rfl rfl .eps (by obs_simp [qEps]))
 
 /-! ### `exists` and `except` -/
 
@@ -412,7 +412,7 @@ theorem q_exceptMiss : Runs pTaint fun r =>
 /-- `dep(x, y)`: `1100 = a + 1` depends on `a` (location 15) and on `1` (location 11). -/
 def qDep : Query := mkQ "Dep" ["x", "y"] .eps (.pred (.dep "x" "y"))
 theorem q_dep : Runs pTaint fun r => Exec.Matches [qDep] (Exec.ofRes r) "Dep" [1100, 15] := by
-  run exact matches_of (j := 0) rfl (Guarded.Sat.simple rfl rfl .eps (by obs_simp [qDep]))
+  run exact matches_of (j := 0) rfl (QBody.Sat.simple rfl rfl .eps (by obs_simp [qDep]))
 theorem q_dep_no : Runs pTaint fun r => ¬ Exec.Matches [qDep] (Exec.ofRes r) "Dep" [15, 1100] := by
   run refine not_matches_of fun j hj => ?_
       obtain ⟨_, hi, _⟩ := hj.invert rfl
@@ -424,14 +424,14 @@ theorem q_dep_no : Runs pTaint fun r => ¬ Exec.Matches [qDep] (Exec.ofRes r) "D
 def qHv : Query := mkQ "Hv" ["x"] .eps (.pred (.hv "x" (.num 6)))
 def qSv : Query := mkQ "Sv" ["x", "y"] .eps (.pred (.sv "x" "y"))
 theorem q_hv : Runs pTaint fun r => Exec.Matches [qHv] (Exec.ofRes r) "Hv" [1100] := by
-  run exact matches_of (j := 0) rfl (Guarded.Sat.simple rfl rfl .eps (by obs_simp [qHv]))
+  run exact matches_of (j := 0) rfl (QBody.Sat.simple rfl rfl .eps (by obs_simp [qHv]))
 theorem q_hv_no : Runs pTaint fun r => ¬ Exec.Matches [qHv] (Exec.ofRes r) "Hv" [15] := by
   run refine not_matches_of fun j hj => ?_
       obtain ⟨_, hi, _⟩ := hj.invert rfl
       revert hi
       obs_simp [qHv]
 theorem q_sv : Runs pTaint fun r => Exec.Matches [qSv] (Exec.ofRes r) "Sv" [1100, 16] := by
-  run exact matches_of (j := 0) rfl (Guarded.Sat.simple rfl rfl .eps (by obs_simp [qSv]))
+  run exact matches_of (j := 0) rfl (QBody.Sat.simple rfl rfl .eps (by obs_simp [qSv]))
 theorem q_sv_no : Runs pTaint fun r => ¬ Exec.Matches [qSv] (Exec.ofRes r) "Sv" [1100, 15] := by
   run refine not_matches_of fun j hj => ?_
       obtain ⟨_, hi, _⟩ := hj.invert rfl
@@ -447,7 +447,7 @@ theorem q_sv_undefined_no :
 /-- `sk(x)`: `204` is a sink, `1100` is not. -/
 def qSk : Query := mkQ "Sk" ["x"] .eps (.pred (.sk "x"))
 theorem q_sk : Runs pTaint fun r => Exec.Matches [qSk] (Exec.ofRes r) "Sk" [204] := by
-  run exact matches_of (j := 0) rfl (Guarded.Sat.simple rfl rfl .eps (by obs_simp [qSk]))
+  run exact matches_of (j := 0) rfl (QBody.Sat.simple rfl rfl .eps (by obs_simp [qSk]))
 theorem q_sk_no : Runs pTaint fun r => ¬ Exec.Matches [qSk] (Exec.ofRes r) "Sk" [1100] := by
   run refine not_matches_of fun j hj => ?_
       obtain ⟨_, hi, _⟩ := hj.invert rfl
@@ -458,7 +458,7 @@ theorem q_sk_no : Runs pTaint fun r => ¬ Exec.Matches [qSk] (Exec.ofRes r) "Sk"
 def qLogic : Query := mkQ "Logic" [] .eps (.or (.and .tt .ff) (.not .ff))
 def qLogicNo : Query := mkQ "LogicNo" [] .eps (.and .tt .ff)
 theorem q_logic : Runs pTaint fun r => Exec.Matches [qLogic] (Exec.ofRes r) "Logic" [] := by
-  run exact matches_of (j := 0) rfl (Guarded.Sat.simple rfl rfl .eps (by obs_simp [qLogic]))
+  run exact matches_of (j := 0) rfl (QBody.Sat.simple rfl rfl .eps (by obs_simp [qLogic]))
 theorem q_logic_no : Runs pTaint fun r => ¬ Exec.Matches [qLogicNo] (Exec.ofRes r) "LogicNo" [] := by
   run refine not_matches_of fun j hj => ?_
       obtain ⟨_, hi, _⟩ := hj.invert rfl
@@ -478,7 +478,7 @@ theorem q_outer : Runs pTaint fun r =>
         (.mk (ls := [0]) rfl rfl
           (.seq (k := 1) (.query ?_) (.act (by decide) (by decide) (by decide))) (by obs_simp [qOuter])
           (fun _ h => nomatch h))
-      refine (QProg.interp_head qSink [] _ _ _ 0 1).2 ⟨rfl, Guarded.Sat.simple rfl rfl ?_ ?_⟩
+      refine (QProg.interp_head qSink [] _ _ _ 0 1).2 ⟨rfl, QBody.Sat.simple rfl rfl ?_ ?_⟩
       · exact .act (by decide) (by decide) (by decide)
       · obs_simp [qSink]
 
@@ -492,8 +492,8 @@ theorem q_outerSwap_no : Runs pTaint fun r =>
       obtain ⟨hb, _, _⟩ := hj.invert rfl
       cases hb with
       | query h =>
-        obtain ⟨_, hg⟩ := (QProg.interp_head qSink [] _ _ _ _ _).1 h
-        obtain ⟨_, hi, _⟩ := hg.invert rfl
+        obtain ⟨_, hPs⟩ := (QProg.interp_head qSink [] _ _ _ _ _).1 h
+        obtain ⟨_, hi, _⟩ := hPs.invert rfl
         revert hi
         obs_simp [qSink, qOuterSwap]
 
@@ -518,8 +518,8 @@ theorem q_exceptWhole_no : Runs pTaint fun r =>
       | @seq _ _ _ k j h₁ h₂ =>
         cases h₂ with
         | query h =>
-          obtain ⟨_, hg⟩ := (QProg.interp_head qLate [] _ _ _ _ _).1 h
-          obtain ⟨_, _, he⟩ := hg.invert rfl
+          obtain ⟨_, hPs⟩ := (QProg.interp_head qLate [] _ _ _ _ _).1 h
+          obtain ⟨_, _, he⟩ := hPs.invert rfl
           exact he _ rfl 1 (.act (by decide) (by decide) (by decide))
 
 /-- ... but `Late` on its own can still be one alternative of a `‖`: its failing `except`
@@ -529,7 +529,7 @@ def qEither : Query :=
 theorem q_exceptLocal : Runs pTaint fun r =>
     Exec.Matches [qEither, qLate] (Exec.ofRes r) "Either" [204, 1100, 0] := by
   run exact matches_of (j := 2) rfl
-        (Guarded.Sat.simple rfl rfl (.altR (.act (by decide) (by decide) (by decide)))
+        (QBody.Sat.simple rfl rfl (.altR (.act (by decide) (by decide) (by decide)))
           (by obs_simp [qEither]))
 
 /-! ### Lookup and update actions
@@ -547,7 +547,7 @@ def qLoadStore : Query :=
 theorem q_storeLoad : Runs pObjRT fun r =>
     Exec.Matches [qStoreLoad] (Exec.ofRes r) "StoreLoad" [1200, 101, 15] := by
   run exact matches_of (j := 2) rfl
-        (Guarded.Sat.simple rfl rfl (.seq (k := 1) (.act (by decide) (by decide) (by decide))
+        (QBody.Sat.simple rfl rfl (.seq (k := 1) (.act (by decide) (by decide) (by decide))
           (.act (by decide) (by decide) (by decide))) (by obs_simp [qStoreLoad]))
 theorem q_loadStore_no : Runs pObjRT fun r =>
     ¬ Exec.Matches [qLoadStore] (Exec.ofRes r) "LoadStore" [1200, 101, 15] := by

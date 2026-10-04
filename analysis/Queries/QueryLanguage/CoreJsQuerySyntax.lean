@@ -60,7 +60,7 @@ inductive Inv where
   | ff
   deriving DecidableEq, Repr
 
-/-! ## Action patterns and guarded patterns -/
+/-! ## Action patterns and query bodies -/
 
 /-- Action patterns `F ::= ε | a | Q(x₁, ..., xₙ) | F ; F | F ‖ F | F & F`. -/
 inductive Pat where
@@ -78,27 +78,27 @@ inductive Pat where
   | both  (F₁ F₂ : Pat)
   deriving DecidableEq, Repr
 
-/-- Guarded action patterns `P ::= ⟨exists y⃗:⟩ F₁ ⟨when I⟩ ⟨except F₂⟩`.
+/-- Query bodies `P ::= ⟨exists y⃗:⟩ F₁ ⟨when I⟩ ⟨except F₂⟩`.
 
     The omitted clauses default to no local variables
     (`locals = []`), `true` (`when = .tt`) and no excluded pattern
     (`except = none`). -/
-structure Guarded where
+structure QBody where
   /-- `y⃗`, the local (existentially bound) variables. -/
-  locals : List Var := []
+  locals  : List Var := []
   /-- `F₁`, the vulnerable behaviour. -/
-  body   : Pat
+  pattern : Pat
   /-- `I`, the query invariant. -/
-  when   : Inv := .tt
+  when    : Inv := .tt
   /-- `F₂`, the excluded (mitigation) pattern. -/
-  except : Option Pat := none
+  except  : Option Pat := none
   deriving DecidableEq, Repr
 
 /-- Queries `Query Q(x⃗) { P }`. -/
 structure Query where
   name   : QName
   params : List Var
-  body   : Guarded
+  body   : QBody
   deriving DecidableEq, Repr
 
 /-- A query program: a list of queries, each of which may only invoke queries
@@ -155,14 +155,14 @@ def Pat.calls : Pat → List (QName × List Var)
   | .alt F₁ F₂  => F₁.calls ++ F₂.calls
   | .both F₁ F₂ => F₁.calls ++ F₂.calls
 
-/-- Variables of the body, invariant and excluded pattern of a guarded
-    pattern (not including the `locals` binder list itself). -/
-def Guarded.vars (g : Guarded) : List Var :=
-  g.body.vars ++ g.when.vars ++ (g.except.map Pat.vars).getD []
+/-- Variables of the pattern, invariant and excluded pattern of a query
+    body (not including the `locals` binder list itself). -/
+def QBody.vars (P : QBody) : List Var :=
+  P.pattern.vars ++ P.when.vars ++ (P.except.map Pat.vars).getD []
 
 /-- The invocations occurring in the body or the excluded pattern. -/
-def Guarded.calls (g : Guarded) : List (QName × List Var) :=
-  g.body.calls ++ (g.except.map Pat.calls).getD []
+def QBody.calls (P : QBody) : List (QName × List Var) :=
+  P.pattern.calls ++ (P.except.map Pat.calls).getD []
 
 /-! ## Well-formedness
 
@@ -190,24 +190,5 @@ def Query.WF (Δ : QProg) (q : Query) : Prop :=
 def QProg.WF : QProg → Prop
   | []     => True
   | q :: Δ => q.WF Δ ∧ QProg.find? Δ q.name = none ∧ QProg.WF Δ
-
-/-- Variables that are bound by an action of the pattern on every way of
-    matching it.  An alternative binds only what both branches bind, and an
-    invocation is *assumed* to bind its arguments (which is only right if
-    the callee is itself safe — this is an approximation). -/
-def Pat.bound : Pat → List Var
-  | .eps        => []
-  | .act a      => a.vars
-  | .query _ zs => zs
-  | .seq F₁ F₂  => F₁.bound ++ F₂.bound
-  | .alt F₁ F₂  => F₁.bound.filter (· ∈ F₂.bound)
-  | .both F₁ F₂ => F₁.bound ++ F₂.bound
-
-/-- *Safety* (range restriction): every local variable occurs in an action
-    of `F₁`.  Optional; not needed by the semantics.  Without it a local such
-    as in `∃y. hv(y, 3)` ranges over locations that occur nowhere in the
-    execution. -/
-def Query.Safe (q : Query) : Prop :=
-  ∀ y ∈ q.body.locals, y ∈ q.body.body.bound
 
 end CoreJS

@@ -180,6 +180,54 @@ def exN (vs : List ν) (φ : Ltl ν) : Ltl ν := vs.foldr .ex φ
 
 end Ltl
 
+/-! ## Concrete syntax
+
+Rendering formulas as text, for displaying (e.g. `#eval`) the formulas a
+translation produces.  Variables are rendered by a supplied function; the
+derived operators `F`, `O` and `atStart` are recognised and printed as such.
+Display only: nothing in the development depends on it. -/
+
+/-- A value, as written in `hv(x, c)`. -/
+def Val.toStr : Val → String
+  | .num n  => toString n
+  | .str s  => s!"\"{s}\""
+  | .bool b => toString b
+  | .fid f  => s!"fid {f}"
+  | .loc l  => s!"loc {l}"
+  | .undef  => "undefined"
+
+/-- An atom, given how to render variables. -/
+def Atom.toStr {ν : Type} (s : ν → String) : Atom ν → String
+  | .lookup x₁ x₂ x₃ => s!"lookup({s x₁}, {s x₂}, {s x₃})"
+  | .update x₁ x₂ x₃ => s!"update({s x₁}, {s x₂}, {s x₃})"
+  | .call xf xs      => s!"call({s xf}, [{", ".intercalate (xs.map s)}])"
+  | .retn xf x       => s!"retn({s xf}, {s x})"
+  | .sk x            => s!"sk({s x})"
+  | .ac x            => s!"ac({s x})"
+  | .dep x₁ x₂       => s!"dep({s x₁}, {s x₂})"
+  | .sv x₁ x₂        => s!"sv({s x₁}, {s x₂})"
+  | .hv x c          => s!"hv({s x}, {c.toStr})"
+  | .eq x₁ x₂        => s!"{s x₁} = {s x₂}"
+
+/-- A formula, given how to render variables.  Binary connectives and binders are
+    fully parenthesised. -/
+def Ltl.toStr {ν : Type} (s : ν → String) : Ltl ν → String
+  | .atom a      => a.toStr s
+  | .tt          => "⊤"
+  | .ff          => "⊥"
+  | .not φ       => s!"¬{φ.toStr s}"
+  | .and φ ψ     => s!"({φ.toStr s} ∧ {ψ.toStr s})"
+  | .or φ ψ      => s!"({φ.toStr s} ∨ {ψ.toStr s})"
+  | .next φ      => s!"X {φ.toStr s}"
+  | .until .tt φ => s!"F {φ.toStr s}"
+  | .until φ ψ   => s!"({φ.toStr s} U {ψ.toStr s})"
+  | .yesterday φ => s!"Y {φ.toStr s}"
+  | .since .tt (.and φ (.not (.yesterday .tt))) => s!"atStart({φ.toStr s})"
+  | .since .tt φ => s!"O {φ.toStr s}"
+  | .since φ ψ   => s!"({φ.toStr s} S {ψ.toStr s})"
+  | .ex x φ      => s!"(∃{s x}. {φ.toStr s})"
+  | .all x φ     => s!"(∀{s x}. {φ.toStr s})"
+
 /-! ## Structures (models)
 
 A model of the signature above: a *rigid* part (`obs`, a first-order structure

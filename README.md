@@ -63,7 +63,9 @@ observations.
   first-order past/future LTL over finite traces, and a record matches the
   query exactly when its model satisfies the translation. This covers the
   full query language, including guards, local variables and query
-  invocation.
+  invocation. The translation is also computable (`Query.tr`, with
+  `Query.tr_computed_correct`); `#guard` checks in the same file show the
+  formulas it produces for example queries.
 
 ## Repository layout
 

@@ -13,7 +13,7 @@
 
   * `Inv.Sat σ ξ I`                       — `σ, ξ ⊨ I`
   * `Pat.Sat Θ t σ ξ F i j`               — `t, σ, ξ ⊨ F : i ⇝ j`
-  * `Guarded.Sat Θ t σ ξ P i j`           — the same for guarded patterns
+  * `QBody.Sat Θ t σ ξ P i j`           — the same for query bodies
   * `Δ ⊢ t, σ, ξ ⊨ F : i ⇝ j`             — `Pat.Sat` with query invocations
                                             resolved in the program `Δ`
 
@@ -32,7 +32,7 @@
     guard thereby does not depend on where its query starts, which is what
     lets the FO-LTL translation (`CoreJsQueryToLtl.lean`) place a guard's
     translation exactly where the query occurs.  It only constrains the
-    guarded pattern it belongs to, so under `Q ‖ F` a failing `except` inside
+    query body it belongs to, so under `Q ‖ F` a failing `except` inside
     `Q` merely rules out the left alternative.
   * Valuations are total and (by `Query.Declared`) every variable of a
     well-formed query is already assigned, so there is no quantification
@@ -102,7 +102,7 @@ def Inv.Sat (σ : Obs) (ξ : LEnv) : Inv → Prop
   | .tt        => True
   | .ff        => False
 
-/-! ## Action patterns and guarded patterns
+/-! ## Action patterns and query bodies
 
 `Θ Q l⃗ i j` says that the query `Q`, applied to the locations `l⃗`, matches
 `t` from `i` to `j`.  It is a parameter of the two relations below (with `t`
@@ -156,28 +156,28 @@ inductive Pat.Sat (Θ : Interp) (t : List Act) (σ : Obs) (ξ : LEnv) :
 /-- `t, σ, ξ ⊨ (exists y⃗: F when I except F') : i ⇝ j`.  The positive part
     `F` is matched from `i`; the excluded pattern `F'` is checked from the
     start of the trace, so that the guard does not depend on `i`. -/
-inductive Guarded.Sat (Θ : Interp) (t : List Act) (σ : Obs) :
-    LEnv → Guarded → Nat → Nat → Prop where
-  | mk {ξ ξ' g ls i j} :
-      ls.length = g.locals.length →
-      ξ' = ξ.bind g.locals ls →
-      Pat.Sat Θ t σ ξ' g.body i j →
-      Inv.Sat σ ξ' g.when →
-      (∀ F', g.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ' F' 0 k) →
-      Guarded.Sat Θ t σ ξ g i j
+inductive QBody.Sat (Θ : Interp) (t : List Act) (σ : Obs) :
+    LEnv → QBody → Nat → Nat → Prop where
+  | mk {ξ ξ' P ls i j} :
+      ls.length = P.locals.length →
+      ξ' = ξ.bind P.locals ls →
+      Pat.Sat Θ t σ ξ' P.pattern i j →
+      Inv.Sat σ ξ' P.when →
+      (∀ F', P.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ' F' 0 k) →
+      QBody.Sat Θ t σ ξ P i j
 
 /-! ## Query programs -/
 
 /-- The interpretation of invocations determined by a query program on the
     record `⟨t, σ⟩`.  A query is applied to as many locations as it has
-    parameters, and its guarded pattern is run under `[xᵢ ↦ lᵢ]`; it can only
+    parameters, and its body is run under `[xᵢ ↦ lᵢ]`; it can only
     invoke the queries after it in the list. -/
 def QProg.interp (t : List Act) (σ : Obs) : QProg → Interp
   | []     => fun _ _ _ _ => False
   | q :: Δ => fun Q ls i j =>
       if Q = q.name then
         ls.length = q.params.length ∧
-        Guarded.Sat (QProg.interp t σ Δ) t σ (LEnv.empty.bind q.params ls) q.body i j
+        QBody.Sat (QProg.interp t σ Δ) t σ (LEnv.empty.bind q.params ls) q.body i j
       else QProg.interp t σ Δ Q ls i j
 
 /-- `Δ ⊢ t, σ, ξ ⊨ F : i ⇝ j`. -/
@@ -188,7 +188,9 @@ def QProg.Sat (Δ : QProg) (t : List Act) (σ : Obs) (ξ : LEnv) (F : Pat) (i j 
   QProg.Sat Δ t σ ξ F i j
 
 /-- The execution record `e` matches the query `Q` applied to `l⃗`:
-    `t, σ, [x⃗ ↦ l⃗] ⊨ P_Q : 0 ⇝ j` for some `j`. -/
+    `t, σ, [x⃗ ↦ l⃗] ⊨ P_Q : 0 ⇝ j` for some `j`.  Starting at `0` loses no
+    generality: a match from any `i` yields one from `0`
+    (`Exec.Matches.of_interp`). -/
 def Exec.Matches (Δ : QProg) (e : Exec) (Q : QName) (ls : List Loc) : Prop :=
   ∃ j, Δ.interp e.trc.toList e.obs Q ls 0 j
 
@@ -226,13 +228,13 @@ theorem Pat.Sat.bound {Θ t σ ξ F i j} (hΘ : Θ.Ok t) :
   | altR _ ih => exact ih
   | both _ _ hj ih₁ ih₂ => intro hi; have := ih₁ hi; have := ih₂ hi; omega
 
-theorem Guarded.Sat.le {Θ t σ ξ g i j} (hΘ : Θ.Ok t) : Guarded.Sat Θ t σ ξ g i j → i ≤ j := by
+theorem QBody.Sat.le {Θ t σ ξ P i j} (hΘ : Θ.Ok t) : QBody.Sat Θ t σ ξ P i j → i ≤ j := by
   intro h
   cases h with
   | mk _ _ hb _ _ => exact hb.le hΘ
 
-theorem Guarded.Sat.bound {Θ t σ ξ g i j} (hΘ : Θ.Ok t) :
-    Guarded.Sat Θ t σ ξ g i j → i ≤ t.length → j ≤ t.length := by
+theorem QBody.Sat.bound {Θ t σ ξ P i j} (hΘ : Θ.Ok t) :
+    QBody.Sat Θ t σ ξ P i j → i ≤ t.length → j ≤ t.length := by
   intro h
   cases h with
   | mk _ _ hb _ _ => exact hb.bound hΘ
@@ -252,6 +254,79 @@ theorem QProg.interp_ok (Δ : QProg) (t : List Act) (σ : Obs) : (Δ.interp t σ
       split at h
       · exact h.2.bound ih
       · exact ih.bound _ _ _ _ h
+
+/-! ### Starting a match earlier
+
+Starting a match earlier never forces it to finish later.  The weaker
+"`F : i ⇝ j` implies `F : 0 ⇝ j'` for some `j'`" is not inductive: lowering
+the start of `ε` also lowers its end, so in `ε ; F₂` the second pattern must
+be restarted earlier too.  The `query` case needs the same property of the
+interpretation (`Interp.LowerStart`); `QProg.interp` has it because a guard's
+`except` is checked over the whole trace, independently of the start.  The
+upshot, `Exec.Matches.of_interp`: `Exec.Matches` starting at boundary `0`
+loses no generality. -/
+
+/-- An interpretation may always restart a match earlier, finishing no later. -/
+def Interp.LowerStart (Θ : Interp) : Prop :=
+  ∀ Q ls i j i', Θ Q ls i j → i' ≤ i → ∃ j', j' ≤ j ∧ Θ Q ls i' j'
+
+theorem Pat.Sat.lower_start {Θ t σ ξ F i j} (hΘ : Θ.LowerStart) (h : Pat.Sat Θ t σ ξ F i j) :
+    ∀ i', i' ≤ i → ∃ j', j' ≤ j ∧ Pat.Sat Θ t σ ξ F i' j' := by
+  induction h with
+  | eps => intro i' hi; exact ⟨i', hi, .eps⟩
+  | act hij hj ht => intro i' hi; exact ⟨_, Nat.le_refl _, .act (by omega) hj ht⟩
+  | query h =>
+    intro i' hi
+    obtain ⟨j', hj', h'⟩ := hΘ _ _ _ _ _ h hi
+    exact ⟨j', hj', .query h'⟩
+  | seq _ _ ih₁ ih₂ =>
+    intro i' hi
+    obtain ⟨k', hk', h₁⟩ := ih₁ i' hi
+    obtain ⟨j', hj', h₂⟩ := ih₂ k' hk'
+    exact ⟨j', hj', .seq h₁ h₂⟩
+  | altL _ ih =>
+    intro i' hi
+    obtain ⟨j', hj', h'⟩ := ih i' hi
+    exact ⟨j', hj', .altL h'⟩
+  | altR _ ih =>
+    intro i' hi
+    obtain ⟨j', hj', h'⟩ := ih i' hi
+    exact ⟨j', hj', .altR h'⟩
+  | both _ _ hj ih₁ ih₂ =>
+    intro i' hi
+    obtain ⟨j₁', hj₁', h₁⟩ := ih₁ i' hi
+    obtain ⟨j₂', hj₂', h₂⟩ := ih₂ i' hi
+    exact ⟨max j₁' j₂', by omega, .both h₁ h₂ rfl⟩
+
+theorem QBody.Sat.lower_start {Θ t σ ξ P i j} (hΘ : Θ.LowerStart) (h : QBody.Sat Θ t σ ξ P i j) :
+    ∀ i', i' ≤ i → ∃ j', j' ≤ j ∧ QBody.Sat Θ t σ ξ P i' j' := by
+  intro i' hi
+  cases h with
+  | mk hlen hξ' hpat hwhen hexcept =>
+    obtain ⟨j', hj', hpat'⟩ := hpat.lower_start hΘ i' hi
+    exact ⟨j', hj', .mk hlen hξ' hpat' hwhen hexcept⟩
+
+theorem QProg.interp_lowerStart (Δ : QProg) (t : List Act) (σ : Obs) :
+    (Δ.interp t σ).LowerStart := by
+  induction Δ with
+  | nil => intro _ _ _ _ _ h; exact h.elim
+  | cons q Δ ih =>
+    intro Q ls i j i' h hi
+    simp only [QProg.interp] at h ⊢
+    split at h
+    · rename_i hQ
+      obtain ⟨j', hj', h'⟩ := h.2.lower_start ih i' hi
+      exact ⟨j', hj', by rw [if_pos hQ]; exact ⟨h.1, h'⟩⟩
+    · rename_i hQ
+      obtain ⟨j', hj', h'⟩ := ih _ _ _ _ _ h hi
+      exact ⟨j', hj', by rw [if_neg hQ]; exact h'⟩
+
+/-- A match of `Q` starting anywhere in the trace yields one starting at `0`:
+    defining `Exec.Matches` from boundary `0` loses no generality. -/
+theorem Exec.Matches.of_interp {Δ : QProg} {e : Exec} {Q : QName} {ls : List Loc} {i j : Nat}
+    (h : Δ.interp e.trc.toList e.obs Q ls i j) : Exec.Matches Δ e Q ls :=
+  let ⟨j', _, h'⟩ := QProg.interp_lowerStart Δ _ _ _ _ _ _ 0 h (Nat.zero_le _)
+  ⟨j', h'⟩
 
 /-- `ε` is a unit for `;` on the left. -/
 theorem Pat.Sat.seq_eps_left {Θ t σ ξ F i j} :
@@ -416,11 +491,11 @@ end inversion
 
 /-! ### Coincidence (locality in the free variables)
 
-`Pat.Sat`/`Inv.Sat`/`Guarded.Sat` depend on a valuation only through its values
+`Pat.Sat`/`Inv.Sat`/`QBody.Sat` depend on a valuation only through its values
 on the term's own variables — standard for any substitution-based semantics,
 and needed to relate an invoked query's *fresh* base valuation to the
 semantics' own `LEnv.empty.bind` (they agree only on the query's declared
-parameters; `Guarded.sat_coincide` is what lets that suffice). -/
+parameters; `QBody.sat_coincide` is what lets that suffice). -/
 
 /-- A variable not among the ones bound falls through to the base valuation. -/
 theorem LEnv.bind_eq_of_not_mem (ξ : LEnv) :
@@ -528,28 +603,28 @@ theorem Inv.sat_coincide {σ : Obs} :
   | .tt, _, _, _ => Iff.rfl
   | .ff, _, _, _ => Iff.rfl
 
-/-- `Guarded.Sat` depends on the outer valuation only through its values outside the
+/-- `QBody.Sat` depends on the outer valuation only through its values outside the
     guard's own locals (which get rebound internally regardless). -/
-theorem Guarded.sat_coincide {Θ : Interp} {t : List Act} {σ : Obs} {g : Guarded} {i j : Nat}
-    {ξ₁ ξ₂ : LEnv} (h : ∀ x ∈ g.vars, x ∉ g.locals → ξ₁ x = ξ₂ x) :
-    Guarded.Sat Θ t σ ξ₁ g i j ↔ Guarded.Sat Θ t σ ξ₂ g i j := by
-  have mp : ∀ {ξ₁ ξ₂ : LEnv}, (∀ x ∈ g.vars, x ∉ g.locals → ξ₁ x = ξ₂ x) →
-      Guarded.Sat Θ t σ ξ₁ g i j → Guarded.Sat Θ t σ ξ₂ g i j := by
+theorem QBody.sat_coincide {Θ : Interp} {t : List Act} {σ : Obs} {P : QBody} {i j : Nat}
+    {ξ₁ ξ₂ : LEnv} (h : ∀ x ∈ P.vars, x ∉ P.locals → ξ₁ x = ξ₂ x) :
+    QBody.Sat Θ t σ ξ₁ P i j ↔ QBody.Sat Θ t σ ξ₂ P i j := by
+  have mp : ∀ {ξ₁ ξ₂ : LEnv}, (∀ x ∈ P.vars, x ∉ P.locals → ξ₁ x = ξ₂ x) →
+      QBody.Sat Θ t σ ξ₁ P i j → QBody.Sat Θ t σ ξ₂ P i j := by
     intro ξ₁ ξ₂ h hs
     cases hs with
-    | mk hlen hξ' hbody hwhen hexcept =>
+    | mk hlen hξ' hpat hwhen hexcept =>
       rename_i ξ' ls
-      have key : ∀ x ∈ g.vars, LEnv.bind ξ₁ g.locals ls x = LEnv.bind ξ₂ g.locals ls x := by
+      have key : ∀ x ∈ P.vars, LEnv.bind ξ₁ P.locals ls x = LEnv.bind ξ₂ P.locals ls x := by
         intro x hxg
-        by_cases hxl : x ∈ g.locals
-        · exact LEnv.bind_indep ξ₁ ξ₂ g.locals ls hlen x hxl
-        · rw [LEnv.bind_eq_of_not_mem ξ₁ g.locals ls x hxl,
-            LEnv.bind_eq_of_not_mem ξ₂ g.locals ls x hxl]
+        by_cases hxl : x ∈ P.locals
+        · exact LEnv.bind_indep ξ₁ ξ₂ P.locals ls hlen x hxl
+        · rw [LEnv.bind_eq_of_not_mem ξ₁ P.locals ls x hxl,
+            LEnv.bind_eq_of_not_mem ξ₂ P.locals ls x hxl]
           exact h x hxg hxl
       subst hξ'
       refine .mk hlen rfl ?_ ?_ ?_
       · exact (Pat.sat_coincide
-          (fun x hx => key x (List.mem_append.2 (Or.inl (List.mem_append.2 (Or.inl hx)))))).1 hbody
+          (fun x hx => key x (List.mem_append.2 (Or.inl (List.mem_append.2 (Or.inl hx)))))).1 hpat
       · exact (Inv.sat_coincide
           (fun x hx => key x (List.mem_append.2 (Or.inl (List.mem_append.2 (Or.inr hx)))))).1 hwhen
       · intro F' hF' k hk
@@ -563,7 +638,7 @@ theorem QProg.interp_head (q : Query) (Δ : QProg) (t : List Act) (σ : Obs) (ls
     (i j : Nat) :
     (QProg.interp t σ (q :: Δ)) q.name ls i j ↔
       ls.length = q.params.length ∧
-      Guarded.Sat (QProg.interp t σ Δ) t σ (LEnv.empty.bind q.params ls) q.body i j := by
+      QBody.Sat (QProg.interp t σ Δ) t σ (LEnv.empty.bind q.params ls) q.body i j := by
   simp [QProg.interp]
 
 /-- Unfolding of `QProg.interp` at a query other than the head. -/
@@ -576,7 +651,7 @@ theorem QProg.interp_tail (q : Query) (Δ : QProg) (t : List Act) (σ : Obs) {Q 
 theorem Exec.Matches.iff_head (q : Query) (Δ : QProg) (e : Exec) (ls : List Loc) :
     Exec.Matches (q :: Δ) e q.name ls ↔
       ls.length = q.params.length ∧
-      ∃ j, Guarded.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
+      ∃ j, QBody.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
         (LEnv.empty.bind q.params ls) q.body 0 j := by
   simp only [Exec.Matches, QProg.interp, if_true]
   constructor

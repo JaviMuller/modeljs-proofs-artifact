@@ -174,13 +174,13 @@ the end of `CoreJsAutomatonSemantics.lean`.
 ### The query language
 
 8. **`CoreJsQuerySyntax.lean`** — `Query Q(x⃗) { ∃y⃗: F₁ when I except F₂ }`:
-   `QAct`, `Pred`, `Inv`, `Pat`, `Guarded`, `Query`, and the well-formedness
+   `QAct`, `Pred`, `Inv`, `Pat`, `QBody` (fields `locals`/`pattern`/`when`/`except`), `Query`, and the well-formedness
    predicates `Query.WF`/`QProg.WF` (all variables declared in `x⃗ ∪ y⃗`,
-   arities match, no duplicates, callees only *later* in the program list) and
-   the optional `Query.Safe` (range restriction). The semantics does *not*
-   assume any of these.
+   arities match, no duplicates, callees only *later* in the program list).
+   The semantics does *not* assume either. There is no range restriction:
+   a local occurring in no action (`∃y. hv(y, 3)`) ranges over all locations.
 9. **`CoreJsQuerySemantics.lean`** — the satisfaction relations in interval
-   form `t, σ, ξ ⊨ F : i ⇝ j` (`Pat.Sat`/`Guarded.Sat`), over execution
+   form `t, σ, ξ ⊨ F : i ⇝ j` (`Pat.Sat`/`QBody.Sat`), over execution
    records `Exec`/`Obs` (defined in `CoreJsSemantics.lean` — see its entry
    above for why). Semantic decisions made with the user, worth knowing
    before touching this file:
@@ -189,12 +189,15 @@ the end of `CoreJsAutomatonSemantics.lean`.
    - `except F'` is checked over the **whole trace** (`F'` matched from `0`, for
      every end point `k`), for nested queries as well as the top-level one, so a
      guard does not depend on where its query starts. It only constrains the
-     guarded pattern it belongs to: under `Q ‖ F`, a failing `except` inside `Q`
+     query body it belongs to: under `Q ‖ F`, a failing `except` inside `Q`
      just rules out that alternative. Position independence is what the FO-LTL
      translation relies on.
    - `dep(x₁,x₂)` is plain membership `ξ x₂ ∈ σ.dep (ξ x₁)` — no closure in the
      semantics; transitivity of `dep` and reverse-closure of `ac` are the
      `Obs.WF` predicate. `sv` requires both values *defined* and equal.
+   - `Exec.Matches` matches from boundary `0`; `Exec.Matches.of_interp`
+     (via `Pat.Sat.lower_start`: starting earlier never forces finishing later)
+     shows this loses no generality.
    - Invocation `Q(z⃗)` runs `Q`'s body under `[xᵢ ↦ ξ(zᵢ)]` (valuation
      passing, equivalent to capture-free substitution; locals of `Q` are private).
    - Queries live in a **list** (`QProg`) and invocation is resolved by
@@ -267,19 +270,27 @@ the end of `CoreJsAutomatonSemantics.lean`.
     theorem that it is semantics-preserving over execution records (via
     `Exec.toModel`) — for the *full* query language, including guards, locals and
     invocation, not just an invocation-free fragment.
-    - `Pat.Tr ρ Δ F K n φ n'` / `Guarded.Tr ρ Δ g K n φ n'`: a *relation* (not a computable
-      function), continuation-style. Genuinely mutually recursive with itself (a query's
+    - `Pat.Tr ρ Δ F K n φ n'` / `QBody.Tr ρ Δ P K n φ n'`: the translation as a
+      *relation* (the specification), continuation-style. Genuinely mutually recursive with itself (a query's
       body may invoke further queries), which is fine for a `Prop` — unlike `Pat.Sat`, it
       never negates *itself* (a guard's `except` becomes `.not` applied to an
       already-produced formula, ordinary data, not a negated occurrence of the relation),
       so it needs no external `Interp`-style parameter.
-    - A guarded pattern `∃y⃗: F when I except F'` translates to
+    - `Pat.tr`/`QBody.tr`/`Query.tr` compute it (`Option`: `none` iff an invocation is
+      unresolved or has the wrong arity), by well-founded recursion on
+      `(Δ.length, sizeOf F)`. They agree with the relation both ways (`Pat.tr_sound`,
+      `Pat.Tr.tr_eq`; `Query.tr_eq_some_iff`), so the relation is functional and the
+      correctness theorems apply to the computed formula (`Query.tr_computed_correct`).
+      `Query.trStr` renders the result (`Ltl.toStr` in `CoreJsFoLtl.lean`, fresh tags as
+      `#k`); the `computed` section `#guard`s the formulas for example queries — update
+      those strings deliberately if the translation changes.
+    - A query body `∃y⃗: F when I except F'` translates to
       `∃y⃗: I ∧ atStart(¬ tr(F',⊤)) ∧ tr(F,K)`, written *in place* at the invocation — this
       is exactly why `except` has whole-trace semantics and why `Ltl.atStart` exists:
       both are needed together to make the `&` rule
       (`tr(F₁&F₂,K) = tr(F₁,K) ∧ tr(F₂,K)`) exact without hoisting into any normal form.
-    - `correct_all` (`PatCorrect`/`GuardedCorrect`, by strong induction on the remaining
-      program's length) proves every `Pat.Tr`/`Guarded.Tr` witness semantics-preserving
+    - `correct_all` (`PatCorrect`/`QBodyCorrect`, by strong induction on the remaining
+      program's length) proves every `Pat.Tr`/`QBody.Tr` witness semantics-preserving
       for every well-formed program; `exists_all` proves a witness always exists.
       Together, `Query.tr_correct`/`Query.exists_tr_correct` give the headline result:
       for a well-formed query at the head of a well-formed program, matching it on an
@@ -301,9 +312,9 @@ the end of `CoreJsAutomatonSemantics.lean`.
   type `ALoc` (write `(1 : Nat)` where an `ALoc` is expected), and `omega`
   does not see through it at all — restate over `Nat` first.
 - **Helper lemmas for dot-notation must live in the type's namespace.** A
-  `theorem Guarded.Sat.simple` declared inside `namespace CoreJS.Tests` is
+  `theorem QBody.Sat.simple` declared inside `namespace CoreJS.Tests` is
   *not* found by `.simple`/`h.simple`; declare it as
-  `theorem _root_.CoreJS.Guarded.Sat.simple`.
+  `theorem _root_.CoreJS.QBody.Sat.simple`.
 - **`;;` is overloaded** (`Stmt.seq` and `Trc.seq`, both scoped `infixr:70`);
   it resolves by expected type, so annotate when a literal is ambiguous.
 - **Hole metavariables from `refine ⟨?r, …⟩` are opaque** and cannot be
@@ -311,7 +322,7 @@ the end of `CoreJsAutomatonSemantics.lean`.
   discover the witness (this is what `run` does).
 - Do not depend on `Reg`/`Heap` structure eta: `{ δ with ac := … }` is not
   definitionally `δ`. Use a congruence lemma (`Reg.DepInv.congr`) instead.
-- **Mutual inductives (`AExit`/`AEdge`/`ARet`, `Pat.Tr`/`Guarded.Tr`):** the
+- **Mutual inductives (`AExit`/`AEdge`/`ARet`, `Pat.Tr`/`QBody.Tr`):** the
   `induction` tactic cannot induct on a mutual-family hypothesis directly, but
   a `mutual` block of theorems defined by pattern matching on the hypothesis
   (structural recursion) works — see `AExit.closed`/`ARet.closed`,
