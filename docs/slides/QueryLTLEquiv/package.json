@@ -1,0 +1,13 @@
+{
+  "name": "query-ltl-equiv-slides",
+  "private": true,
+  "description": "Generator for QueryLTLEquiv.pptx (queries, FO-LTL and the translation's correctness)",
+  "scripts": {
+    "build": "node src/build.js",
+    "render": "tools/render.sh"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "pptxgenjs": "^3.12.0"
+  }
+}
