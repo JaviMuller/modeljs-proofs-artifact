@@ -88,18 +88,34 @@ sit on top of the concrete semantics.
    gotcha below).
 2. **`CoreJsSemantics.lean`** — semantic domains (`Sto`, `Heap`, `Reg`, `Trc`,
    `Act`, `Out`), the `Concrete` typeclass (`litLoc`, `allocC`, `opSem`),
-   `ConcreteSpec` (its side conditions), `Heap.WF`, the big-step judgement
+   `ConcreteSpec` (what a sensible concrete instance looks like: injective
+   literal locations, fresh allocation, no allocation at literal locations, no
+   operator producing a function), `Heap.WF`, the big-step judgement
    `BigStep`, and `BigStepN`, a derivation-height-indexed copy needed because
    `BigStep` lives in `Prop` and has no recursor to induct on height, while
    the automaton soundness proof's `while` case needs the induction
    hypothesis several derivation levels down (`BigStep.toN`/
    `BigStepN.toBigStep` transport between the two; if you add a concrete
    rule, add the matching `BigStepN` constructor and extend `mono`/
-   `mono_le`/`toN`/`toBigStep`). Also here: heap facts preserved along runs
+   `mono_le`/`toN`/`toBigStep`). An object's location holds the object's
+   reference value `.loc l` (object references are values: `sv` compares
+   them, operators accept them; and an empty object's location is in use, so
+   it is never allocated again). Prototypes are modelled to depth
+   one: `Object.prototype` is the literal location of the marker value
+   `Val.proto`, object literals get `__proto__ ↦ litLoc .proto`, and a
+   lookup whose own property is missing reads `Object.prototype`'s, else
+   yields `undefined` (`lookupSProto`/`lookupSMissing` and the dynamic
+   twins); abstract lookups go through `AHeap.lookupS`/`lookupD`. Dynamic
+   keys are converted to property names as in JS (`Val.toKey`: `a[undefined]`
+   is `a["undefined"]`); an object reference or function as a key may denote
+   *any* property (`Val.KeyOf`, as `model-js`'s `Dynamic`; abstractly
+   `VSet.HasKey`). Also here: heap facts preserved along runs
    (`Heap.Finite`/`BigStep.finite`, `Heap.Defined` and its per-update lemmas,
    `Heap.FidCanon`/`BigStep.fidCanon`: function values live only at their
    literal locations), and the minimal initial configuration (`Reg.empty`,
-   `Heap.init`, `Conf.init`, `Heap.init_WF`, `Heap.init_finite`).
+   `Heap.init Γ fs s`/`Conf.init Γ fs s`: the literals of `s` and of the
+   bodies of the functions `fs` — normally all of `Γ`'s, listed so the heap
+   stays computable — plus `undefined`; `Heap.init_WF`, `Heap.init_finite`).
    - **`ConcreteSpec.allocC_fresh` only applies to finite heaps.** Demanding
      freshness of *every* heap made the spec unsatisfiable (a heap defined at
      every location has no free one), so anything assuming it was vacuous.
@@ -125,10 +141,13 @@ sit on top of the concrete semantics.
    length) and the automaton state space `AState`.
 4. **`CoreJsAutomatonSemantics.lean`** — the abstract domains (`ALoc`, `VSet`,
    `AHeap`, `ASto`, `AReg`, `AConf`), the `Abstract` class and `AbstractSpec`,
-   abstract actions `AAct`, the per-statement effects, the mutually inductive
-   edge relations `AExit`/`AEdge`/`ARet`, the whole graph `AGraph`,
+   abstract actions `AAct`, the per-statement effects, the edge relations
+   `AExit`/`ARet`/`AEdge` (layered, not mutual: each refers only to itself
+   and the ones before it), the whole graph `AGraph`,
    `Labeling`, `Labeling.Valid`, `AnalysisResult` (valid, and covering
-   `AConf.init s₀` at the top-level entry), walks `AWalk`, and the
+   `AConf.init Γ s₀` at the top-level entry: the literals of `s₀` and of
+   every body of `Γ`, as a predicate, so it covers `Conf.init Γ fs s₀` for
+   every `fs`), walks `AWalk`, and the
    `PendingClosed` framework plus invariant `AConf.FidReserved`.
    - Every edge carries a contribution `C : Labeling → AConf` and an action
      label `ℓ : Labeling → Option AAct` (`none` = the edge cannot be taken
@@ -138,26 +157,29 @@ sit on top of the concrete semantics.
    - Properties of the accumulated `pending`/`xpending`/`rpending`
      transforms are proved once through `PendingClosed` +
      `AExit.closed`/`ARet.closed`; reuse that rather than writing a new
-     mutual induction.
+     induction over the edge relations.
 5. **`CoreJsAutomatonRelation.lean`** — the abstraction relation (`AlphaFn`,
    `Heap.Alpha`/`Sto.Alpha`/`Reg.Alpha`/`AConf.Alpha`, `Act.Alpha`/
    `Trc.Alpha`), the per-statement lemmas, the allocation invariant
-   `AlphaFn.AllocSafe` with `AllocSafe.extend`, the cross-spec `CrossSpec`
-   (concrete/abstract agreement: `opSem` vs `opSemA`, allocator sites, no
-   function values from binary operators, no allocation at literal
-   locations), and the initial abstraction `AlphaFn.lits`.
+   `AlphaFn.AllocSafe` (every location `α` maps is in use or a literal
+   location) with `AllocSafe.extend`, the cross-spec `CrossSpec` (the one
+   assumption relating the two sides: `opSemA` over-approximates `opSem`),
+   and the initial abstraction `AlphaFn.lits`. Spec structures are organised
+   by meaning: a property of the concrete instance alone goes in
+   `ConcreteSpec` even if only the analysis uses it.
 6. **`CoreJsAutomatonTotality.lean`** — monotonicity of every edge
    contribution in the labeling (`AGraph.lmono`), arbitrary meets/joins of
    configurations, the least analysis result `Labeling.least` (the meet of
    all analysis results; `exists_least_analysisResult`,
    `exists_valid_labeling`), the propagation operator `Labeling.step` and its
    Kleene iterates (below `least`; a stable iterate *is* `least`), and
-   `least_fidReserved`. Termination of Kleene iteration is deliberately not
+   `least_fidReserved` / `least_reservedResult` (the least result is the
+   least `ReservedResult`). Termination of Kleene iteration is deliberately not
    claimed: value sets range over an infinite domain and `opSemA` need not
    widen.
 7. **`CoreJsAutomatonSoundness.lean`** — `SoundRun` (the conclusion),
    `step_sound` (strong induction on derivation height), `sound`,
-   `sound_top` (whole program from `Conf.init s₀` against an
+   `sound_top` (whole program from `Conf.init Γ fs s₀` against an
    `AnalysisResult`), `sound_least` (against the least one), and
    `SpecModel.satisfiable` (the specs are jointly satisfiable, so none of
    this is vacuous). `step_sound` threads, besides `α`-relatedness: `hsub`
@@ -212,8 +234,10 @@ the end of `CoreJsAutomatonSemantics.lean`.
     `∃ r, BigStep … r ∧ P r`; `obs_simp [q]`/`tr_simp` discharge observation
     and trace facts. Its `Concrete` instance is test-only and does **not**
     satisfy `ConcreteSpec` (non-injective `litLoc`), so `BigStep.obs_wf` and
-    its variants are not exercised by it. Function bodies in its `Γ₀` must
-    mention no literals (`Heap.init` only holds the main statement's literals).
+    its variants are not exercised by it. Its runs start from
+    `Conf.init Γ₀ fs₀ s`, with `fs₀` listing every function of `Γ₀`; a
+    function's string name determines its literal location, so new test
+    functions need names of a length not used yet.
     After changing the semantics, `lake build` this file: a failure here means
     a rule or query semantics changed behaviourally.
 
@@ -322,11 +346,12 @@ the end of `CoreJsAutomatonSemantics.lean`.
   discover the witness (this is what `run` does).
 - Do not depend on `Reg`/`Heap` structure eta: `{ δ with ac := … }` is not
   definitionally `δ`. Use a congruence lemma (`Reg.DepInv.congr`) instead.
-- **Mutual inductives (`AExit`/`AEdge`/`ARet`, `Pat.Tr`/`QBody.Tr`):** the
-  `induction` tactic cannot induct on a mutual-family hypothesis directly, but
-  a `mutual` block of theorems defined by pattern matching on the hypothesis
-  (structural recursion) works — see `AExit.closed`/`ARet.closed`,
-  `AEdge.lmono`.
+- **Mutual inductives (`Pat.Tr`/`QBody.Tr`):** the `induction` tactic cannot
+  induct on a mutual-family hypothesis directly, but a `mutual` block of
+  theorems defined by pattern matching on the hypothesis (structural
+  recursion) works (`CoreJsQueryToLtl.lean`). The automaton's edge relations
+  are deliberately *not* mutual, so plain `induction` works on them
+  (`AExit.closed`/`ARet.closed`).
 - **Spec structures with instance parameters** (`ConcreteSpec`,
   `AbstractSpec`, `CrossSpec`): an anonymous constructor `⟨…⟩` for them
   synthesizes the `[Concrete]`/`[Abstract]` argument by instance search, not

@@ -1,12 +1,15 @@
 /-
   # Core JavaScript — Automaton State Space
 
-  The static analysis is a finite-state automaton over the program. Its
-  states and edges are a static (value-independent) function of the program
-  and its call graph; only the abstract configurations a labeling attaches to
-  the states (`CoreJsAutomatonSemantics.lean`) come from a fixpoint. A finite
-  automaton is what a model checker searching it for query matches needs: it
-  terminates by revisiting states.
+  The static analysis is an automaton over the program. Its states and edges
+  are a static (value-independent) function of the program and its call
+  graph; only the abstract configurations a labeling attaches to the states
+  (`CoreJsAutomatonSemantics.lean`) come from a fixpoint. The graph
+  (`AGraph`) is the part syntactically reachable from the top-level entry:
+  finitely many call sites, and call strings of bounded length
+  (`CallString.length_le`), so it is finite — what a model checker searching
+  it for query matches needs to terminate. (That finiteness is not yet
+  stated as a theorem.)
 
   This file defines the state space: call strings, and the automaton states
   indexed by them.
@@ -118,6 +121,30 @@ theorem targetCallString_wf {cs : CallString} (h : cs.WF) (site : Idx) (f : Fid)
     rw [List.mem_singleton] at hb
     subst hb
     exact fun he => hnmem (he ▸ ha)
+
+/-- Truncating at an occurring function ends at that function's occurrence. -/
+theorem CallString.truncateAt_ends {f : Fid} :
+    ∀ {cs : CallString}, f ∈ cs.fids → ∃ cs' site, CallString.truncateAt f cs = cs' ++ [(site, f)]
+  | p :: rest, hmem => by
+      unfold CallString.truncateAt
+      split
+      case isTrue h => exact ⟨[], p.1, by simp [← h]⟩
+      case isFalse h =>
+          have hrest : f ∈ CallString.fids rest := by
+            rcases List.mem_cons.mp hmem with he | hr
+            · exact absurd he.symm h
+            · exact hr
+          obtain ⟨cs', site, he⟩ := CallString.truncateAt_ends hrest
+          exact ⟨p :: cs', site, by rw [he]; rfl⟩
+
+/-- Every call string a call to `f` targets is an instance of `f`: it ends
+    with an occurrence of `f`. -/
+theorem targetCallString_ends (cs : CallString) (site : Idx) (f : Fid) :
+    ∃ cs' site', targetCallString cs site f = cs' ++ [(site', f)] := by
+  unfold targetCallString
+  split
+  case isTrue hmem => exact CallString.truncateAt_ends hmem
+  case isFalse => exact ⟨cs, site, rfl⟩
 
 /-! ### Finiteness of call strings
 

@@ -43,6 +43,13 @@ abstract actions, so a walk through the labeled automaton has a trace.
     at the state the run ends at, and
   - some walk through the automaton labeled by `L` has a trace that is
     `α`-related, action by action, to the run's trace.
+
+  Scope: a run is a `BigStep` derivation, and the environment `Γ` holds every
+  function definition. A call to a function not defined in `Γ` (for example
+  an unavailable external dependency) has no rule, so a run that makes one
+  has no derivation and is outside the theorem. Attacker inputs are covered
+  as arbitrary values, including references to the program's own functions;
+  modelling external functions is future work (`WALKTHROUGH_PLAN.md`).
 - **Totality** (`exists_least_analysisResult`, `CoreJsAutomatonTotality.lean`).
   Every program has a *least* analysis result, the most precise one: the
   meet of all analysis results. It is a fixed point of one-step propagation,

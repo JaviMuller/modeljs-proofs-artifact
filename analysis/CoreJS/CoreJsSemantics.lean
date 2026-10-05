@@ -57,9 +57,34 @@ def Sto.ofParams : List Var → List Loc → Sto
 /-- Function environments `Γ ∈ Env : Fid ⇀ Var list × Stmt`. -/
 def Env := Fid → Option (List Var × Stmt)
 
+def Env.params (Γ : Env) (f : Fid) : List Var :=
+  ((Γ f).map Prod.fst).getD []
+
+def Env.body (Γ : Env) (f : Fid) : Stmt :=
+  ((Γ f).map Prod.snd).getD .skip
+
+/-- The literals occurring in the bodies of the functions `fs`. -/
+def Env.lits (Γ : Env) (fs : List Fid) : List Val :=
+  fs.flatMap fun f => (Γ.body f).lits
+
+/-- A literal of `Γ.lits fs` occurs in the body of a function defined in `Γ`. -/
+theorem Env.mem_lits {Γ : Env} {fs : List Fid} {v : Val} (h : v ∈ Γ.lits fs) :
+    ∃ f params body, Γ f = some (params, body) ∧ v ∈ body.lits := by
+  obtain ⟨f, _, hv⟩ := List.mem_flatMap.1 h
+  cases hf : Γ f with
+  | none => simp [Env.body, hf, Stmt.lits] at hv
+  | some pb => exact ⟨f, pb.1, pb.2, by rw [hf], by simpa [Env.body, hf] using hv⟩
+
 /-- Memory heaps `h ∈ H`, a two-level structure:
     * `obj : Loc × Str ⇀ Loc` maps object properties to locations;
-    * `val : Loc ⇀ Val`      maps locations to the values they store. -/
+    * `val : Loc ⇀ Val`      maps locations to the values they store.
+
+    An object's location holds the object's reference value `.loc l` (set by
+    [Object Initialization]). Besides making object references values, as in
+    JS (`sv` compares them, binary operators accept them, a key can be one),
+    this keeps an object with no properties visible: its location is in use,
+    so no later allocation returns it again and two distinct objects never
+    alias. -/
 structure Heap where
   obj : Loc → PropName → Option Loc
   val : Loc → Option Val
@@ -80,12 +105,16 @@ def Heap.setObjs (h : Heap) (l : Loc) : List (PropName × Loc) → Heap
   | []            => h
   | (p, l') :: ps => (h.setObj l p l').setObjs l ps
 
-/-- Finite support: from some location on, the heap holds no value and no
-    object.  Every heap reachable from a finite one by the semantics is
-    finite (`BigStep.finite`), and only finite heaps are guaranteed to have
-    a free location for the allocator to return (`ConcreteSpec`). -/
+/-- `l` is free in `h`: it holds no value and no object property. -/
+def Heap.Free (h : Heap) (l : Loc) : Prop :=
+  h.val l = none ∧ ∀ p, h.obj l p = none
+
+/-- Finite support: from some location on, every location is free.  Every
+    heap reachable from a finite one by the semantics is finite
+    (`BigStep.finite`), and only finite heaps are guaranteed to have a free
+    location for the allocator to return (`ConcreteSpec`). -/
 def Heap.Finite (h : Heap) : Prop :=
-  ∃ n, ∀ l, n ≤ l → h.val l = none ∧ ∀ p, h.obj l p = none
+  ∃ n, ∀ l, n ≤ l → h.Free l
 
 theorem Heap.Finite.setVal {h : Heap} (hf : h.Finite) (l : Loc) (v : Val) :
     (h.setVal l v).Finite := by
@@ -111,9 +140,8 @@ theorem Heap.Finite.setObjs {h : Heap} (hf : h.Finite) (l : Loc) (ps : List (Pro
   | nil => exact hf
   | cons q ps ih => exact ih (hf.setObj l q.1 q.2)
 
-/-- A finite heap has a location that is free in both levels. -/
-theorem Heap.Finite.exists_fresh {h : Heap} (hf : h.Finite) :
-    ∃ l, h.val l = none ∧ ∀ p, h.obj l p = none := by
+/-- A finite heap has a free location. -/
+theorem Heap.Finite.exists_fresh {h : Heap} (hf : h.Finite) : ∃ l, h.Free l := by
   obtain ⟨n, hn⟩ := hf
   exact ⟨n, hn n (Nat.le_refl n)⟩
 
@@ -156,9 +184,8 @@ theorem Heap.Defined.setObjs {h : Heap} {x : Loc} (hx : h.Defined x) (l : Loc) :
 theorem Heap.setVal_defined_self (h : Heap) (l : Loc) (v : Val) : (h.setVal l v).Defined l :=
   Or.inl (by simp [Heap.setVal])
 
-/-- A freshly allocated location (`ConcreteSpec.allocC_fresh`) is not in use. -/
-theorem Heap.not_defined_of_fresh {h : Heap} {l : Loc}
-    (hf : h.val l = none ∧ ∀ p, h.obj l p = none) : ¬ h.Defined l := by
+/-- A free location (`ConcreteSpec.allocC_fresh`) is not in use. -/
+theorem Heap.not_defined_of_free {h : Heap} {l : Loc} (hf : h.Free l) : ¬ h.Defined l := by
   rintro (hv | ⟨p, hp⟩)
   · exact hv hf.1
   · exact hp (hf.2 p)
@@ -299,25 +326,43 @@ class Concrete where
 
 open Concrete
 
-/-- Assumptions about the parameters above: literal locations are pairwise
-    distinct, and `alloc_c` returns a location that is
-    unused in the current heap (hence, in a well-formed heap, distinct from
-    every `l_v`).  The semantics itself does not depend on these; they are
-    needed for the soundness proofs.
+/-- Assumptions about the parameters above: what a sensible concrete instance
+    looks like. The semantics itself does not depend on these; the theorems
+    about runs do.
 
     Freshness is only demanded of *finite* heaps (`Heap.Finite`): a heap
     that holds a value at every location has no free location to return, so
     requiring freshness of all heaps would make the specification
     unsatisfiable (and every theorem assuming it vacuous). -/
 structure ConcreteSpec [Concrete] : Prop where
+  /-- Literal locations are pairwise distinct. -/
   litLoc_inj   : ∀ v w, litLoc v = litLoc w → v = w
-  allocC_fresh : ∀ (h : Heap) (κ : Idx), h.Finite →
-    h.val (allocC h κ) = none ∧ ∀ p, h.obj (allocC h κ) p = none
+  /-- Allocation (on a finite heap) returns a free location. -/
+  allocC_fresh : ∀ (h : Heap) (κ : Idx), h.Finite → h.Free (allocC h κ)
+  /-- Allocation never returns a literal location: the literal locations are a
+      reserved region. Every literal a run can evaluate is set up in the
+      initial heap (`Heap.init`), so its location is not free anyway; this
+      also reserves the locations of literals occurring nowhere in the
+      program. Concretely that is invisible, but the analysis's abstraction
+      commits every literal location to its abstract counterpart up front
+      (`AlphaFn.Lits`), so an allocation must never land on one. -/
+  allocC_lit   : ∀ h κ v, h.Finite → allocC h κ ≠ litLoc v
+  /-- Binary operators never produce a function value, so a function value
+      lives only at its own literal location (`Heap.FidCanon`), as JS's
+      reference semantics demands: passing or storing a function never copies
+      it. In JS the only operators that can yield a function are those that
+      return one of their operands — `&&`, `||`, `??` and the comma operator
+      `(a, b)` — and they are expressed by statements, not as `BinOp`s:
+      `x := a || b` as `c := ToBoolean(a); if c then x := a else x := b`
+      (`ToBoolean` any boolean-valued operator; the assignments copy the
+      operand's *location*, creating no new function value), and similarly
+      `&&`/`??`; `x := (a, b)` as evaluating `a`, then `x := b`. Every other
+      binary operator computes a new, non-function value. -/
+  opSem_fid    : ∀ op v₁ v₂ f, opSem op v₁ v₂ ≠ .fid f
 
 /-- The allocation half of `ConcreteSpec` is satisfiable. -/
 theorem exists_allocator :
-    ∃ alloc : Heap → Idx → Loc, ∀ (h : Heap) (κ : Idx), h.Finite →
-      h.val (alloc h κ) = none ∧ ∀ p, h.obj (alloc h κ) p = none := by
+    ∃ alloc : Heap → Idx → Loc, ∀ (h : Heap) (κ : Idx), h.Finite → h.Free (alloc h κ) := by
   classical
   refine ⟨fun h _ => if hf : h.Finite then Classical.choose hf.exists_fresh else 0, ?_⟩
   intro h κ hf
@@ -372,22 +417,35 @@ any property), the empty store and the empty taint register. -/
     no sinks. -/
 def Reg.empty : Reg := ⟨fun _ => ∅, ∅, ∅⟩
 
-/-- The minimal well-formed heap for `s`: `l_v ↦ v` for `v = undefined` and
-    each literal `v` of `s`, and nothing else. -/
-def Heap.init [Concrete] (s : Stmt) : Heap where
+/-- The literals a run of `s` starts with, given the functions `fs` whose
+    bodies it may run: `undefined`, those of `s`, and those of the bodies. -/
+def initLits (Γ : Env) (fs : List Fid) (s : Stmt) : List Val :=
+  Val.undef :: (s.lits ++ Γ.lits fs)
+
+/-- The minimal heap a run of `s` starts from: `l_v ↦ v` for every literal `v`
+    of `initLits Γ fs s`, and nothing else.
+
+    The bodies' literals are needed because evaluating a literal reads its
+    location: without them, a statement in a function body that uses a
+    literal (`y := x + 1`, `if true …`, calling another function by name)
+    would have no derivation. `fs` lists the functions whose literals are
+    set up; normally every function of `Γ` (a list, rather than `Γ`'s
+    domain, so that the heap stays computable). -/
+def Heap.init [Concrete] (Γ : Env) (fs : List Fid) (s : Stmt) : Heap where
   obj := fun _ _ => none
-  val := fun l => (Val.undef :: s.lits).find? (fun v => litLoc v == l)
+  val := fun l => (initLits Γ fs s).find? (fun v => litLoc v == l)
 
-/-- The initial configuration `⟨Heap.init s, ∅, δ∅⟩` of a run of `s`. -/
-def Conf.init [Concrete] (s : Stmt) : Conf :=
-  ⟨Heap.init s, Sto.empty, Reg.empty⟩
+/-- The initial configuration `⟨Heap.init Γ fs s, ∅, δ∅⟩` of a run of `s`. -/
+def Conf.init [Concrete] (Γ : Env) (fs : List Fid) (s : Stmt) : Conf :=
+  ⟨Heap.init Γ fs s, Sto.empty, Reg.empty⟩
 
-/-- `Heap.init s` is well formed for `s`. -/
-theorem Heap.init_WF [Concrete] (hs : ConcreteSpec) (s : Stmt) : (Heap.init s).WF s := by
-  have key : ∀ v ∈ Val.undef :: s.lits, (Heap.init s).val (litLoc v) = some v := by
+/-- `Heap.init Γ fs s` is well formed for `s`. -/
+theorem Heap.init_WF [Concrete] (hs : ConcreteSpec) (Γ : Env) (fs : List Fid) (s : Stmt) :
+    (Heap.init Γ fs s).WF s := by
+  have key : ∀ v ∈ initLits Γ fs s, (Heap.init Γ fs s).val (litLoc v) = some v := by
     intro v hv
-    show (Val.undef :: s.lits).find? (fun w => litLoc w == litLoc v) = some v
-    cases hf : (Val.undef :: s.lits).find? (fun w => litLoc w == litLoc v) with
+    show (initLits Γ fs s).find? (fun w => litLoc w == litLoc v) = some v
+    cases hf : (initLits Γ fs s).find? (fun w => litLoc w == litLoc v) with
     | none =>
       have := List.find?_eq_none.1 hf v hv
       simp at this
@@ -395,12 +453,15 @@ theorem Heap.init_WF [Concrete] (hs : ConcreteSpec) (s : Stmt) : (Heap.init s).W
       have hw := List.find?_some hf
       simp only [beq_iff_eq] at hw
       rw [hs.litLoc_inj _ _ hw]
-  exact ⟨fun v hv => key v (List.mem_cons_of_mem _ hv), key _ (List.mem_cons_self ..)⟩
+  exact ⟨fun v hv => key v (List.mem_cons_of_mem _ (List.mem_append_left _ hv)),
+    key _ (List.mem_cons_self ..)⟩
 
-/-- `Heap.init s` is finite: no literal location exceeds the largest one used. -/
-theorem Heap.init_finite [Concrete] (s : Stmt) : (Heap.init s).Finite := by
-  obtain ⟨n, hn⟩ : ∃ n, ∀ v ∈ Val.undef :: s.lits, litLoc v < n := by
-    generalize Val.undef :: s.lits = xs
+/-- `Heap.init Γ fs s` is finite: no literal location exceeds the largest one
+    used. -/
+theorem Heap.init_finite [Concrete] (Γ : Env) (fs : List Fid) (s : Stmt) :
+    (Heap.init Γ fs s).Finite := by
+  obtain ⟨n, hn⟩ : ∃ n, ∀ v ∈ initLits Γ fs s, litLoc v < n := by
+    generalize initLits Γ fs s = xs
     induction xs with
     | nil => exact ⟨0, by simp⟩
     | cons a xs ih =>
@@ -411,7 +472,7 @@ theorem Heap.init_finite [Concrete] (s : Stmt) : (Heap.init s).Finite := by
       · exact Nat.lt_of_lt_of_le (Nat.lt_succ_self _) (Nat.le_max_left _ _)
       · exact Nat.lt_of_lt_of_le (hn v hv) (Nat.le_max_right _ _)
   refine ⟨n, fun l hl => ⟨?_, fun _ => rfl⟩⟩
-  show (Val.undef :: s.lits).find? (fun v => litLoc v == l) = none
+  show (initLits Γ fs s).find? (fun v => litLoc v == l) = none
   rw [List.find?_eq_none]
   intro x hx
   have := hn x hx
@@ -460,7 +521,8 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
   | objLit {h h' ρ ρ' δ δ' x κ fs ls l} :
       evalEs ρ (fs.map Prod.snd) = some ls →
       l = allocC h κ →
-      h' = h.setObjs l ((fs.map Prod.fst).zip ls) →
+      h' = (h.setObjs l (("__proto__", litLoc .proto) :: (fs.map Prod.fst).zip ls)).setVal l
+        (.loc l) →
       ρ' = ρ.upd x l →
       δ' = δ.setDep l ∅ →
       BigStep Γ ⟨h, ρ, δ⟩ (.objLit x κ fs) ⟨h', ρ', δ', .emp, .cont⟩
@@ -474,14 +536,68 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
         ⟨h, ρ', δ, .act (.lookup l₂ l₁ (litLoc (.str p))), .cont⟩
 
   /-- [Dynamic Property Lookup] -/
-  | lookupD {h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p} :
+  | lookupD {h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p v} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
-      h.val l₂ = some (.str p) →
+      h.val l₂ = some v →
+      v.KeyOf p →
       h.obj l₁ p = some l₃ →
       ρ' = ρ.upd x l₃ →
       BigStep Γ ⟨h, ρ, δ⟩ (.lookupD x κ e₁ e₂)
         ⟨h, ρ', δ, .act (.lookup l₃ l₁ l₂), .cont⟩
+
+  /-- [Static Property Lookup], missing own property: as in JS, it is read
+      from the prototype, here the one shared `Object.prototype` at
+      `litLoc .proto` (object literals point to it through `__proto__`; full
+      prototype chains are not modelled). Reading a property of `undefined`
+      itself throws in JS, so it has no rule. -/
+  | lookupSProto {h ρ ρ' δ x κ e p l₁ l₂} :
+      evalE ρ e = some l₁ →
+      h.val l₁ ≠ some .undef →
+      h.obj l₁ p = none →
+      h.obj (litLoc .proto) p = some l₂ →
+      ρ' = ρ.upd x l₂ →
+      BigStep Γ ⟨h, ρ, δ⟩ (.lookupS x κ e p)
+        ⟨h, ρ', δ, .act (.lookup l₂ l₁ (litLoc (.str p))), .cont⟩
+
+  /-- [Static Property Lookup], missing on the object and on
+      `Object.prototype`. -/
+  | lookupSMissing {h ρ ρ' δ x κ e p l₁} :
+      evalE ρ e = some l₁ →
+      h.val l₁ ≠ some .undef →
+      h.obj l₁ p = none →
+      h.obj (litLoc .proto) p = none →
+      ρ' = ρ.upd x (litLoc .undef) →
+      BigStep Γ ⟨h, ρ, δ⟩ (.lookupS x κ e p)
+        ⟨h, ρ', δ, .act (.lookup (litLoc .undef) l₁ (litLoc (.str p))), .cont⟩
+
+  /-- [Dynamic Property Lookup], missing own property: read from
+      `Object.prototype`, as above. -/
+  | lookupDProto {h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p v} :
+      evalE ρ e₁ = some l₁ →
+      evalE ρ e₂ = some l₂ →
+      h.val l₁ ≠ some .undef →
+      h.val l₂ = some v →
+      v.KeyOf p →
+      h.obj l₁ p = none →
+      h.obj (litLoc .proto) p = some l₃ →
+      ρ' = ρ.upd x l₃ →
+      BigStep Γ ⟨h, ρ, δ⟩ (.lookupD x κ e₁ e₂)
+        ⟨h, ρ', δ, .act (.lookup l₃ l₁ l₂), .cont⟩
+
+  /-- [Dynamic Property Lookup], missing on the object and on
+      `Object.prototype`. -/
+  | lookupDMissing {h ρ ρ' δ x κ e₁ e₂ l₁ l₂ p v} :
+      evalE ρ e₁ = some l₁ →
+      evalE ρ e₂ = some l₂ →
+      h.val l₁ ≠ some .undef →
+      h.val l₂ = some v →
+      v.KeyOf p →
+      h.obj l₁ p = none →
+      h.obj (litLoc .proto) p = none →
+      ρ' = ρ.upd x (litLoc .undef) →
+      BigStep Γ ⟨h, ρ, δ⟩ (.lookupD x κ e₁ e₂)
+        ⟨h, ρ', δ, .act (.lookup (litLoc .undef) l₁ l₂), .cont⟩
 
   /-- [Static Property Update] -/
   | updateS {h h' ρ δ κ e₁ p e₂ l₁ l₂} :
@@ -492,11 +608,12 @@ inductive BigStep [Concrete] (Γ : Env) : Conf → Stmt → Res → Prop where
         ⟨h', ρ, δ, .act (.update l₁ (litLoc (.str p)) l₂), .cont⟩
 
   /-- [Dynamic Property Update] -/
-  | updateD {h h' ρ δ κ e₁ e₂ e₃ l₁ l₂ l₃ p} :
+  | updateD {h h' ρ δ κ e₁ e₂ e₃ l₁ l₂ l₃ p v} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
       evalE ρ e₃ = some l₃ →
-      h.val l₂ = some (.str p) →
+      h.val l₂ = some v →
+      v.KeyOf p →
       h' = h.setObj l₁ p l₃ →
       BigStep Γ ⟨h, ρ, δ⟩ (.updateD κ e₁ e₂ e₃)
         ⟨h', ρ, δ, .act (.update l₁ l₂ l₃), .cont⟩
@@ -625,7 +742,8 @@ inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Pro
   | objLit {n h h' ρ ρ' δ δ' x κ fs ls l} :
       evalEs ρ (fs.map Prod.snd) = some ls →
       l = allocC h κ →
-      h' = h.setObjs l ((fs.map Prod.fst).zip ls) →
+      h' = (h.setObjs l (("__proto__", litLoc .proto) :: (fs.map Prod.fst).zip ls)).setVal l
+        (.loc l) →
       ρ' = ρ.upd x l →
       δ' = δ.setDep l ∅ →
       BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.objLit x κ fs) ⟨h', ρ', δ', .emp, .cont⟩
@@ -639,14 +757,63 @@ inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Pro
         ⟨h, ρ', δ, .act (.lookup l₂ l₁ (litLoc (.str p))), .cont⟩
 
   /-- [Dynamic Property Lookup] -/
-  | lookupD {n h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p} :
+  | lookupD {n h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p v} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
-      h.val l₂ = some (.str p) →
+      h.val l₂ = some v →
+      v.KeyOf p →
       h.obj l₁ p = some l₃ →
       ρ' = ρ.upd x l₃ →
       BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupD x κ e₁ e₂)
         ⟨h, ρ', δ, .act (.lookup l₃ l₁ l₂), .cont⟩
+
+  /-- [Static Property Lookup], missing own property. -/
+  | lookupSProto {n h ρ ρ' δ x κ e p l₁ l₂} :
+      evalE ρ e = some l₁ →
+      h.val l₁ ≠ some .undef →
+      h.obj l₁ p = none →
+      h.obj (litLoc .proto) p = some l₂ →
+      ρ' = ρ.upd x l₂ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupS x κ e p)
+        ⟨h, ρ', δ, .act (.lookup l₂ l₁ (litLoc (.str p))), .cont⟩
+
+  /-- [Static Property Lookup], missing on the object and on
+      `Object.prototype`. -/
+  | lookupSMissing {n h ρ ρ' δ x κ e p l₁} :
+      evalE ρ e = some l₁ →
+      h.val l₁ ≠ some .undef →
+      h.obj l₁ p = none →
+      h.obj (litLoc .proto) p = none →
+      ρ' = ρ.upd x (litLoc .undef) →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupS x κ e p)
+        ⟨h, ρ', δ, .act (.lookup (litLoc .undef) l₁ (litLoc (.str p))), .cont⟩
+
+  /-- [Dynamic Property Lookup], missing own property. -/
+  | lookupDProto {n h ρ ρ' δ x κ e₁ e₂ l₁ l₂ l₃ p v} :
+      evalE ρ e₁ = some l₁ →
+      evalE ρ e₂ = some l₂ →
+      h.val l₁ ≠ some .undef →
+      h.val l₂ = some v →
+      v.KeyOf p →
+      h.obj l₁ p = none →
+      h.obj (litLoc .proto) p = some l₃ →
+      ρ' = ρ.upd x l₃ →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupD x κ e₁ e₂)
+        ⟨h, ρ', δ, .act (.lookup l₃ l₁ l₂), .cont⟩
+
+  /-- [Dynamic Property Lookup], missing on the object and on
+      `Object.prototype`. -/
+  | lookupDMissing {n h ρ ρ' δ x κ e₁ e₂ l₁ l₂ p v} :
+      evalE ρ e₁ = some l₁ →
+      evalE ρ e₂ = some l₂ →
+      h.val l₁ ≠ some .undef →
+      h.val l₂ = some v →
+      v.KeyOf p →
+      h.obj l₁ p = none →
+      h.obj (litLoc .proto) p = none →
+      ρ' = ρ.upd x (litLoc .undef) →
+      BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.lookupD x κ e₁ e₂)
+        ⟨h, ρ', δ, .act (.lookup (litLoc .undef) l₁ l₂), .cont⟩
 
   /-- [Static Property Update] -/
   | updateS {n h h' ρ δ κ e₁ p e₂ l₁ l₂} :
@@ -657,11 +824,12 @@ inductive BigStepN [Concrete] (Γ : Env) : Nat → Conf → Stmt → Res → Pro
         ⟨h', ρ, δ, .act (.update l₁ (litLoc (.str p)) l₂), .cont⟩
 
   /-- [Dynamic Property Update] -/
-  | updateD {n h h' ρ δ κ e₁ e₂ e₃ l₁ l₂ l₃ p} :
+  | updateD {n h h' ρ δ κ e₁ e₂ e₃ l₁ l₂ l₃ p v} :
       evalE ρ e₁ = some l₁ →
       evalE ρ e₂ = some l₂ →
       evalE ρ e₃ = some l₃ →
-      h.val l₂ = some (.str p) →
+      h.val l₂ = some v →
+      v.KeyOf p →
       h' = h.setObj l₁ p l₃ →
       BigStepN Γ (n+1) ⟨h, ρ, δ⟩ (.updateD κ e₁ e₂ e₃)
         ⟨h', ρ, δ, .act (.update l₁ l₂ l₃), .cont⟩
@@ -756,9 +924,13 @@ theorem BigStepN.mono [Concrete] {Γ : Env} :
   | binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 => exact .binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
   | objLit h1 h2 h3 h4 h5 => exact .objLit h1 h2 h3 h4 h5
   | lookupS h1 h2 h3 => exact .lookupS h1 h2 h3
-  | lookupD h1 h2 h3 h4 h5 => exact .lookupD h1 h2 h3 h4 h5
+  | lookupD h1 h2 h3 h4 h5 h6 => exact .lookupD h1 h2 h3 h4 h5 h6
+  | lookupSProto h1 h2 h3 h4 h5 => exact .lookupSProto h1 h2 h3 h4 h5
+  | lookupSMissing h1 h2 h3 h4 h5 => exact .lookupSMissing h1 h2 h3 h4 h5
+  | lookupDProto h1 h2 h3 h4 h5 h6 h7 h8 => exact .lookupDProto h1 h2 h3 h4 h5 h6 h7 h8
+  | lookupDMissing h1 h2 h3 h4 h5 h6 h7 h8 => exact .lookupDMissing h1 h2 h3 h4 h5 h6 h7 h8
   | updateS h1 h2 h3 => exact .updateS h1 h2 h3
-  | updateD h1 h2 h3 h4 h5 => exact .updateD h1 h2 h3 h4 h5
+  | updateD h1 h2 h3 h4 h5 h6 => exact .updateD h1 h2 h3 h4 h5 h6
   | seqRet _ ih => exact .seqRet ih
   | seqCont _ _ ih1 ih2 => exact .seqCont ih1 ih2
   | callRet h1 h2 h3 h4 h5 _ h7 ih => exact .callRet h1 h2 h3 h4 h5 ih h7
@@ -790,9 +962,13 @@ theorem BigStep.toN [Concrete] {Γ : Env} {c s r} (H : BigStep Γ c s r) :
   | binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 => exact ⟨1, .binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10⟩
   | objLit h1 h2 h3 h4 h5 => exact ⟨1, .objLit h1 h2 h3 h4 h5⟩
   | lookupS h1 h2 h3 => exact ⟨1, .lookupS h1 h2 h3⟩
-  | lookupD h1 h2 h3 h4 h5 => exact ⟨1, .lookupD h1 h2 h3 h4 h5⟩
+  | lookupD h1 h2 h3 h4 h5 h6 => exact ⟨1, .lookupD h1 h2 h3 h4 h5 h6⟩
+  | lookupSProto h1 h2 h3 h4 h5 => exact ⟨1, .lookupSProto h1 h2 h3 h4 h5⟩
+  | lookupSMissing h1 h2 h3 h4 h5 => exact ⟨1, .lookupSMissing h1 h2 h3 h4 h5⟩
+  | lookupDProto h1 h2 h3 h4 h5 h6 h7 h8 => exact ⟨1, .lookupDProto h1 h2 h3 h4 h5 h6 h7 h8⟩
+  | lookupDMissing h1 h2 h3 h4 h5 h6 h7 h8 => exact ⟨1, .lookupDMissing h1 h2 h3 h4 h5 h6 h7 h8⟩
   | updateS h1 h2 h3 => exact ⟨1, .updateS h1 h2 h3⟩
-  | updateD h1 h2 h3 h4 h5 => exact ⟨1, .updateD h1 h2 h3 h4 h5⟩
+  | updateD h1 h2 h3 h4 h5 h6 => exact ⟨1, .updateD h1 h2 h3 h4 h5 h6⟩
   | seqRet _ ih => obtain ⟨n, d⟩ := ih; exact ⟨n+1, .seqRet d⟩
   | seqCont _ _ ih1 ih2 =>
       obtain ⟨n1, d1⟩ := ih1
@@ -820,9 +996,13 @@ theorem BigStepN.toBigStep [Concrete] {Γ : Env} :
   | binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 => exact .binOp h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
   | objLit h1 h2 h3 h4 h5 => exact .objLit h1 h2 h3 h4 h5
   | lookupS h1 h2 h3 => exact .lookupS h1 h2 h3
-  | lookupD h1 h2 h3 h4 h5 => exact .lookupD h1 h2 h3 h4 h5
+  | lookupD h1 h2 h3 h4 h5 h6 => exact .lookupD h1 h2 h3 h4 h5 h6
+  | lookupSProto h1 h2 h3 h4 h5 => exact .lookupSProto h1 h2 h3 h4 h5
+  | lookupSMissing h1 h2 h3 h4 h5 => exact .lookupSMissing h1 h2 h3 h4 h5
+  | lookupDProto h1 h2 h3 h4 h5 h6 h7 h8 => exact .lookupDProto h1 h2 h3 h4 h5 h6 h7 h8
+  | lookupDMissing h1 h2 h3 h4 h5 h6 h7 h8 => exact .lookupDMissing h1 h2 h3 h4 h5 h6 h7 h8
   | updateS h1 h2 h3 => exact .updateS h1 h2 h3
-  | updateD h1 h2 h3 h4 h5 => exact .updateD h1 h2 h3 h4 h5
+  | updateD h1 h2 h3 h4 h5 h6 => exact .updateD h1 h2 h3 h4 h5 h6
   | seqRet _ ih => exact .seqRet ih
   | seqCont _ _ ih1 ih2 => exact .seqCont ih1 ih2
   | callRet h1 h2 h3 h4 h5 _ h7 ih => exact .callRet h1 h2 h3 h4 h5 ih h7
@@ -842,11 +1022,15 @@ theorem BigStep.finite [Concrete] {Γ : Env} {c : Conf} {s : Stmt} {r : Res}
   | skip => exact id
   | assign _ _ => exact id
   | binOp _ _ _ _ _ _ hh' _ _ _ => intro hf; subst hh'; exact hf.setVal _ _
-  | objLit _ _ hh' _ _ => intro hf; subst hh'; exact hf.setObjs _ _
+  | objLit _ _ hh' _ _ => intro hf; subst hh'; exact (hf.setObjs _ _).setVal _ _
   | lookupS _ _ _ => exact id
-  | lookupD _ _ _ _ _ => exact id
+  | lookupD _ _ _ _ _ _ => exact id
+  | lookupSProto _ _ _ _ _ => exact id
+  | lookupSMissing _ _ _ _ _ => exact id
+  | lookupDProto _ _ _ _ _ _ _ _ => exact id
+  | lookupDMissing _ _ _ _ _ _ _ _ => exact id
   | updateS _ _ hh' => intro hf; subst hh'; exact hf.setObj _ _ _
-  | updateD _ _ _ _ hh' => intro hf; subst hh'; exact hf.setObj _ _ _
+  | updateD _ _ _ _ _ hh' => intro hf; subst hh'; exact hf.setObj _ _ _
   | seqRet _ ih => exact ih
   | seqCont _ _ ih₁ ih₂ => exact fun hf => ih₂ (ih₁ hf)
   | callRet _ _ _ _ _ _ _ ih => exact ih
@@ -873,14 +1057,21 @@ theorem BigStep.fidCanon [Concrete] (hop : ∀ op v₁ v₂ f, opSem op v₁ v�
       · simp only [Heap.setVal, e, if_pos] at hl'
         exact absurd (hv.symm.trans (Option.some.inj hl')) (hop _ _ _ _)
       · exact hc l' f (by simpa [Heap.setVal, e] using hl')
-  | objLit _ _ hh' _ _ =>
+  | @objLit h h' ρ ρ' δ δ' x κ fs ls l _ _ hh' _ _ =>
       intro hc l' f hl'
       subst hh'
-      exact hc l' f (by rw [Heap.setObjs_val] at hl'; exact hl')
+      by_cases e : l' = l
+      · simp [Heap.setVal, e] at hl'
+      · simp only [Heap.setVal, e, if_false, Heap.setObjs_val] at hl'
+        exact hc l' f hl'
   | lookupS _ _ _ => exact id
-  | lookupD _ _ _ _ _ => exact id
+  | lookupD _ _ _ _ _ _ => exact id
+  | lookupSProto _ _ _ _ _ => exact id
+  | lookupSMissing _ _ _ _ _ => exact id
+  | lookupDProto _ _ _ _ _ _ _ _ => exact id
+  | lookupDMissing _ _ _ _ _ _ _ _ => exact id
   | updateS _ _ hh' => intro hc l' f hl'; subst hh'; exact hc l' f hl'
-  | updateD _ _ _ _ hh' => intro hc l' f hl'; subst hh'; exact hc l' f hl'
+  | updateD _ _ _ _ _ hh' => intro hc l' f hl'; subst hh'; exact hc l' f hl'
   | seqRet _ ih => exact ih
   | seqCont _ _ ih₁ ih₂ => exact fun hf => ih₂ (ih₁ hf)
   | callRet _ _ _ _ _ _ _ ih => exact ih
@@ -894,7 +1085,8 @@ theorem BigStep.fidCanon [Concrete] (hop : ∀ op v₁ v₂ f, opSem op v₁ v�
 
 /-- `Heap.init s` holds a function value only at that function's literal
     location. -/
-theorem Heap.init_fidCanon [Concrete] (s : Stmt) : (Heap.init s).FidCanon := by
+theorem Heap.init_fidCanon [Concrete] (Γ : Env) (fs : List Fid) (s : Stmt) :
+    (Heap.init Γ fs s).FidCanon := by
   intro l f hl
   have hp := List.find?_some hl
   simp only [beq_iff_eq] at hp
@@ -1004,7 +1196,7 @@ theorem Reg.DepInv.binOp {h : Heap} {δ : Reg} {l l₁ l₂ : Loc} {v : Val}
 
 /-- `[Object Initialization]` preserves the invariant. -/
 theorem Reg.DepInv.objLit {h h' : Heap} {δ : Reg} {l : Loc}
-    (hI : Reg.DepInv h δ) (hl : h.val l = none) (hv : h'.val = h.val) :
+    (hI : Reg.DepInv h δ) (hl : h.val l = none) (hv : ∀ x, h.val x ≠ none → h'.val x ≠ none) :
     Reg.DepInv h' (δ.setDep l ∅) := by
   have hne' : ∀ a b, δ.dep a b → b ≠ l := by
     intro a b hab e
@@ -1024,8 +1216,7 @@ theorem Reg.DepInv.objLit {h h' : Heap} {δ : Reg} {l : Loc}
       rw [Reg.setDep_self] at hab
       exact absurd hab id
     · rw [Reg.setDep_ne _ _ ea] at hab
-      rw [hv]
-      exact hI.defined _ _ hab
+      exact hv _ (hI.defined _ _ hab)
 
 /-- Every rule of the concrete semantics preserves the invariant, on finite
     heaps. -/
@@ -1044,11 +1235,15 @@ theorem BigStep.depInv [Concrete] (hs : ConcreteSpec) {Γ : Env} {c : Conf} {s :
     intro hF hI
     subst hh' hδ'
     have hfr : h.val l = none := hl ▸ (hs.allocC_fresh h κ hF).1
-    exact hI.objLit hfr (Heap.setObjs_val _ _ _)
+    exact hI.objLit hfr (fun _ hx => Heap.setVal_defined (by rwa [Heap.setObjs_val]))
   | lookupS _ _ _ => exact fun _ => id
-  | lookupD _ _ _ _ _ => exact fun _ => id
+  | lookupD _ _ _ _ _ _ => exact fun _ => id
+  | lookupSProto _ _ _ _ _ => exact fun _ => id
+  | lookupSMissing _ _ _ _ _ => exact fun _ => id
+  | lookupDProto _ _ _ _ _ _ _ _ => exact fun _ => id
+  | lookupDMissing _ _ _ _ _ _ _ _ => exact fun _ => id
   | updateS _ _ hh' => intro _ hI; subst hh'; exact hI.congr rfl rfl
-  | updateD _ _ _ _ hh' => intro _ hI; subst hh'; exact hI.congr rfl rfl
+  | updateD _ _ _ _ _ hh' => intro _ hI; subst hh'; exact hI.congr rfl rfl
   | seqRet _ ih => exact ih
   | seqCont hb₁ _ ih₁ ih₂ => exact fun hF hI => ih₂ (hb₁.finite hF) (ih₁ hF hI)
   | callRet _ _ _ _ _ _ _ ih => exact ih
@@ -1086,9 +1281,10 @@ theorem BigStep.obs_wf_empty [Concrete] (hs : ConcreteSpec) {Γ : Env} {h : Heap
 /-- **From the initial configuration.**  Starting from the minimal well-formed
     heap, the empty store and the empty register, a concrete run yields a
     well-formed observation. -/
-theorem BigStep.obs_wf_init [Concrete] (hs : ConcreteSpec) {Γ : Env} {s : Stmt} {r : Res}
-    (hb : BigStep Γ (Conf.init s) s r) : (Exec.ofRes r).obs.WF :=
-  hb.obs_wf_empty hs (Heap.init_finite s)
+theorem BigStep.obs_wf_init [Concrete] (hs : ConcreteSpec) {Γ : Env} {fs : List Fid}
+    {s : Stmt} {r : Res}
+    (hb : BigStep Γ (Conf.init Γ fs s) s r) : (Exec.ofRes r).obs.WF :=
+  hb.obs_wf_empty hs (Heap.init_finite Γ fs s)
 
 /-- Notation for the big-step judgement:
     `Γ ⊢ c ⇓[s] r` is `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`. -/

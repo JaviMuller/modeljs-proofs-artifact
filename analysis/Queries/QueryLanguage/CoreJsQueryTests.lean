@@ -36,6 +36,7 @@ open CoreJS
 instance : Concrete where
   litLoc
     | .undef      => 0
+    | .proto      => 3
     | .bool false => 1
     | .bool true  => 2
     | .num n      => 10 + n.toNat
@@ -43,7 +44,8 @@ instance : Concrete where
     | .fid f      => 200 + f.length
     | .loc l      => 300 + l
   -- Site `κ` owns the block `[1000 + 100κ, 1000 + 100κ + 8)`; its next free
-  -- location is the first one of the block not holding a value yet.
+  -- location is the first one of the block not holding a value yet (an
+  -- object's location holds its reference value).
   allocC h κ :=
     1000 + 100 * κ + (List.range 8).countP (fun i => (h.val (1000 + 100 * κ + i)).isSome)
   opSem op v₁ v₂ :=
@@ -55,12 +57,17 @@ instance : Concrete where
     | _, _, _ => .undef
 
 /-- Function environment: `id(a) { return a }`, `nop(a) { skip }`,
-    `sink(p) { skip }`.  Bodies mention no literals (the initial heap only
-    holds the literals of the main statement). -/
+    `sink(p) { skip }`, `plus1(a) { r :=₇ a + 1; return r }`. -/
 def Γ₀ : Env := fun f =>
   if f = "id" then some (["a"], .ret (.var "a")) else
   if f = "nop" then some (["a"], .skip) else
-  if f = "sink" then some (["p"], .skip) else none
+  if f = "sink" then some (["p"], .skip) else
+  if f = "plus1" then
+    some (["a"], .seq (.binOp "r" 7 .add (.var "a") (.val (.num 1))) (.ret (.var "r"))) else
+  none
+
+/-- The functions of `Γ₀`, whose literals the initial heap sets up. -/
+def fs₀ : List Fid := ["id", "nop", "sink", "plus1"]
 
 /-! ## Proof automation
 
@@ -78,6 +85,10 @@ macro_rules
       | (apply BigStep.objLit <;> rfl)
       | (apply BigStep.lookupS <;> rfl)
       | (apply BigStep.lookupD <;> rfl)
+      | (apply BigStep.lookupSProto <;> first | rfl | decide)
+      | (apply BigStep.lookupDProto <;> first | rfl | decide)
+      | (apply BigStep.lookupSMissing <;> first | rfl | decide)
+      | (apply BigStep.lookupDMissing <;> first | rfl | decide)
       | (apply BigStep.updateS <;> rfl)
       | (apply BigStep.updateD <;> rfl)
       | (apply BigStep.ret <;> rfl)
@@ -91,7 +102,7 @@ macro_rules
       | (apply BigStep.callRet <;> first | rfl | bigstep)
       | (apply BigStep.callCont <;> first | rfl | bigstep))
 
-/-- `run tac`: goal `∃ r, BigStep Γ (Conf.init s) s r ∧ P r`; derive the run,
+/-- `run tac`: goal `∃ r, BigStep Γ (Conf.init Γ fs s) s r ∧ P r`; derive the run,
     then prove `P r` with `tac`. -/
 macro "run " tac:tacticSeq : tactic =>
   `(tactic| (apply Exists.intro; apply And.intro; (· bigstep); · $tac))
@@ -104,14 +115,15 @@ macro "run " tac:tacticSeq : tactic =>
 
 /-- The run of `s` from the initial configuration satisfies `P`. -/
 def Runs (s : Stmt) (P : Res → Prop) : Prop :=
-  ∃ r, BigStep Γ₀ (Conf.init s) s r ∧ P r
+  ∃ r, BigStep Γ₀ (Conf.init Γ₀ fs₀ s) s r ∧ P r
 
 /-! ## 1. Statement shapes -/
 
 open Stmt Expr
 
 -- Some literals used throughout: `num n` sits at location `10 + n`, `str "p"`
--- at 101, `fid "id"` at 202, `undef` at 0, `true` at 2 and `false` at 1.
+-- at 101, `fid "id"` at 202, `undef` at 0, `true` at 2, `false` at 1, and
+-- `Object.prototype` (the `.proto` marker) at 3.
 
 /-- `skip` -/
 def pSkip : Stmt := skip
@@ -137,8 +149,23 @@ def pObjLit : Stmt :=
   assign "a" (val (.num 5)) ;; objLit "o" 2 [("p", var "a")]
 theorem run_objLit : Runs pObjLit fun r =>
     r.trc.toList = [] ∧ r.sto "o" = some 1200 ∧ r.heap.obj 1200 "p" = some 15 ∧
-    r.heap.obj 1200 "q" = none := by
-  run exact ⟨rfl, rfl, rfl, rfl⟩
+    r.heap.obj 1200 "q" = none ∧ r.heap.val 1200 = some (.loc 1200) := by
+  run exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+
+/-- An object reference is a value: a binary operation accepts it (here the
+    test `opSem` maps it to `undefined`), where JS would compute e.g.
+    `"[object Object]"`. -/
+def pObjOp : Stmt := objLit "o" 2 [] ;; binOp "s" 3 .concat (var "o") (val (.str ""))
+theorem run_objOp : Runs pObjOp fun r => r.heap.val 1300 = some .undef := by
+  run rfl
+
+/-- Two empty object literals from the same site are distinct objects: the
+    first one's location holds its reference value although the object has
+    no own fields, so the second allocation does not return it again. -/
+def pTwoEmpty : Stmt := objLit "a" 2 [] ;; objLit "b" 2 []
+theorem run_twoEmpty : Runs pTwoEmpty fun r =>
+    r.sto "a" = some 1200 ∧ r.sto "b" = some 1201 := by
+  run exact ⟨rfl, rfl⟩
 
 /-- `x :=κ e.p` -/
 def pLookupS : Stmt := pObjLit ;; lookupS "r" 3 (var "o") "p"
@@ -150,6 +177,44 @@ theorem run_lookupS : Runs pLookupS fun r =>
 def pLookupD : Stmt := pObjLit ;; assign "k" (val (.str "p")) ;; lookupD "r" 3 (var "o") (var "k")
 theorem run_lookupD : Runs pLookupD fun r =>
     r.trc.toList = [.lookup 15 1200 101] ∧ r.sto "r" = some 15 := by
+  run exact ⟨rfl, rfl⟩
+
+/-- Reading a missing property yields `undefined` (location `0`), still
+    recorded as a lookup. -/
+def pLookupMissing : Stmt := pObjLit ;; lookupS "r" 3 (var "o") "q"
+theorem run_lookupMissing : Runs pLookupMissing fun r =>
+    r.trc.toList = [.lookup 0 1200 101] ∧ r.sto "r" = some 0 := by
+  run exact ⟨rfl, rfl⟩
+
+/-- The same for a dynamic key. -/
+def pLookupDMissing : Stmt :=
+  pObjLit ;; assign "k" (val (.str "q")) ;; lookupD "r" 3 (var "o") (var "k")
+theorem run_lookupDMissing : Runs pLookupDMissing fun r =>
+    r.trc.toList = [.lookup 0 1200 101] ∧ r.sto "r" = some 0 := by
+  run exact ⟨rfl, rfl⟩
+
+/-- Prototype pollution: writing through `o.__proto__` sets a property of
+    `Object.prototype` (location `3`), which a lookup on another object that
+    lacks it then reads. -/
+def pPollute : Stmt :=
+  objLit "o" 2 [] ;; lookupS "t" 3 (var "o") "__proto__" ;;
+  updateS 4 (var "t") "isAdmin" (val (.bool true)) ;;
+  objLit "u" 5 [] ;; lookupS "r" 6 (var "u") "isAdmin"
+theorem run_pollute : Runs pPollute fun r =>
+    r.trc.toList = [.lookup 3 1200 109, .update 3 107 2, .lookup 2 1500 107] ∧
+    r.sto "r" = some 2 := by
+  run exact ⟨rfl, rfl⟩
+
+/-- Non-string keys are converted to strings, as in JS: `o[undefined] = 5`
+    sets `o["undefined"]` (a string of length 9, location `109`), and
+    `o[1]` is `o["1"]`. -/
+def pKeyConv : Stmt :=
+  assign "a" (val (.num 5)) ;; objLit "o" 2 [] ;;
+  updateD 3 (var "o") (val .undef) (var "a") ;;
+  assign "k" (val (.str "undefined")) ;; lookupD "r" 4 (var "o") (var "k") ;;
+  updateD 5 (var "o") (val (.num 1)) (var "a") ;; lookupS "s" 6 (var "o") "1"
+theorem run_keyConv : Runs pKeyConv fun r =>
+    r.sto "r" = some 15 ∧ r.sto "s" = some 15 := by
   run exact ⟨rfl, rfl⟩
 
 /-- `e₁.p :=κ e₂` -/
@@ -171,6 +236,14 @@ theorem run_updateD : Runs pUpdateD fun r =>
 def pCallRet : Stmt := assign "a" (val (.num 3)) ;; call "r" 1 (val (.fid "id")) [var "a"]
 theorem run_callRet : Runs pCallRet fun r =>
     r.trc.toList = [.call 202 [13], .ret 202 13] ∧ r.sto "r" = some 13 := by
+  run exact ⟨rfl, rfl⟩
+
+/-- A callee whose body uses a literal that the main statement does not: the
+    initial heap sets up the literals of every function body, so `1` is
+    there when `plus1` runs. -/
+def pCallLit : Stmt := assign "a" (val (.num 3)) ;; call "r" 1 (val (.fid "plus1")) [var "a"]
+theorem run_callLit : Runs pCallLit fun r =>
+    r.sto "r" = some 1700 ∧ r.heap.val 1700 = some (.num 4) := by
   run exact ⟨rfl, rfl⟩
 
 /-- `x :=κ f(e⃗)`, implicit return: the call evaluates to `undefined`. -/

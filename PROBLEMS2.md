@@ -249,6 +249,14 @@ conclusion. The only monotonicity needed is at the leaves:
 which `allocC_fresh` needs, is threaded as a hypothesis and propagated with
 the existing `BigStep.finite`.
 
+
+> **Superseded** (interactive walkthrough, `WALKTHROUGH_PLAN.md`, change 6):
+> the concrete semantics was fixed instead of the allocator constrained. An
+> object's location now holds its reference value `.loc l` (change 12; change
+> 6 first used a separate `used` mark), so empty objects are in use and no
+> allocation ever returns a location again. `AllocSafe` is "in use, or a literal location";
+> `CrossSpec.allocC_site` is gone. Problem 1 above (literal locations) is
+> still handled by `allocC_lit`.
 ---
 
 ## Decision 7 — object initialisation's abstract register update must be weak
@@ -315,6 +323,12 @@ fields it never uses would narrow those theorems for no reason. The
 structure moved from the soundness file to the relation file, because
 `AllocSafe.extend` needs it.
 
+
+> **Superseded** (interactive walkthrough, `WALKTHROUGH_PLAN.md`, change 8):
+> specs are organised by meaning. `opSem_fid` and `allocC_lit` constrain only
+> the concrete instance and every sensible instance satisfies them, so they
+> moved to `ConcreteSpec`; `allocC_site` was removed by change 6. `CrossSpec`
+> now holds only `opSem_sound`.
 ---
 
 ## Decision 10 — relating `call`/`ret` actions needs a concrete invariant: function values live only at their literal locations
@@ -371,6 +385,12 @@ gating.
   closes over all well-formed call strings. Both only add walks. The theorem
   is existential ("some walk matches the run"), so neither affects it. They
   are the same kind of imprecision the rest of the analysis already accepts.
+
+  > **Superseded** (interactive walkthrough, `WALKTHROUGH_PLAN.md`):
+  > `callPassThrough` is now labelled `none` (change 4), so walks can no
+  > longer skip a call; and change 3 restricts `AGraph.body` to entered
+  > instances of the function, so the remaining unreached instances are
+  > phantom ones whose gates make them unenterable.
 
 ---
 

@@ -24,7 +24,9 @@
   (value sets over an infinite domain, widened or not) and is not assumed.
 
   Finally, the least result keeps functions' locations reserved to them
-  (`least_fidReserved`, invariant `AConf.FidReserved`).
+  (`least_fidReserved`, invariant `AConf.FidReserved`), so it is the least
+  *reserved* analysis result (`ReservedResult`, `least_reservedResult`): the
+  notion a consumer of walk labels relies on.
 -/
 
 import ProgramAutomaton.CoreJsAutomatonSemantics
@@ -99,10 +101,14 @@ theorem AHeap.objOf_mono {h h' : AHeap} (hh : h ⊑ h') {L L' : ALocSet} (hL : L
   rintro a ⟨l, hl, ha⟩
   exact ⟨l, hL l hl, hh.1 l p a ha⟩
 
+theorem VSet.HasKey.mono {V V' : VSet} {q : PropName} (h : V.HasKey q) (hV : V ⊑ V') :
+    V'.HasKey q :=
+  let ⟨v, hv, hk⟩ := h; ⟨v, hV v hv, hk⟩
+
 theorem AHeap.objOfV_mono {h h' : AHeap} (hh : h ⊑ h') {L L' : ALocSet} (hL : L ⊆ L')
     {V V' : VSet} (hV : V ⊑ V') : h.objOfV L V ⊆ h'.objOfV L' V' := by
   rintro a ⟨l, p, hl, hp, ha⟩
-  exact ⟨l, p, hL l hl, hV _ hp, hh.1 l p a ha⟩
+  exact ⟨l, p, hL l hl, hp.mono hV, hh.1 l p a ha⟩
 
 theorem AReg.depOf_mono {δ δ' : AReg} (hδ : δ ⊑ δ') {L L' : ALocSet} (hL : L ⊆ L') :
     δ.depOf L ⊆ δ'.depOf L' := by
@@ -134,7 +140,7 @@ theorem AHeap.weakSetObjV_mono {h h' : AHeap} (hh : h ⊑ h') {L L' : ALocSet} (
   refine ⟨fun a q b hab => ?_, hh.2⟩
   rcases hab with hab | ⟨ha, hq, hb⟩
   · exact Or.inl (hh.1 a q b hab)
-  · exact Or.inr ⟨hL a ha, hV _ hq, hL₂ b hb⟩
+  · exact Or.inr ⟨hL a ha, hq.mono hV, hL₂ b hb⟩
 
 theorem AHeap.weakSetObjs_mono (l : ALoc) :
     ∀ (ps : List PropName) {h h' : AHeap} {Ls Ls' : List ALocSet}, h ⊑ h' → ListLe Ls Ls' →
@@ -193,7 +199,9 @@ theorem AConf.doObjLit_mono [Abstract] (aspec : AbstractSpec) (x : Var) (κ : Id
   intro c c' h
   have hl : allocA c.heap κ = allocA c'.heap κ := aspec.allocA_site _ _ κ
   simp only [AConf.doObjLit, hl]
-  exact ⟨AHeap.weakSetObjs_mono _ _ h.1 (aevalEs_mono h.2.1 _),
+  exact ⟨AHeap.weakSetVal_mono (AHeap.weakSetObjs_mono _ _
+      (AHeap.weakSetObj_mono h.1 (fun _ h => h) _ (fun _ h => h)) (aevalEs_mono h.2.1 _))
+      _ (fun _ h => h),
     ASto.upd_mono h.2.1 x (fun _ h => h), h.2.2⟩
 
 theorem AConf.doSetTaint_mono [Abstract] (e : Expr) : AMono (AConf.doSetTaint e) :=
@@ -206,13 +214,17 @@ theorem AConf.doSetSink_mono [Abstract] (e : Expr) : AMono (AConf.doSetSink e) :
 
 theorem AConf.doLookupS_mono [Abstract] (x : Var) (e : Expr) (p : PropName) :
     AMono (AConf.doLookupS x e p) :=
-  fun _ _ h => ⟨h.1, ASto.upd_mono h.2.1 x (AHeap.objOf_mono h.1 (aevalE_mono h.2.1 e) p),
-    h.2.2⟩
+  fun _ _ h => ⟨h.1, ASto.upd_mono h.2.1 x
+    (ALocSet.union_mono (ALocSet.union_mono (AHeap.objOf_mono h.1 (aevalE_mono h.2.1 e) p)
+      (AHeap.objOf_mono h.1 (fun _ h => h) p)) (fun _ h => h)), h.2.2⟩
 
 theorem AConf.doLookupD_mono [Abstract] (x : Var) (e₁ e₂ : Expr) :
     AMono (AConf.doLookupD x e₁ e₂) :=
-  fun _ _ h => ⟨h.1, ASto.upd_mono h.2.1 x (AHeap.objOfV_mono h.1 (aevalE_mono h.2.1 e₁)
-    (AHeap.valOf_mono h.1 (aevalE_mono h.2.1 e₂))), h.2.2⟩
+  fun _ _ h => ⟨h.1, ASto.upd_mono h.2.1 x
+    (ALocSet.union_mono (ALocSet.union_mono (AHeap.objOfV_mono h.1 (aevalE_mono h.2.1 e₁)
+      (AHeap.valOf_mono h.1 (aevalE_mono h.2.1 e₂)))
+      (AHeap.objOfV_mono h.1 (fun _ h => h) (AHeap.valOf_mono h.1 (aevalE_mono h.2.1 e₂))))
+      (fun _ h => h)), h.2.2⟩
 
 theorem AConf.doUpdateS_mono [Abstract] (e₁ : Expr) (p : PropName) (e₂ : Expr) :
     AMono (AConf.doUpdateS e₁ p e₂) :=
@@ -307,7 +319,7 @@ theorem AGraph.lmono [Abstract] (aspec : AbstractSpec) {Γ : Env} {s₀ : Stmt} 
     (he : AGraph Γ s₀ a b C ℓ) : LMono C := by
   cases he with
   | top h => exact AEdge.lmono aspec h (fun _ _ h => h)
-  | body _ _ h => exact AEdge.lmono aspec h (fun _ _ h => h)
+  | body _ _ _ _ h => exact AEdge.lmono aspec h (fun _ _ h => h)
 
 /-! ## Meets and joins of arbitrary sets of configurations -/
 
@@ -403,7 +415,7 @@ theorem exists_valid_labeling [Abstract] (aspec : AbstractSpec) (Γ : Env) (s₀
     configuration. -/
 def Labeling.step [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) : Labeling := fun b =>
   AConf.sup (fun c => (∃ a C ℓ, AGraph Γ s₀ a b C ℓ ∧ c = C L) ∨
-    (b = .entry [] ∧ c = AConf.init s₀))
+    (b = .entry [] ∧ c = AConf.init Γ s₀))
 
 theorem Labeling.step_mono [Abstract] (aspec : AbstractSpec) {Γ : Env} {s₀ : Stmt}
     {L L' : Labeling} (h : L.Le L') : (Labeling.step Γ s₀ L).Le (Labeling.step Γ s₀ L') := by
@@ -498,8 +510,33 @@ theorem Labeling.least_fidReserved [Abstract] (aspec : AbstractSpec) (Γ : Env) 
     · exact AConf.le_restrictFid
         (AConf.le_trans (he.lmono aspec _ _ hL'le) (hleast.1 a b C ℓ he))
         (he.fidReserved aspec hL'res)
-    · exact AConf.le_restrictFid hleast.2 (AConf.FidReserved.init aspec s₀)
+    · exact AConf.le_restrictFid hleast.2 (AConf.FidReserved.init aspec Γ s₀)
   intro f v hv
   exact (hL'res st) f v ((Labeling.least_le hres st).1.2 _ v hv)
+
+/-! ## Reserved analysis results
+
+`Labeling.Valid` and `AnalysisResult` deliberately do not demand
+`FidReserved`: soundness holds for every valid labeling. A consumer of walk
+labels (a model checker) wants more. Junk at a function's location never makes
+the executed body ambiguous — each call edge belongs to one candidate, which
+fixes both its target instance and its label — but it creates spurious
+candidates whose call label is not among the callee expression's locations.
+A *reserved* result has no such junk, and the least result is the least
+reserved one. -/
+
+/-- An analysis result whose every label keeps functions' locations reserved
+    to them. -/
+def ReservedResult [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) : Prop :=
+  AnalysisResult Γ s₀ L ∧ ∀ st, (L st).FidReserved
+
+/-- The least analysis result is reserved, and lies below every reserved
+    result. -/
+theorem Labeling.least_reservedResult [Abstract] (aspec : AbstractSpec) (Γ : Env)
+    (s₀ : Stmt) :
+    ReservedResult Γ s₀ (Labeling.least Γ s₀) ∧
+      ∀ L, ReservedResult Γ s₀ L → (Labeling.least Γ s₀).Le L :=
+  ⟨⟨Labeling.least_result aspec Γ s₀, Labeling.least_fidReserved aspec Γ s₀⟩,
+    fun _ hL => Labeling.least_le hL.1⟩
 
 end CoreJS

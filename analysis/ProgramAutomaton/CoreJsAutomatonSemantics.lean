@@ -153,8 +153,12 @@ def AHeap.valOf (h : AHeap) (L : ALocSet) : VSet :=
 def AHeap.objOf (h : AHeap) (L : ALocSet) (p : PropName) : ALocSet :=
   fun l' => ∃ l, L l ∧ h.obj l p l'
 
+/-- `V` contains a value that may denote the property name `q` as a key
+    (`Val.KeyOf`). -/
+def VSet.HasKey (V : VSet) (q : PropName) : Prop := ∃ v, V.Mem v ∧ v.KeyOf q
+
 def AHeap.objOfV (h : AHeap) (L : ALocSet) (V : VSet) : ALocSet :=
-  fun l' => ∃ l p, L l ∧ V.Mem (.str p) ∧ h.obj l p l'
+  fun l' => ∃ l p, L l ∧ V.HasKey p ∧ h.obj l p l'
 
 def AReg.depOf (δ : AReg) (L : ALocSet) : ALocSet :=
   fun l' => ∃ l, L l ∧ δ.dep l l'
@@ -165,6 +169,10 @@ All heap/register updates are weak (they join into what is there): one
 abstract location stands for every concrete location allocated at the sites
 it abstracts, so an update of one of them must not erase the others. -/
 
+/-- Some object reference: the value set an object literal stores at its
+    abstract location. -/
+def VSet.refs : VSet := .vals fun v => ∃ l, v = .loc l
+
 def AHeap.weakSetVal (h : AHeap) (l : ALoc) (V : VSet) : AHeap :=
   { h with val := fun l' => if l' = l then VSet.join V (h.val l') else h.val l' }
 
@@ -174,7 +182,7 @@ def AHeap.weakSetObj (h : AHeap) (L : ALocSet) (p : PropName) (L' : ALocSet) :
 
 def AHeap.weakSetObjV (h : AHeap) (L : ALocSet) (V : VSet) (L' : ALocSet) :
     AHeap :=
-  { h with obj := fun l q l' => h.obj l q l' ∨ (L l ∧ V.Mem (.str q) ∧ L' l') }
+  { h with obj := fun l q l' => h.obj l q l' ∨ (L l ∧ V.HasKey q ∧ L' l') }
 
 def AHeap.weakSetObjs (h : AHeap) (l : ALoc) :
     List (PropName × ALocSet) → AHeap
@@ -223,12 +231,6 @@ def aevalEs [Abstract] (ρ : ASto) : List Expr → List ALocSet
   | e :: es => aevalE ρ e :: aevalEs ρ es
 
 /-! ## Call candidates -/
-
-def Env.params (Γ : Env) (f : Fid) : List Var :=
-  ((Γ f).map Prod.fst).getD []
-
-def Env.body (Γ : Env) (f : Fid) : Stmt :=
-  ((Γ f).map Prod.snd).getD .skip
 
 /-- `f` is a candidate callee at a site whose callee expression abstracts to
     `L_f` and which passes `n` arguments. -/
@@ -279,24 +281,35 @@ def AConf.doBinOp [Abstract] (x : Var) (κ : Idx) (op : BinOp) (e₁ e₂ : Expr
     to `∅`; abstractly this is a weak update, i.e. no change. A strong update
     `setDep l ∅` would erase the dependencies of every *other* concrete
     location the abstract location `l` stands for — in particular of one a
-    `binOp` allocated, whenever the two sites share an abstract location, or
-    the same concrete location re-used after an object literal with no fields
-    left it unused. -/
+    `binOp` allocated, whenever the two sites share an abstract location. -/
 def AConf.doObjLit [Abstract] (x : Var) (κ : Idx) (fs : List (PropName × Expr))
     (c : AConf) : AConf :=
   let Ls := aevalEs c.sto (fs.map Prod.snd)
   let l   := allocA c.heap κ
-  { heap := c.heap.weakSetObjs l ((fs.map Prod.fst).zip Ls)
+  { heap := (c.heap.weakSetObjs l (("__proto__", {litLocA .proto}) :: (fs.map Prod.fst).zip Ls)).weakSetVal
+      l VSet.refs
     sto  := c.sto.upd x {l}
     reg  := c.reg }
 
+/-- What a static lookup of `p` on objects `L` may return: an own property, or,
+    when the own property is missing, `Object.prototype`'s (`litLocA .proto`),
+    or, when that is missing too, `undefined`. The abstract heap only records
+    which properties an object *may* have, never which it must, so a lookup
+    can never be known to hit, and all three are always included. -/
+def AHeap.lookupS [Abstract] (h : AHeap) (L : ALocSet) (p : PropName) : ALocSet :=
+  h.objOf L p ∪ h.objOf {litLocA .proto} p ∪ {litLocA .undef}
+
+/-- The same for a dynamic lookup with keys `V`. -/
+def AHeap.lookupD [Abstract] (h : AHeap) (L : ALocSet) (V : VSet) : ALocSet :=
+  h.objOfV L V ∪ h.objOfV {litLocA .proto} V ∪ {litLocA .undef}
+
 def AConf.doLookupS [Abstract] (x : Var) (e : Expr) (p : PropName) (c : AConf) :
     AConf :=
-  { c with sto := c.sto.upd x (c.heap.objOf (aevalE c.sto e) p) }
+  { c with sto := c.sto.upd x (c.heap.lookupS (aevalE c.sto e) p) }
 
 def AConf.doLookupD [Abstract] (x : Var) (e₁ e₂ : Expr) (c : AConf) : AConf :=
   { c with sto :=
-      c.sto.upd x (c.heap.objOfV (aevalE c.sto e₁) (c.heap.valOf (aevalE c.sto e₂))) }
+      c.sto.upd x (c.heap.lookupD (aevalE c.sto e₁) (c.heap.valOf (aevalE c.sto e₂))) }
 
 def AConf.doUpdateS [Abstract] (e₁ : Expr) (p : PropName) (e₂ : Expr)
     (c : AConf) : AConf :=
@@ -321,10 +334,10 @@ instance `[Static Property Lookup]` emits `lookup l₂ l₁ l_p` with `l₁` the
 object, `l₂` the property's location). -/
 
 def AConf.actLookupS [Abstract] (e : Expr) (p : PropName) (c : AConf) : AAct :=
-  .lookup (c.heap.objOf (aevalE c.sto e) p) (aevalE c.sto e) {litLocA (.str p)}
+  .lookup (c.heap.lookupS (aevalE c.sto e) p) (aevalE c.sto e) {litLocA (.str p)}
 
 def AConf.actLookupD [Abstract] (e₁ e₂ : Expr) (c : AConf) : AAct :=
-  .lookup (c.heap.objOfV (aevalE c.sto e₁) (c.heap.valOf (aevalE c.sto e₂)))
+  .lookup (c.heap.lookupD (aevalE c.sto e₁) (c.heap.valOf (aevalE c.sto e₂)))
     (aevalE c.sto e₁) (aevalE c.sto e₂)
 
 def AConf.actUpdateS [Abstract] (e₁ : Expr) (p : PropName) (e₂ : Expr) (c : AConf) : AAct :=
@@ -342,17 +355,27 @@ def Labeling := AState → AConf
 
 /-! ## The automaton's edges
 
-Three mutually recursive relations, parameterised by the function
-environment `Γ` and indexed by the call string `cs` and the "processing
-position" `(entry, pending)` — `entry` the automaton state processing resumed
-from, `pending : AConf → AConf` the net effect of every flat statement
-(`skip`/`assign`/.../`setSink`) since the last real edge, composed onto
-whatever arrives at `entry`:
+Three relations, parameterised by the function environment `Γ` and indexed
+by the call string `cs` and the "processing position" `(entry, pending)` —
+`entry` the automaton state processing resumed from, `pending : AConf → AConf`
+the net effect of every flat statement (`skip`/`assign`/.../`setSink`) since
+the last real edge, composed onto whatever arrives at `entry`. They are
+layered, not mutually recursive: `AExit` refers only to itself, `ARet` to
+itself and `AExit`, `AEdge` to all three.
 
-* `AExit Γ cs entry pending s x xpending` — processing `s` leaves `x` as one
-  of the (possibly several) dangling *continuing* exits, itself to be resumed
-  with transform `xpending`. `ret` contributes no `AExit` fact at all — a
-  `ret` never continues.
+* `AExit Γ cs entry pending s x xpending` — when processing `s` finishes
+  normally, processing resumes at state `x` with transform `xpending`. It
+  produces no edges. Every statement shape has at most one case, so there is
+  at most one exit: a structured statement exits at its join state (`ifEnd`,
+  `whileOut`, `cont`) whether or not anything reaches it. `ret` contributes
+  no `AExit` fact at all — a `ret` never continues.
+* `ARet Γ cs entry pending s r rpending e` — processing `s` reaches a
+  `ret e` at state `r`, with `rpending` the transform up to (but not
+  including) evaluating `e`. Used only by `call`'s own processing to wire
+  every reachable `ret` inside a candidate callee to that call's own
+  continuation: the call knows the variable to bind and the callee's call
+  string, whereas a `ret` does not know which call sites reach it. `ret`
+  itself never emits an edge.
 * `AEdge Γ cs entry pending s a b C ℓ` — processing `s` produces the graph
   edge `a → b` with contribution `C` and action label `ℓ`. Both are read off
   a labeling `L`: `C L` is what the edge contributes to `L b`, and `ℓ L` is
@@ -361,26 +384,19 @@ whatever arrives at `entry`:
   fails). They take the whole labeling rather than only the source's label
   because a call's return edges start inside the callee but are gated on the
   *caller's* configuration at the call site.
-* `ARet Γ cs entry pending s r rpending e` — processing `s` reaches a
-  `ret e` at state `r`, with `rpending` the transform up to (but not
-  including) evaluating `e`. Used only by `call`'s own processing to wire
-  every reachable `ret` inside a candidate callee to that call's own
-  continuation: the call knows the variable to bind and the callee's call
-  string, whereas a `ret` does not know which call sites reach it. `ret`
-  itself never emits an edge.
 
-These are ordinary inductive `Prop`s, not a terminating computation: `call`'s
-cases recurse into `Γ.body f`, which is not a subterm of the call, and a
-strictly positive inductive `Prop` needs no termination measure for that.
-Nothing needs the edge set to be computable, only to be well defined. -/
+All three are structurally recursive over the statement: `AEdge` never
+produces the edges *inside* a callee's body. A call's return edges only
+locate the callee's `ret`s and exits, through `ARet`/`AExit` premises over
+that body; the body's own edges come from `AGraph.body` below. They are
+stated as inductive `Prop`s for readability; nothing needs the edge set to
+be computable, only to be well defined. -/
 
 -- `AConf.Calls` is an arbitrary `Prop` (it quantifies through `VSet.Mem`),
 -- not decidable in general; the `if … then … else …` in the call edges below
 -- is only ever used to state a value, never executed, so a classical
 -- instance is exactly right here.
 attribute [local instance] Classical.propDecidable
-
-mutual
 
 inductive AExit [Abstract] (Γ : Env) :
     CallString → AState → (AConf → AConf) → Stmt → AState → (AConf → AConf) → Prop where
@@ -415,6 +431,27 @@ inductive AExit [Abstract] (Γ : Env) :
       AExit Γ cs entry pending (.whileDo κ e s) (.whileOut cs κ) id
   | call {cs entry pending x κ e es} :
       AExit Γ cs entry pending (.call x κ e es) (.cont cs κ) id
+
+inductive ARet [Abstract] (Γ : Env) :
+    CallString → AState → (AConf → AConf) → Stmt → AState → (AConf → AConf) → Expr → Prop where
+  | ret {cs entry pending e} :
+      ARet Γ cs entry pending (.ret e) entry pending e
+  | seqLeft {cs entry pending s₁ s₂ r rpending e} :
+      ARet Γ cs entry pending s₁ r rpending e →
+      ARet Γ cs entry pending (.seq s₁ s₂) r rpending e
+  | seqRight {cs entry pending s₁ s₂ x xpending r rpending e} :
+      AExit Γ cs entry pending s₁ x xpending →
+      ARet Γ cs x xpending s₂ r rpending e →
+      ARet Γ cs entry pending (.seq s₁ s₂) r rpending e
+  | ifThen {cs entry pending κ e s₁ s₂ r rpending e'} :
+      ARet Γ cs (.ifThen cs κ) id s₁ r rpending e' →
+      ARet Γ cs entry pending (.ifElse κ e s₁ s₂) r rpending e'
+  | ifElseB {cs entry pending κ e s₁ s₂ r rpending e'} :
+      ARet Γ cs (.ifElseB cs κ) id s₂ r rpending e' →
+      ARet Γ cs entry pending (.ifElse κ e s₁ s₂) r rpending e'
+  | whileDo {cs entry pending κ e s r rpending e'} :
+      ARet Γ cs (.whileIn cs κ) id s r rpending e' →
+      ARet Γ cs entry pending (.whileDo κ e s) r rpending e'
 
 inductive AEdge [Abstract] (Γ : Env) :
     CallString → AState → (AConf → AConf) → Stmt → AState → AState →
@@ -487,15 +524,23 @@ inductive AEdge [Abstract] (Γ : Env) :
       AExit Γ cs (.whileIn cs κ) id s x xpending →
       AEdge Γ cs entry pending (.whileDo κ e s) x (.whileOut cs κ)
         (fun L => xpending (L x)) (fun _ => some .epsilon)
-  /-- The call's own continuation state also always gets a pass-through edge
-      directly from the call, binding `x` to `∅` and leaving everything else
-      unchanged. Without it, every caller-local variable but `x` would be lost
-      at `cont` (the return edges carry only `x`), and a call site with no
-      live candidate would starve everything sequenced after it. -/
+  /-- The call's own continuation state also always gets a pass-through
+      contribution directly from the call, binding `x` to `∅` and leaving
+      everything else unchanged. Without it, every caller-local variable but
+      `x` would be lost at `cont` (the return edges carry only `x`), and a
+      call site with no live candidate would starve the labels of everything
+      sequenced after it.
+
+      It only feeds the labeling: its label is `none`, so no walk takes it.
+      As a silent edge it would let a walk skip a call altogether — no `call`
+      action, no callee actions — while reaching a `cont` whose label
+      includes the callee's return value, e.g. a trace in which a sanitizer
+      was never called. A walk through a call goes `callEntry` → the callee's
+      body → `callRet`/`callImplicitRet`, as every concrete run does. -/
   | callPassThrough {cs entry pending x κ e es} :
       AEdge Γ cs entry pending (.call x κ e es) entry (.cont cs κ)
         (fun L => let v := pending (L entry); { v with sto := v.sto.upd x ∅ })
-        (fun _ => some .epsilon)
+        (fun _ => none)
   /-- Structural edge into every arity-matching candidate's entry, gated
       entirely on the candidate check: the *whole* contribution collapses to
       `AConf.bot`, not just the argument binding, when this call site could
@@ -561,38 +606,23 @@ inductive AEdge [Abstract] (Γ : Env) :
             some (.ret (litLocA (.fid f)) {litLocA .undef})
           else none)
 
-inductive ARet [Abstract] (Γ : Env) :
-    CallString → AState → (AConf → AConf) → Stmt → AState → (AConf → AConf) → Expr → Prop where
-  | ret {cs entry pending e} :
-      ARet Γ cs entry pending (.ret e) entry pending e
-  | seqLeft {cs entry pending s₁ s₂ r rpending e} :
-      ARet Γ cs entry pending s₁ r rpending e →
-      ARet Γ cs entry pending (.seq s₁ s₂) r rpending e
-  | seqRight {cs entry pending s₁ s₂ x xpending r rpending e} :
-      AExit Γ cs entry pending s₁ x xpending →
-      ARet Γ cs x xpending s₂ r rpending e →
-      ARet Γ cs entry pending (.seq s₁ s₂) r rpending e
-  | ifThen {cs entry pending κ e s₁ s₂ r rpending e'} :
-      ARet Γ cs (.ifThen cs κ) id s₁ r rpending e' →
-      ARet Γ cs entry pending (.ifElse κ e s₁ s₂) r rpending e'
-  | ifElseB {cs entry pending κ e s₁ s₂ r rpending e'} :
-      ARet Γ cs (.ifElseB cs κ) id s₂ r rpending e' →
-      ARet Γ cs entry pending (.ifElse κ e s₁ s₂) r rpending e'
-  | whileDo {cs entry pending κ e s r rpending e'} :
-      ARet Γ cs (.whileIn cs κ) id s r rpending e' →
-      ARet Γ cs entry pending (.whileDo κ e s) r rpending e'
-
-end
 
 /-! ## The automaton's graph, labeling validity
 
-The graph is closed over every function reachable from the top-level program
-`s₀`: not just `s₀`'s own edges (call string `[]`, entry state `entry []`),
-but, for every function `f` and *every* well-formed call string `cs` (not
-only the ones actually reachable — over-approximating here is harmless and
-keeps this definition simple; a real execution only ever needs the reachable
-ones, all of which are among these), the edges of `Γ.body f` processed from
-`(entry cs, id)`.
+The graph has two kinds of roots. `top`: `s₀`'s own edges, processed under
+call string `[]` from `(entry [], id)`. `body`: the edges of a function `f`'s
+body, processed under an *instance* `cs` of `f` from `(entry cs, id)`. An
+instance is a call string that ends with an occurrence of `f` — every target
+of a call to `f` does (`targetCallString_ends`) — and that some edge of the
+graph enters. So instances grow outwards from `s₀`'s call sites, and the
+graph is the part of the automaton syntactically reachable from `entry []`.
+It does not depend on any labeling: an instance at a call site that cannot
+actually call `f` is still in, its entry and return edges gated shut.
+
+Without the two conditions, `f`'s body would also hang off `entry []` (a walk
+from the top-level entry could run it with no call), off other functions'
+entries, and off call strings for every site index, making the graph
+infinite.
 
 A labeling is valid when every edge's contribution is dominated by its
 target state's label: stated once over the whole graph, this is the
@@ -603,26 +633,36 @@ inductive AGraph [Abstract] (Γ : Env) (s₀ : Stmt) :
     AState → AState → (Labeling → AConf) → (Labeling → Option AAct) → Prop where
   | top {a b C ℓ} :
       AEdge Γ [] (.entry []) id s₀ a b C ℓ → AGraph Γ s₀ a b C ℓ
-  | body {f params body cs a b C ℓ} :
+  | body {f params body cs a' C' ℓ' a b C ℓ} :
       Γ f = some (params, body) → CallString.WF cs →
+      (∃ cs' site, cs = cs' ++ [(site, f)]) →
+      AGraph Γ s₀ a' (.entry cs) C' ℓ' →
       AEdge Γ cs (.entry cs) id body a b C ℓ → AGraph Γ s₀ a b C ℓ
 
 def Labeling.Valid [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) : Prop :=
   ∀ a b C ℓ, AGraph Γ s₀ a b C ℓ → C L ⊑ L b
 
-/-- The abstract counterpart of `Heap.init s`: each literal `v` of `s`, and
-    `undefined`, at `litLocA v`; no object has any property. -/
-def AHeap.init [Abstract] (s : Stmt) : AHeap where
-  obj := fun _ _ => ∅
-  val := fun a => .vals (fun v => v ∈ Val.undef :: s.lits ∧ litLocA v = a)
+/-- A literal a run of `s` may start with: `undefined`, a literal of `s`, or a
+    literal of the body of a function defined in `Γ`. -/
+def InitLit (Γ : Env) (s : Stmt) (v : Val) : Prop :=
+  v ∈ Val.undef :: s.lits ∨ ∃ f params body, Γ f = some (params, body) ∧ v ∈ body.lits
 
-/-- The abstract counterpart of `Conf.init s`. -/
-def AConf.init [Abstract] (s : Stmt) : AConf := ⟨AHeap.init s, ASto.bot, AReg.bot⟩
+/-- The abstract counterpart of `Heap.init Γ fs s`: each literal `v` of `s`,
+    of every function body of `Γ`, and `undefined`, at `litLocA v`; no object
+    has any property. Stated as a predicate, it covers every function of `Γ`
+    without needing them listed, so it covers `Heap.init Γ fs s` for every
+    `fs`. -/
+def AHeap.init [Abstract] (Γ : Env) (s : Stmt) : AHeap where
+  obj := fun _ _ => ∅
+  val := fun a => .vals (fun v => InitLit Γ s v ∧ litLocA v = a)
+
+/-- The abstract counterpart of `Conf.init Γ fs s`. -/
+def AConf.init [Abstract] (Γ : Env) (s : Stmt) : AConf := ⟨AHeap.init Γ s, ASto.bot, AReg.bot⟩
 
 /-- The top-level analysis result: `L` is a valid labeling for the program
     `(Γ, s₀)` whose top-level entry covers the initial configuration. -/
 def AnalysisResult [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) : Prop :=
-  Labeling.Valid Γ s₀ L ∧ AConf.init s₀ ⊑ L (.entry [])
+  Labeling.Valid Γ s₀ L ∧ AConf.init Γ s₀ ⊑ L (.entry [])
 
 /-! ## Walks
 
@@ -673,37 +713,27 @@ structure PendingClosed [Abstract] (Q : (AConf → AConf) → Prop) : Prop where
   setTaint : ∀ {f} e, Q f → Q (AConf.doSetTaint e ∘ f)
   setSink  : ∀ {f} e, Q f → Q (AConf.doSetSink e ∘ f)
 
-mutual
-
 theorem AExit.closed [Abstract] {Γ : Env} {Q : (AConf → AConf) → Prop}
-    (hQ : PendingClosed Q) : ∀ {cs entry pending s x xpending},
-    AExit Γ cs entry pending s x xpending → Q pending → Q xpending
-  | _, _, _, _, _, _, .skip, h => h
-  | _, _, _, _, _, _, .assign, h => hQ.assign _ _ h
-  | _, _, _, _, _, _, .binOp, h => hQ.binOp _ _ _ _ _ h
-  | _, _, _, _, _, _, .objLit, h => hQ.objLit _ _ _ h
-  | _, _, _, _, _, _, .setTaint, h => hQ.setTaint _ h
-  | _, _, _, _, _, _, .setSink, h => hQ.setSink _ h
-  | _, _, _, _, _, _, .lookupS, _ => hQ.id
-  | _, _, _, _, _, _, .lookupD, _ => hQ.id
-  | _, _, _, _, _, _, .updateS, _ => hQ.id
-  | _, _, _, _, _, _, .updateD, _ => hQ.id
-  | _, _, _, _, _, _, .seq h₁ h₂, h => AExit.closed hQ h₂ (AExit.closed hQ h₁ h)
-  | _, _, _, _, _, _, .ifElse, _ => hQ.id
-  | _, _, _, _, _, _, .whileDo, _ => hQ.id
-  | _, _, _, _, _, _, .call, _ => hQ.id
+    (hQ : PendingClosed Q) {cs entry pending s x xpending}
+    (h : AExit Γ cs entry pending s x xpending) : Q pending → Q xpending := by
+  induction h with
+  | skip => exact id
+  | assign => exact hQ.assign _ _
+  | binOp => exact hQ.binOp _ _ _ _ _
+  | objLit => exact hQ.objLit _ _ _
+  | setTaint => exact hQ.setTaint _
+  | setSink => exact hQ.setSink _
+  | lookupS | lookupD | updateS | updateD | ifElse | whileDo | call => exact fun _ => hQ.id
+  | seq _ _ ih₁ ih₂ => exact ih₂ ∘ ih₁
 
 theorem ARet.closed [Abstract] {Γ : Env} {Q : (AConf → AConf) → Prop}
-    (hQ : PendingClosed Q) : ∀ {cs entry pending s r rpending e},
-    ARet Γ cs entry pending s r rpending e → Q pending → Q rpending
-  | _, _, _, _, _, _, _, .ret, h => h
-  | _, _, _, _, _, _, _, .seqLeft h₁, h => ARet.closed hQ h₁ h
-  | _, _, _, _, _, _, _, .seqRight h₁ h₂, h => ARet.closed hQ h₂ (AExit.closed hQ h₁ h)
-  | _, _, _, _, _, _, _, .ifThen h₁, _ => ARet.closed hQ h₁ hQ.id
-  | _, _, _, _, _, _, _, .ifElseB h₁, _ => ARet.closed hQ h₁ hQ.id
-  | _, _, _, _, _, _, _, .whileDo h₁, _ => ARet.closed hQ h₁ hQ.id
-
-end
+    (hQ : PendingClosed Q) {cs entry pending s r rpending e}
+    (h : ARet Γ cs entry pending s r rpending e) : Q pending → Q rpending := by
+  induction h with
+  | ret => exact id
+  | seqLeft _ ih => exact ih
+  | seqRight hx _ ih => exact ih ∘ AExit.closed hQ hx
+  | ifThen _ ih | ifElseB _ ih | whileDo _ ih => exact fun _ => ih hQ.id
 
 /-! ## Functions' canonical locations hold only themselves
 
@@ -736,8 +766,10 @@ theorem AConf.FidReserved.pendingClosed [Abstract] (aspec : AbstractSpec) :
     simp only [Function.comp, AConf.doBinOp, AHeap.weakSetVal] at hv
     rw [if_neg hne] at hv
     exact hf c hc f v hv
-  objLit := fun x κ fs hf c hc f v hv => by
-    simp only [Function.comp, AConf.doObjLit, AHeap.weakSetObjs_val] at hv
+  objLit := fun {g} x κ fs hf c hc f v hv => by
+    have hne : litLocA (.fid f) ≠ allocA (g c).heap κ := fun h => aspec.allocA_fid _ _ _ h.symm
+    simp only [Function.comp, AConf.doObjLit, AHeap.weakSetVal] at hv
+    rw [if_neg hne, AHeap.weakSetObjs_val] at hv
     exact hf c hc f v hv
   setTaint := fun _ hf c hc => hf c hc
   setSink := fun _ hf c hc => hf c hc
@@ -792,10 +824,10 @@ theorem AGraph.fidReserved [Abstract] (aspec : AbstractSpec) {Γ : Env} {s₀ : 
     (he : AGraph Γ s₀ a b C ℓ) : (C L).FidReserved := by
   cases he with
   | top h => exact AEdge.fidReserved aspec hL h (fun _ h => h)
-  | body _ _ h => exact AEdge.fidReserved aspec hL h (fun _ h => h)
+  | body _ _ _ _ h => exact AEdge.fidReserved aspec hL h (fun _ h => h)
 
-theorem AConf.FidReserved.init [Abstract] (aspec : AbstractSpec) (s : Stmt) :
-    (AConf.init s).FidReserved := by
+theorem AConf.FidReserved.init [Abstract] (aspec : AbstractSpec) (Γ : Env) (s : Stmt) :
+    (AConf.init Γ s).FidReserved := by
   intro f v hv
   exact aspec.litLocA_fid f v hv.2.symm
 

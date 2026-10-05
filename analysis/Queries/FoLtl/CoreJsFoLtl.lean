@@ -195,6 +195,7 @@ def Val.toStr : Val → String
   | .fid f  => s!"fid {f}"
   | .loc l  => s!"loc {l}"
   | .undef  => "undefined"
+  | .proto  => "Object.prototype"
 
 /-- An atom, given how to render variables. -/
 def Atom.toStr {ν : Type} (s : ν → String) : Atom ν → String

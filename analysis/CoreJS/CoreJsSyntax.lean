@@ -45,12 +45,45 @@ inductive Val where
   | str  (s : String)
   | bool (b : Bool)
   | fid  (f : Fid)
+  /-- An object reference: the value an object literal stores at its own
+      location (so object references are values, compared by `sv`). -/
   | loc  (l : Loc)
   /-- `undefined`.  Introduced by the semantics as the implicit return value of
       a function body that falls through without an explicit `return`, and
       also writable directly in source text as an ordinary literal. -/
   | undef
+  /-- Not a source value: a marker whose literal location `litLoc .proto` is
+      `Object.prototype`, the one prototype object the semantics models
+      (prototype chains of length one). Sharing the literal machinery gives
+      it a fixed location, committed by the abstraction up front and never
+      returned by allocation. Source code may write `Object.prototype` as
+      this literal. -/
+  | proto
   deriving DecidableEq, Repr, Inhabited
+
+/-- The property name a value denotes when used as a key, when it has a
+    fixed one: JS converts every key to a string (`a[undefined]` is
+    `a["undefined"]`, `a[1]` is `a["1"]`). Object references and functions
+    have none here: JS uses `"[object Object]"` (unless `toString` is
+    overridden) and the function's source text, neither of which is
+    modelled; see `Val.KeyOf`. -/
+def Val.toKey : Val → Option PropName
+  | .str s  => some s
+  | .num n  => some (toString n)
+  | .bool b => some (if b then "true" else "false")
+  | .undef  => some "undefined"
+  | .proto  => some "[object Object]"
+  | .fid _  => none
+  | .loc _  => none
+
+/-- Used as a key, `v` may denote the property `p`: exactly its string form
+    when it has one (`Val.toKey`), and *any* property otherwise (object
+    references, functions) — the over-approximation `model-js` also makes
+    (`Dynamic` properties). -/
+def Val.KeyOf (v : Val) (p : PropName) : Prop :=
+  match v.toKey with
+  | some q => q = p
+  | none   => True
 
 /-- Expressions `e ∈ Exp ::= v | x ∈ Var`. -/
 inductive Expr where
@@ -61,7 +94,9 @@ inductive Expr where
 /-- Binary operators `⊕`.  Only their interpretation `⊕(v₁, v₂)` matters to
     the semantics, and it is a parameter (`CoreJS.Concrete.opSem` in
     `CoreJsSemantics.lean`); the operator set itself is a representative
-    choice. -/
+    choice. `and`/`or` produce a value: JS's short-circuit `&&`/`||`, which
+    return one of their operands, are expressed with `ifElse` and `assign`
+    instead (see `ConcreteSpec.opSem_fid` in `CoreJsSemantics.lean`). -/
 inductive BinOp where
   | add | sub | mul | div
   | eq | lt | le

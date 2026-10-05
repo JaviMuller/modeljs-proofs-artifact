@@ -197,7 +197,7 @@ theorem Heap.Alpha.valOf {α : AlphaFn} {h : Heap} {ah : AHeap} {l : Loc} {v : V
 
 theorem Heap.Alpha.objOfV {α : AlphaFn} {h : Heap} {ah : AHeap} {l₁ l₂ : Loc}
     {L : ALocSet} {V : VSet} {p : PropName}
-    (k : Heap.Alpha α h ah) (hL : α.MapsInto l₁ L) (hV : V.Mem (.str p))
+    (k : Heap.Alpha α h ah) (hL : α.MapsInto l₁ L) (hV : V.HasKey p)
     (hobj : h.obj l₁ p = some l₂) :
     α.MapsInto l₂ (ah.objOfV L V) := by
   obtain ⟨al, hal, hLal⟩ := hL
@@ -230,7 +230,7 @@ theorem Heap.Alpha.setObj {α : AlphaFn} {h : Heap} {ah : AHeap} {l1 l2 : Loc}
 
 theorem Heap.Alpha.setObjV {α : AlphaFn} {h : Heap} {ah : AHeap} {l1 l3 : Loc}
     {p : PropName} {L1 L3 : ALocSet} {V : VSet} (k : Heap.Alpha α h ah)
-    (h1 : α.MapsInto l1 L1) (hV : V.Mem (.str p)) (h3 : α.MapsInto l3 L3) :
+    (h1 : α.MapsInto l1 L1) (hV : V.HasKey p) (h3 : α.MapsInto l3 L3) :
     Heap.Alpha α (h.setObj l1 p l3) (ah.weakSetObjV L1 V L3) := by
   refine ⟨?_, k.2⟩
   intro l q l' hl
@@ -369,28 +369,21 @@ theorem Reg.Alpha.setDep_empty {α : AlphaFn} {δ : Reg} {aδ : AReg} {l : Loc}
 /-! ## Keeping `α` extensible at allocations
 
 `α` is only ever extended at a location an allocation has just returned, and
-the extension must agree with whatever `α` already says there. A location an
-allocation returns is not in use in the current heap (`ConcreteSpec.
-allocC_fresh`) and is not a literal location (`CrossSpec.allocC_lit`,
-`CoreJsAutomatonSoundness.lean`). Neither fact on its own rules out that `α`
-already maps it: an object literal with no fields allocates a location and
-leaves it unused (`Heap.setObjs l []` is `h`), so a later allocation may
-return that same location again. `AllocSafe` therefore also admits a
-location some earlier allocation returned, provided `α` maps it to that
-allocation's abstract site. Re-allocating it is then harmless when the
-allocator's result determines the abstract site (`CrossSpec.allocC_site`). -/
+the extension must agree with whatever `α` already says there. It never has
+to: a location an allocation returns is free in the current heap
+(`ConcreteSpec.allocC_fresh`) — and every allocated location holds a value
+afterwards (an object its reference, `.loc l`), so no allocation ever returns
+a location again — and it is not a literal location (`ConcreteSpec.allocC_lit`). So if
+every location `α` maps is in use or a literal location, `α` does not map the
+new one yet. -/
 
-/-- Every location `α` maps is in use in `h`, a literal location, or a location
-    some allocation returns, mapped to that allocation's abstract site. -/
-def AlphaFn.AllocSafe [Concrete] [Abstract] (α : AlphaFn) (h : Heap) : Prop :=
-  ∀ l al, α l = some al →
-    h.Defined l ∨ (∃ v, l = Concrete.litLoc v) ∨
-    ∃ (h₀ : Heap) (κ : Idx), h₀.Finite ∧ Concrete.allocC h₀ κ = l ∧
-      al = Abstract.allocA AHeap.bot κ
+/-- Every location `α` maps is in use in `h`, or a literal location. -/
+def AlphaFn.AllocSafe [Concrete] (α : AlphaFn) (h : Heap) : Prop :=
+  ∀ l al, α l = some al → h.Defined l ∨ ∃ v, l = Concrete.litLoc v
 
 /-- `AllocSafe` survives any heap change that keeps every in-use location in
     use. -/
-theorem AlphaFn.AllocSafe.mono_heap [Concrete] [Abstract] {α : AlphaFn} {h h' : Heap}
+theorem AlphaFn.AllocSafe.mono_heap [Concrete] {α : AlphaFn} {h h' : Heap}
     (k : α.AllocSafe h) (hd : ∀ l, h.Defined l → h'.Defined l) : α.AllocSafe h' := by
   intro l al hl
   rcases k l al hl with hdef | hrest
@@ -403,64 +396,42 @@ theorem AlphaFn.Lits.mono [Concrete] [Abstract] {α α' : AlphaFn} (he : α' ≥
 
 /-! ## Assumptions relating the concrete and abstract parameters
 
-Beyond `ConcreteSpec` and `AbstractSpec`, which each constrain one side, the
-soundness proof needs the two sides' binary operators and allocators to
-agree, and two further facts about the concrete parameters that the query
-development has no use for (kept here rather than in `ConcreteSpec` so that
-the run-record theorems of `CoreJsSemantics.lean` (`BigStep.obs_wf`, …) do
-not acquire hypotheses they never use). -/
+`ConcreteSpec` and `AbstractSpec` each constrain one side; the soundness proof
+also needs the two sides' binary operators to agree. -/
 
 structure CrossSpec [Concrete] [Abstract] : Prop where
   /-- `⊕̂` soundly over-approximates `⊕`. -/
   opSem_sound : ∀ op v₁ v₂ (V₁ V₂ : VSet), V₁.Mem v₁ → V₂.Mem v₂ →
     (Abstract.opSemA op V₁ V₂).Mem (Concrete.opSem op v₁ v₂)
-  /-- Binary operators never produce a function value, so a function value
-      lives only at its own literal location (`Heap.FidCanon`). In particular
-      `and`/`or` are value-producing operators here: JS's short-circuit
-      `&&`/`||`, which return an operand (possibly a function), are not
-      modelled. -/
-  opSem_fid : ∀ op v₁ v₂ f, Concrete.opSem op v₁ v₂ ≠ .fid f
-  /-- An allocation never returns a literal location. -/
-  allocC_lit : ∀ h κ v, h.Finite → Concrete.allocC h κ ≠ Concrete.litLoc v
-  /-- Two allocations that return the same location have the same abstract
-      site: re-allocating a location (possible after an object literal with
-      no fields, which leaves its location unused) never needs `α` to
-      re-map it. -/
-  allocC_site : ∀ (h h' : Heap) κ κ' (ah ah' : AHeap), h.Finite → h'.Finite →
-    Concrete.allocC h κ = Concrete.allocC h' κ' → Abstract.allocA ah κ = Abstract.allocA ah' κ'
-
-/-- Extending `α` at a fresh allocation: `α` is extended (or already agrees)
-    to map the allocated location to its abstract site, and stays
-    allocation-safe for any heap that keeps in use what the current one does. -/
+/-- Extending `α` at a fresh allocation: `α` does not map the allocated
+    location yet, so it can be extended to map it to its abstract site, and the
+    extension stays allocation-safe for any heap that keeps in use what the
+    current one does, plus the allocated location itself. -/
 theorem AlphaFn.AllocSafe.extend [Concrete] [Abstract] (cspec : ConcreteSpec)
     (xspec : CrossSpec) {α : AlphaFn} {h : Heap} (k : α.AllocSafe h) (hfin : h.Finite)
     (κ : Idx) (ah : AHeap) :
     ∃ α', α' ≥α α ∧ α' (Concrete.allocC h κ) = some (Abstract.allocA ah κ) ∧
-      ∀ h' : Heap, (∀ l, h.Defined l → h'.Defined l) → α'.AllocSafe h' := by
+      ∀ h' : Heap, (∀ l, h.Defined l → h'.Defined l) → h'.Defined (Concrete.allocC h κ) →
+        α'.AllocSafe h' := by
   let l := Concrete.allocC h κ
   let α' : AlphaFn := fun l' => if l' = l then some (Abstract.allocA ah κ) else α l'
-  have hsite : Abstract.allocA AHeap.bot κ = Abstract.allocA ah κ :=
-    xspec.allocC_site h h κ κ _ _ hfin hfin rfl
+  have hnone : ∀ al, α l ≠ some al := by
+    intro al hl
+    rcases k l al hl with hdef | ⟨v, hv⟩
+    · exact Heap.not_defined_of_free (cspec.allocC_fresh h κ hfin) hdef
+    · exact cspec.allocC_lit h κ v hfin hv
   refine ⟨α', ?_, if_pos rfl, ?_⟩
   · intro l' al hl'
     by_cases e : l' = l
-    · subst e
-      simp only [α', if_pos]
-      rcases k _ al hl' with hdef | ⟨v, hv⟩ | ⟨h₀, κ₀, hfin₀, hl₀, hal⟩
-      · exact absurd hdef (Heap.not_defined_of_fresh (cspec.allocC_fresh h κ hfin))
-      · exact absurd hv (xspec.allocC_lit h κ v hfin)
-      · rw [hal]
-        exact congrArg some (xspec.allocC_site h₀ h κ₀ κ AHeap.bot ah hfin₀ hfin hl₀).symm
+    · subst e; exact absurd hl' (hnone al)
     · simpa [α', e] using hl'
-  · intro h' hd l' al hl'
+  · intro h' hd hl l' al hl'
     by_cases e : l' = l
-    · subst e
-      simp only [α', if_pos, Option.some.injEq] at hl'
-      exact Or.inr (Or.inr ⟨h, κ, hfin, rfl, hl' ▸ hsite.symm⟩)
+    · subst e; exact Or.inl hl
     · have : α l' = some al := by simpa [α', e] using hl'
-      rcases k l' al this with hdef | hrest
+      rcases k l' al this with hdef | hlit
       · exact Or.inl (hd l' hdef)
-      · exact Or.inr hrest
+      · exact Or.inr hlit
 
 /-! ## The initial abstraction
 
@@ -484,13 +455,14 @@ theorem AlphaFn.lits_allocSafe [Concrete] [Abstract] (h : Heap) :
   intro l al hl
   by_cases e : ∃ v, Concrete.litLoc v = l
   · obtain ⟨v, hv⟩ := e
-    exact Or.inr (Or.inl ⟨v, hv.symm⟩)
+    exact Or.inr ⟨v, hv.symm⟩
   · simp [AlphaFn.lits, e] at hl
 
 /-- The initial configuration of a run relates to the initial abstract
     configuration. -/
-theorem AConf.Alpha.init [Concrete] [Abstract] (cspec : ConcreteSpec) (s : Stmt) :
-    AConf.Alpha AlphaFn.lits (Conf.init s) (AConf.init s) := by
+theorem AConf.Alpha.init [Concrete] [Abstract] (cspec : ConcreteSpec) (Γ : Env)
+    (fs : List Fid) (s : Stmt) :
+    AConf.Alpha AlphaFn.lits (Conf.init Γ fs s) (AConf.init Γ s) := by
   refine ⟨⟨?_, ?_⟩, ?_, ?_, ?_, ?_⟩
   · intro l p l' h; exact absurd h (by simp [Conf.init, Heap.init])
   rotate_left
@@ -499,12 +471,18 @@ theorem AConf.Alpha.init [Concrete] [Abstract] (cspec : ConcreteSpec) (s : Stmt)
   · intro l h; exact (h : False).elim
   · intro l h; exact (h : False).elim
   intro l v hl
-  have hl' : (Val.undef :: s.lits).find? (fun w => Concrete.litLoc w == l) = some v := hl
+  have hl' : (initLits Γ fs s).find? (fun w => Concrete.litLoc w == l) = some v := hl
   have hmem := List.mem_of_find?_eq_some hl'
   have hp := List.find?_some hl'
   simp only [beq_iff_eq] at hp
   subst hp
-  exact ⟨Abstract.litLocA v, AlphaFn.lits_lits cspec v, hmem, rfl⟩
+  have hinit : InitLit Γ s v := by
+    rcases List.mem_cons.1 hmem with rfl | hmem
+    · exact Or.inl (List.mem_cons_self ..)
+    · rcases List.mem_append.1 hmem with hs | hΓ
+      · exact Or.inl (List.mem_cons_of_mem _ hs)
+      · exact Or.inr (Env.mem_lits hΓ)
+  exact ⟨Abstract.litLocA v, AlphaFn.lits_lits cspec v, hinit, rfl⟩
 
 /-! ## Actions and traces
 
