@@ -204,8 +204,26 @@ the end of `CoreJsAutomatonSemantics.lean`.
 9. **`CoreJsQuerySemantics.lean`** — the satisfaction relations in interval
    form `t, σ, ξ ⊨ F : i ⇝ j` (`Pat.Sat`/`QBody.Sat`), over execution
    records `Exec`/`Obs` (defined in `CoreJsSemantics.lean` — see its entry
-   above for why). Semantic decisions made with the user, worth knowing
-   before touching this file:
+   above for why). Statements and rules are written in the paper's notation,
+   as scoped Lean notation (table in the file header): `Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j`
+   (`Pat.Sat`, `QBody.Sat`; `Δ ⬝ …` for `QProg.Sat`, the paper's
+   `Δ, t, σ, ξ ⊨ F : i ⇝ j`) and `σ ⬝ ξ ⊨ I` (`Inv.Sat`/`Pred.Sat`). Keep new
+   statements in this notation.
+   - The one systematic change from the paper: `⬝` everywhere for the paper's
+     `,` (a term followed by `,` — or `;`, `·` — breaks tuples, `⟨…, …⟩` and
+     tactic blocks). The paper has no `⊢`: the program is the first
+     argument of the list, and `Θ` (its interpretation) takes its place.
+   - One notation stands for several relations; the types of `Θ`/`Δ` and
+     `F`/`P` pick one, so binders must be typed (`{Θ t σ ξ F i j}` is
+     ambiguous; use the `variable`s of the file's sections).
+   - The notations are declared *before* the inductive/recursive definitions
+     they name (`set_option hygiene false in`) so the defining rules use
+     them. `notation` then generates no unexpander, so each has a hand-written
+     `app_unexpander` building the node of the notation's named kind. Name
+     it without dots (`unexpandPatSat`): a dotted name puts a `scoped`
+     attribute in the wrong namespace and it silently never fires.
+   Semantic decisions made with the user, worth knowing before touching this
+   file:
    - `F₁ & F₂ : i ⇝ j` needs both sides matched from `i`, `j = max j₁ j₂`; one
      action may serve both sides (`a & a ≡ a`).
    - `except F'` is checked over the **whole trace** (`F'` matched from `0`, for
@@ -257,7 +275,8 @@ the end of `CoreJsAutomatonSemantics.lean`.
       restriction — formulas may nest/interleave arbitrarily.
     - **Structures**: `Model` — a rigid part (`obs : Obs`, constant across the trace)
       plus a temporal part (`states`, the actions holding at each position).
-    - **Satisfaction**: `Atom.Sat`, `Ltl.Sat` (`m, ξ, i ⊨ φ`), `Ltl.Holds` (at
+    - **Satisfaction**: `Atom.Sat`, `Ltl.Sat` (both written `m ⬝ ξ ⬝ i ⊨ φ`, the
+      usual `m, ξ, i ⊨ φ`, same scheme as the query notation), `Ltl.Holds` (at
       boundary `0`).
     Conventions:
     - Positions are *boundaries* `0 … n` (`n` = number of states); boundary `n` is a

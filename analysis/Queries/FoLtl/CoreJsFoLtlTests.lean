@@ -130,18 +130,18 @@ theorem fo_excl :
 
 /-- `Y ⊤` is false at `0`, true at `1` and `2`. -/
 theorem fo_yesterday :
-    ¬ (Ltl.yesterday .tt : Ltl Var).Sat eTaint.toModel ξt 0 ∧
-    (Ltl.yesterday .tt : Ltl Var).Sat eTaint.toModel ξt 1 ∧
-    (Ltl.yesterday .tt : Ltl Var).Sat eTaint.toModel ξt 2 := by
+    ¬ eTaint.toModel ⬝ ξt ⬝ 0 ⊨ (Ltl.yesterday .tt : Ltl Var) ∧
+    eTaint.toModel ⬝ ξt ⬝ 1 ⊨ (Ltl.yesterday .tt : Ltl Var) ∧
+    eTaint.toModel ⬝ ξt ⬝ 2 ⊨ (Ltl.yesterday .tt : Ltl Var) := by
   simp only [Ltl.Sat]
   decide
 
 /-- `O(retn(f,r))`: the return, once made, stays "once true" forever after (it does not
     yet hold at `0`, the call's own position). -/
 theorem fo_once :
-    ¬ (Ltl.O retFr).Sat eTaint.toModel ξt 0 ∧
-    (Ltl.O retFr).Sat eTaint.toModel ξt 1 ∧
-    (Ltl.O retFr).Sat eTaint.toModel ξt 2 := by
+    ¬ eTaint.toModel ⬝ ξt ⬝ 0 ⊨ Ltl.O retFr ∧
+    eTaint.toModel ⬝ ξt ⬝ 1 ⊨ Ltl.O retFr ∧
+    eTaint.toModel ⬝ ξt ⬝ 2 ⊨ Ltl.O retFr := by
   simp only [Ltl.sat_O, retFr, Ltl.Sat, Atom.Sat, Exec.holds_toModel]
   refine ⟨?_, ⟨1, by decide, by decide⟩, ⟨1, by decide, by decide⟩⟩
   rintro ⟨k, hk, hc⟩
@@ -151,8 +151,8 @@ theorem fo_once :
 
 /-- `H(¬retn(f,r))`: "no return has happened yet" holds at `0`, fails from `1` on. -/
 theorem fo_historically :
-    (Ltl.H (.not retFr)).Sat eTaint.toModel ξt 0 ∧
-    ¬ (Ltl.H (.not retFr)).Sat eTaint.toModel ξt 1 := by
+    eTaint.toModel ⬝ ξt ⬝ 0 ⊨ Ltl.H (.not retFr) ∧
+    ¬ eTaint.toModel ⬝ ξt ⬝ 1 ⊨ Ltl.H (.not retFr) := by
   simp only [Ltl.sat_H, retFr, Ltl.Sat, Atom.Sat, Exec.holds_toModel]
   constructor
   · intro k hk
@@ -165,8 +165,9 @@ theorem fo_historically :
     under `X X`. -/
 theorem fo_atStart_nested :
     (Ltl.next (Ltl.next (Ltl.atStart (.atom (.sk "f"))))).Holds eTaint.toModel ξt := by
-  have h0 : (Ltl.atStart (.atom (.sk "f")) : Ltl Var).Sat eTaint.toModel ξt 0 :=
-    Ltl.sat_atStart.2 (by simp [Atom.Sat, Exec.toModel, eTaint, ξt] : (Atom.sk "f").Sat eTaint.toModel ξt 0)
+  have h0 : eTaint.toModel ⬝ ξt ⬝ 0 ⊨ (Ltl.atStart (.atom (.sk "f")) : Ltl Var) :=
+    Ltl.sat_atStart.2
+      (by simp [Atom.Sat, Exec.toModel, eTaint, ξt] : eTaint.toModel ⬝ ξt ⬝ 0 ⊨ Atom.sk "f")
   refine ⟨by decide, by decide, ?_⟩
   exact Ltl.sat_atStart_indep.2 h0
 

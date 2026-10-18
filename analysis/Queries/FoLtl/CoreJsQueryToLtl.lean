@@ -207,8 +207,8 @@ theorem updateFresh_cons (ξ : LVar → Loc) (n : Nat) (l : Loc) (ls : List Loc)
 /-- Unfolding `∃` over the fresh tags of `locals` into an existential over a list of
     locations of matching length. -/
 theorem Ltl.sat_exN_fresh (m : Model) (ξ : LVar → Loc) (φ : Ltl LVar) (i n : Nat) :
-    ∀ locals : List Var, (Ltl.exN (freshVars locals n) φ).Sat m ξ i ↔
-      ∃ ls : List Loc, ls.length = locals.length ∧ φ.Sat m (updateFresh ξ n ls) i := by
+    ∀ locals : List Var, m ⬝ ξ ⬝ i ⊨ Ltl.exN (freshVars locals n) φ ↔
+      ∃ ls : List Loc, ls.length = locals.length ∧ m ⬝ updateFresh ξ n ls ⬝ i ⊨ φ := by
   intro locals
   induction locals generalizing n ξ with
   | nil =>
@@ -306,7 +306,7 @@ never reach back down to an already-bound tag. -/
 /-- `φ` cannot distinguish `ξ` from `updateFresh ξ m ls` for any `m ≥ n`. -/
 def Ltl.Indep (φ : Ltl LVar) (n : Nat) : Prop :=
   ∀ (m : Model) (ξ : LVar → Loc) (k : Nat) (ls : List Loc), n ≤ k →
-    ∀ i, φ.Sat m ξ i ↔ φ.Sat m (updateFresh ξ k ls) i
+    ∀ i, m ⬝ ξ ⬝ i ⊨ φ ↔ m ⬝ updateFresh ξ k ls ⬝ i ⊨ φ
 
 theorem Ltl.Indep.mono {φ : Ltl LVar} {n n' : Nat} (h : φ.Indep n) (hn : n ≤ n') : φ.Indep n' :=
   fun m ξ k ls hk i => h m ξ k ls (Nat.le_trans hn hk) i
@@ -429,7 +429,7 @@ def QAct.toAtom (ρ : Ren) : QAct → Atom LVar
   | .retn xf x       => .retn (ρ xf) (ρ x)
 
 theorem QAct.sat_toAtom (m : Model) (ρ : Ren) (ξ : LVar → Loc) (i : Nat) (a : QAct) :
-    (a.toAtom ρ).Sat m ξ i ↔ m.holds i (a.inst (ξ ∘ ρ)) := by
+    m ⬝ ξ ⬝ i ⊨ a.toAtom ρ ↔ m.holds i (a.inst (ξ ∘ ρ)) := by
   cases a <;> simp [QAct.toAtom, QAct.inst, Atom.Sat, Function.comp_def]
 
 /-- A taint/value predicate as an FO-LTL atom, under a renaming. -/
@@ -441,7 +441,7 @@ def Pred.tr (ρ : Ren) : Pred → Atom LVar
   | .hv x c    => .hv (ρ x) c
 
 theorem Pred.sat_tr (m : Model) (ρ : Ren) (ξ : LVar → Loc) (i : Nat) (p : Pred) :
-    (Pred.tr ρ p).Sat m ξ i ↔ p.Sat m.obs (ξ ∘ ρ) := by
+    m ⬝ ξ ⬝ i ⊨ Pred.tr ρ p ↔ m.obs ⬝ (ξ ∘ ρ) ⊨ p := by
   cases p <;> simp [Pred.tr, Pred.Sat, Atom.Sat]
 
 /-- A query invariant as an FO-LTL formula, under a renaming.  Position-independent,
@@ -456,7 +456,7 @@ def Inv.tr (ρ : Ren) : Inv → Ltl LVar
   | .ff        => .ff
 
 theorem Inv.sat_tr (m : Model) (ρ : Ren) (ξ : LVar → Loc) (i : Nat) :
-    ∀ I : Inv, (Inv.tr ρ I).Sat m ξ i ↔ I.Sat m.obs (ξ ∘ ρ)
+    ∀ I : Inv, m ⬝ ξ ⬝ i ⊨ Inv.tr ρ I ↔ m.obs ⬝ (ξ ∘ ρ) ⊨ I
   | .pred p    => Pred.sat_tr m ρ ξ i p
   | .not I     => by simp [Inv.tr, Ltl.Sat, Inv.Sat, Inv.sat_tr m ρ ξ i I]
   | .or I₁ I₂  => by simp [Inv.tr, Ltl.Sat, Inv.Sat, Inv.sat_tr m ρ ξ i I₁, Inv.sat_tr m ρ ξ i I₂]
@@ -554,7 +554,7 @@ theorem QProg.interp_findRest (t : List Act) (σ : Obs) (Q : QName) (ls : List L
     ∀ {Δ : QProg} {q : Query} {Δ' : QProg}, QProg.findRest? Q Δ = some (q, Δ') →
       (QProg.interp t σ Δ Q ls i j ↔
         ls.length = q.params.length ∧
-        QBody.Sat (QProg.interp t σ Δ') t σ (LEnv.empty.bind q.params ls) q.body i j)
+        QProg.interp t σ Δ' ⬝ t ⬝ σ ⬝ LEnv.empty.bind q.params ls ⊨ q.body : i ⇝ j)
   | [], q, Δ', h => by simp [QProg.findRest?] at h
   | q₀ :: Δ₀, q, Δ', h => by
       simp only [QProg.findRest?] at h
@@ -783,7 +783,7 @@ def Pat.NoQuery : Pat → Prop
 
 /-- `K` is downward-closed on the boundaries of the model. -/
 def Mono {ν : Type} [DecidableEq ν] (m : Model) (ξ : ν → Loc) (K : Ltl ν) : Prop :=
-  ∀ p q, q ≤ p → p ≤ m.len → K.Sat m ξ p → K.Sat m ξ q
+  ∀ p q, q ≤ p → p ≤ m.len → m ⬝ ξ ⬝ p ⊨ K → m ⬝ ξ ⬝ q ⊨ K
 
 theorem Mono.tt {ν : Type} [DecidableEq ν] (m : Model) (ξ : ν → Loc) :
     Mono m ξ (Ltl.tt : Ltl ν) := fun _ _ _ _ _ => trivial
@@ -833,7 +833,7 @@ theorem Ltl.Indep.mono_iff {K : Ltl LVar} {n : Nat} (hKI : K.Indep n) {m : Model
 
 theorem Mono.and_iff_max {ν : Type} [DecidableEq ν] {m : Model} {ξ : ν → Loc} {K : Ltl ν}
     (hK : Mono m ξ K) {j₁ j₂ : Nat} (h₁ : j₁ ≤ m.len) (h₂ : j₂ ≤ m.len) :
-    K.Sat m ξ (max j₁ j₂) ↔ K.Sat m ξ j₁ ∧ K.Sat m ξ j₂ := by
+    m ⬝ ξ ⬝ max j₁ j₂ ⊨ K ↔ m ⬝ ξ ⬝ j₁ ⊨ K ∧ m ⬝ ξ ⬝ j₂ ⊨ K := by
   constructor
   · intro h
     exact ⟨hK _ _ (Nat.le_max_left _ _) (Nat.max_le.2 ⟨h₁, h₂⟩) h,
@@ -892,8 +892,8 @@ theorem Pat.tr_correct {Δ : QProg} (e : Exec) (Θ : Interp) (hΘ : Θ.Ok e.trc.
     (ρ : Ren) (ξ : LVar → Loc) :
     ∀ {F : Pat}, F.NoQuery → ∀ {K n φ n'}, Pat.Tr ρ Δ F K n φ n' →
       Mono e.toModel ξ K → ∀ {i : Nat}, i ≤ e.toModel.len →
-      ((∃ j, Pat.Sat Θ e.trc.toList e.obs (ξ ∘ ρ) F i j ∧ K.Sat e.toModel ξ j) ↔
-        φ.Sat e.toModel ξ i) := by
+      ((∃ j, Θ ⬝ e.trc.toList ⬝ e.obs ⬝ ξ ∘ ρ ⊨ F : i ⇝ j ∧ e.toModel ⬝ ξ ⬝ j ⊨ K) ↔
+        e.toModel ⬝ ξ ⬝ i ⊨ φ) := by
   have hlen : e.toModel.len = e.trc.toList.length := Exec.toModel_len e
   intro F
   induction F with
@@ -1002,8 +1002,8 @@ def PatCorrect (N : Nat) : Prop :=
     n ≤ n' ∧ φ.Indep n' ∧
     (∀ ξ, Mono e.toModel ξ K → Mono e.toModel ξ φ) ∧
     ∀ (ξ : LVar → Loc), Mono e.toModel ξ K → ∀ i, i ≤ e.toModel.len →
-      ((∃ j, Pat.Sat (QProg.interp e.trc.toList e.obs Δ) e.trc.toList e.obs (ξ ∘ ρ) F i j ∧
-             K.Sat e.toModel ξ j) ↔ φ.Sat e.toModel ξ i)
+      ((∃ j, QProg.interp e.trc.toList e.obs Δ ⬝ e.trc.toList ⬝ e.obs ⬝ ξ ∘ ρ ⊨ F : i ⇝ j ∧
+             e.toModel ⬝ ξ ⬝ j ⊨ K) ↔ e.toModel ⬝ ξ ⬝ i ⊨ φ)
 
 /-- The same, for `QBody.Tr`/`QBody.Sat`. -/
 def QBodyCorrect (N : Nat) : Prop :=
@@ -1013,8 +1013,8 @@ def QBodyCorrect (N : Nat) : Prop :=
     n ≤ n' ∧ φ.Indep n' ∧
     (∀ ξ, Mono e.toModel ξ K → Mono e.toModel ξ φ) ∧
     ∀ (ξ : LVar → Loc), Mono e.toModel ξ K → ∀ i, i ≤ e.toModel.len →
-      ((∃ j, QBody.Sat (QProg.interp e.trc.toList e.obs Δ) e.trc.toList e.obs (ξ ∘ ρ) P i j ∧
-             K.Sat e.toModel ξ j) ↔ φ.Sat e.toModel ξ i)
+      ((∃ j, QProg.interp e.trc.toList e.obs Δ ⬝ e.trc.toList ⬝ e.obs ⬝ ξ ∘ ρ ⊨ P : i ⇝ j ∧
+             e.toModel ⬝ ξ ⬝ j ⊨ K) ↔ e.toModel ⬝ ξ ⬝ i ⊨ φ)
 
 theorem correct_all : ∀ N, PatCorrect N ∧ QBodyCorrect N := by
   intro N
@@ -1184,7 +1184,7 @@ theorem correct_all : ∀ N, PatCorrect N ∧ QBodyCorrect N := by
                 rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh P.locals hfresh hlen' ξ)
               have hKls' : Mono e.toModel (updateFresh ξ n ls') K :=
                 (hKI.mono_iff (Nat.le_refl n) ls').1 hK
-              have hKj' : K.Sat e.toModel (updateFresh ξ n ls') j :=
+              have hKj' : e.toModel ⬝ updateFresh ξ n ls' ⬝ j ⊨ K :=
                 (hKI e.toModel ξ n ls' (Nat.le_refl n) j).1 hKj
               refine ⟨ls', hlen', ?_⟩
               simp only [Ltl.Sat]
@@ -1215,8 +1215,8 @@ theorem correct_all : ∀ N, PatCorrect N ∧ QBodyCorrect N := by
         have hnn' : n ≤ n' := Nat.le_trans hnn₁ hn₁_n'
         have hnpat_n' : n + P.locals.length ≤ n' := Nat.le_trans hn_n₁ hn₁_n'
         have hExIff : ∀ ξ' : LVar → Loc,
-            (∃ j, Pat.Sat (QProg.interp e.trc.toList e.obs Δ) e.trc.toList e.obs (ξ' ∘ ρ') F' 0 j) ↔
-              φ_ex.Sat e.toModel ξ' 0 := by
+            (∃ j, QProg.interp e.trc.toList e.obs Δ ⬝ e.trc.toList ⬝ e.obs ⬝ ξ' ∘ ρ' ⊨ F' : 0 ⇝ j) ↔
+              e.toModel ⬝ ξ' ⬝ 0 ⊨ φ_ex := by
           intro ξ'
           simpa [Ltl.Sat] using hcorrEx ξ' (Mono.tt _ _) 0 (Nat.zero_le _)
         refine ⟨hnn',
@@ -1243,7 +1243,7 @@ theorem correct_all : ∀ N, PatCorrect N ∧ QBodyCorrect N := by
                 rw [hρ']; exact funext (Ren.sat_updateFresh_extendFresh P.locals hfresh hlen' ξ)
               have hKls' : Mono e.toModel (updateFresh ξ n ls') K :=
                 (hKI.mono_iff (Nat.le_refl n) ls').1 hK
-              have hKj' : K.Sat e.toModel (updateFresh ξ n ls') j :=
+              have hKj' : e.toModel ⬝ updateFresh ξ n ls' ⬝ j ⊨ K :=
                 (hKI e.toModel ξ n ls' (Nat.le_refl n) j).1 hKj
               refine ⟨ls', hlen', ?_⟩
               simp only [Ltl.Sat]

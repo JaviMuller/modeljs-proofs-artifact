@@ -9,13 +9,26 @@
   semantics; `Obs.ofRun` (also in `CoreJsSemantics.lean`) shows how a concrete
   run's final heap and taint register yield an observation.
 
-  The relations:
+  The relations, in the paper's notation and as written here (Lean notation,
+  `scoped` in `CoreJS`):
 
-  * `Inv.Sat σ ξ I`                       — `σ, ξ ⊨ I`
-  * `Pat.Sat Θ t σ ξ F i j`               — `t, σ, ξ ⊨ F : i ⇝ j`
-  * `QBody.Sat Θ t σ ξ P i j`           — the same for query bodies
-  * `Δ ⊢ t, σ, ξ ⊨ F : i ⇝ j`             — `Pat.Sat` with query invocations
-                                            resolved in the program `Δ`
+  | Paper                     | Lean                        | Definition                |
+  |---------------------------|-----------------------------|---------------------------|
+  | `σ, ξ ⊨ p`                | `σ ⬝ ξ ⊨ p`                 | `Pred.Sat σ ξ p`          |
+  | `σ, ξ ⊨ I`                | `σ ⬝ ξ ⊨ I`                 | `Inv.Sat σ ξ I`           |
+  | `Δ, t, σ, ξ ⊨ F : i ⇝ j`  | `Δ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j` | `QProg.Sat Δ t σ ξ F i j` |
+  |                           | `Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j` | `Pat.Sat Θ t σ ξ F i j`   |
+  | (same, for a body `P`)    | `Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j` | `QBody.Sat Θ t σ ξ P i j` |
+
+  The one systematic change from the paper: arguments are separated by `⬝`
+  instead of `,` (in Lean, a term followed by `,` clashes with tuples and
+  `⟨…, …⟩`).  The proofs mostly use the `Θ` form: `Θ` is the interpretation
+  of query invocations that the program `Δ` determines on `t` and `σ`
+  (`QProg.interp`, below), and stands in `Δ`'s place in the list — it is
+  what the inductive definition can be parametrised by (see the note on
+  strict positivity below).  One notation covers the last three rows: the
+  types of `Θ`/`Δ` (`Interp` or `QProg`) and of `F`/`P` (`Pat` or `QBody`)
+  select the relation, so binders in statements carry their types.
 
   `t, σ, ξ ⊨ F : i ⇝ j` reads: starting after position `i` of the trace,
   `F` is performed, and the last action it uses is `t[j-1]` (so `j` is one
@@ -83,7 +96,7 @@ def QAct.inst (ξ : LEnv) : QAct → Act
 
 /-! ## Invariants -/
 
-/-- `σ, ξ ⊨ p`.  `sv` requires both locations to hold a value: two locations
+/-- `σ ⬝ ξ ⊨ p`.  `sv` requires both locations to hold a value: two locations
     with no value do not "hold the same value" (and this is distinct from
     both holding `.undef`, which is a value). -/
 def Pred.Sat (σ : Obs) (ξ : LEnv) : Pred → Prop
@@ -93,14 +106,31 @@ def Pred.Sat (σ : Obs) (ξ : LEnv) : Pred → Prop
   | .sv x₁ x₂  => ∃ v, σ.val (ξ x₁) = some v ∧ σ.val (ξ x₂) = some v
   | .hv x c    => σ.val (ξ x) = some c
 
-/-- `σ, ξ ⊨ I`. -/
+@[inherit_doc] scoped notation:50 σ:51 " ⬝ " ξ:51 " ⊨ " p:51 => Pred.Sat σ ξ p
+
+-- Declared before `Inv.Sat` so that its defining equations can use it; without
+-- hygiene, `Inv.Sat` is resolved where the notation is used.
+set_option hygiene false in
+/-- `σ ⬝ ξ ⊨ I` (the paper's `σ, ξ ⊨ I`). -/
+scoped notation:50 (name := invSatNotation) σ:51 " ⬝ " ξ:51 " ⊨ " I:51 => Inv.Sat σ ξ I
+
+/-- `σ ⬝ ξ ⊨ I`. -/
 def Inv.Sat (σ : Obs) (ξ : LEnv) : Inv → Prop
-  | .pred p    => p.Sat σ ξ
-  | .not I     => ¬ I.Sat σ ξ
-  | .or I₁ I₂  => I₁.Sat σ ξ ∨ I₂.Sat σ ξ
-  | .and I₁ I₂ => I₁.Sat σ ξ ∧ I₂.Sat σ ξ
+  | .pred p    => σ ⬝ ξ ⊨ p
+  | .not I     => ¬ σ ⬝ ξ ⊨ I
+  | .or I₁ I₂  => σ ⬝ ξ ⊨ I₁ ∨ σ ⬝ ξ ⊨ I₂
+  | .and I₁ I₂ => σ ⬝ ξ ⊨ I₁ ∧ σ ⬝ ξ ⊨ I₂
   | .tt        => True
   | .ff        => False
+
+/- `notation` generates no unexpander for a constant that does not exist yet, so
+   goals would show `Inv.Sat σ ξ I`; this one restores the notation.  (A quotation
+   `` `($σ ⬝ $ξ ⊨ $I) `` would be ambiguous with `Pred.Sat`'s, hence the explicit
+   node of the right kind.) -/
+@[scoped app_unexpander Inv.Sat] def unexpandInvSat : Lean.PrettyPrinter.Unexpander
+  | `($_ $σ $ξ $I) => pure <| Lean.mkNode ``invSatNotation
+      #[σ, Lean.mkAtom "⬝", ξ, Lean.mkAtom "⊨", I]
+  | _ => throw ()
 
 /-! ## Action patterns and query bodies
 
@@ -111,60 +141,87 @@ and `σ` fixed) and is instantiated by `QProg.interp`. -/
 /-- Interpretations of query invocations. -/
 abbrev Interp := QName → List Loc → Nat → Nat → Prop
 
-/-- `t, σ, ξ ⊨ F : i ⇝ j`, relative to the interpretation `Θ` of invocations. -/
+-- As for `Inv.Sat`: declared before the inductives so that their rules can use it.
+-- The same notation stands for `Pat.Sat`, `QBody.Sat` and (below) `QProg.Sat`;
+-- the types of `Θ`/`Δ` and of `F`/`P` select the one meant.
+set_option hygiene false in
+/-- `Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j`: the paper's `Δ, t, σ, ξ ⊨ F : i ⇝ j`, with the
+    interpretation `Θ` of invocations in place of the program `Δ`. -/
+scoped notation:50 (name := patSatNotation)
+  Θ:51 " ⬝ " t:51 " ⬝ " σ:51 " ⬝ " ξ:51 " ⊨ " F " : " i " ⇝ " j:51 => Pat.Sat Θ t σ ξ F i j
+
+set_option hygiene false in
+/-- `Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j` for a query body `P`. -/
+scoped notation:50 (name := qbodySatNotation)
+  Θ:51 " ⬝ " t:51 " ⬝ " σ:51 " ⬝ " ξ:51 " ⊨ " P " : " i " ⇝ " j:51 => QBody.Sat Θ t σ ξ P i j
+
+/-- `Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j`, relative to the interpretation `Θ` of invocations. -/
 inductive Pat.Sat (Θ : Interp) (t : List Act) (σ : Obs) (ξ : LEnv) :
     Pat → Nat → Nat → Prop where
 
   /-- `ε` -/
-  | eps {i} : Pat.Sat Θ t σ ξ .eps i i
+  | eps {i} : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .eps : i ⇝ i
 
   /-- `a` -/
   | act {a i j} :
       i < j →
       j ≤ t.length →
       t[j - 1]? = some (a.inst ξ) →
-      Pat.Sat Θ t σ ξ (.act a) i j
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .act a : i ⇝ j
 
   /-- `Q(z⃗)` -/
   | query {Q zs i j} :
       Θ Q (zs.map ξ) i j →
-      Pat.Sat Θ t σ ξ (.query Q zs) i j
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .query Q zs : i ⇝ j
 
   /-- `F₁ ; F₂` -/
   | seq {F₁ F₂ i k j} :
-      Pat.Sat Θ t σ ξ F₁ i k →
-      Pat.Sat Θ t σ ξ F₂ k j →
-      Pat.Sat Θ t σ ξ (.seq F₁ F₂) i j
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₁ : i ⇝ k →
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₂ : k ⇝ j →
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .seq F₁ F₂ : i ⇝ j
 
   /-- `F₁ ‖ F₂`, left -/
   | altL {F₁ F₂ i j} :
-      Pat.Sat Θ t σ ξ F₁ i j →
-      Pat.Sat Θ t σ ξ (.alt F₁ F₂) i j
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₁ : i ⇝ j →
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .alt F₁ F₂ : i ⇝ j
 
   /-- `F₁ ‖ F₂`, right -/
   | altR {F₁ F₂ i j} :
-      Pat.Sat Θ t σ ξ F₂ i j →
-      Pat.Sat Θ t σ ξ (.alt F₁ F₂) i j
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₂ : i ⇝ j →
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .alt F₁ F₂ : i ⇝ j
 
   /-- `F₁ & F₂`: both matched from `i`, ending at the later of the two. -/
   | both {F₁ F₂ i j₁ j₂ j} :
-      Pat.Sat Θ t σ ξ F₁ i j₁ →
-      Pat.Sat Θ t σ ξ F₂ i j₂ →
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₁ : i ⇝ j₁ →
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₂ : i ⇝ j₂ →
       j = max j₁ j₂ →
-      Pat.Sat Θ t σ ξ (.both F₁ F₂) i j
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .both F₁ F₂ : i ⇝ j
 
-/-- `t, σ, ξ ⊨ (exists y⃗: F when I except F') : i ⇝ j`.  The positive part
+/-- `Θ ⬝ t ⬝ σ ⬝ ξ ⊨ (exists y⃗: F when I except F') : i ⇝ j`.  The positive part
     `F` is matched from `i`; the excluded pattern `F'` is checked from the
     start of the trace, so that the guard does not depend on `i`. -/
 inductive QBody.Sat (Θ : Interp) (t : List Act) (σ : Obs) :
     LEnv → QBody → Nat → Nat → Prop where
-  | mk {ξ ξ' P ls i j} :
+  | mk {ξ ξ' : LEnv} {P : QBody} {ls : List Loc} {i j : Nat} :
       ls.length = P.locals.length →
       ξ' = ξ.bind P.locals ls →
-      Pat.Sat Θ t σ ξ' P.pattern i j →
-      Inv.Sat σ ξ' P.when →
-      (∀ F', P.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ' F' 0 k) →
-      QBody.Sat Θ t σ ξ P i j
+      Θ ⬝ t ⬝ σ ⬝ ξ' ⊨ P.pattern : i ⇝ j →
+      σ ⬝ ξ' ⊨ P.when →
+      (∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ σ ⬝ ξ' ⊨ F' : 0 ⇝ k) →
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j
+
+-- Unexpanders, as for `Inv.Sat`.
+@[scoped app_unexpander Pat.Sat] def unexpandPatSat : Lean.PrettyPrinter.Unexpander
+  | `($_ $Θ $t $σ $ξ $F $i $j) => pure <| Lean.mkNode ``patSatNotation
+      #[Θ, Lean.mkAtom "⬝", t, Lean.mkAtom "⬝", σ, Lean.mkAtom "⬝", ξ, Lean.mkAtom "⊨", F,
+        Lean.mkAtom ":", i, Lean.mkAtom "⇝", j]
+  | _ => throw ()
+
+@[scoped app_unexpander QBody.Sat] def unexpandQBodySat : Lean.PrettyPrinter.Unexpander
+  | `($_ $Θ $t $σ $ξ $P $i $j) => pure <| Lean.mkNode ``qbodySatNotation
+      #[Θ, Lean.mkAtom "⬝", t, Lean.mkAtom "⬝", σ, Lean.mkAtom "⬝", ξ, Lean.mkAtom "⊨", P,
+        Lean.mkAtom ":", i, Lean.mkAtom "⇝", j]
+  | _ => throw ()
 
 /-! ## Query programs -/
 
@@ -177,15 +234,15 @@ def QProg.interp (t : List Act) (σ : Obs) : QProg → Interp
   | q :: Δ => fun Q ls i j =>
       if Q = q.name then
         ls.length = q.params.length ∧
-        QBody.Sat (QProg.interp t σ Δ) t σ (LEnv.empty.bind q.params ls) q.body i j
+        QProg.interp t σ Δ ⬝ t ⬝ σ ⬝ LEnv.empty.bind q.params ls ⊨ q.body : i ⇝ j
       else QProg.interp t σ Δ Q ls i j
 
-/-- `Δ ⊢ t, σ, ξ ⊨ F : i ⇝ j`. -/
+/-- `Δ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j`: the paper's `Δ, t, σ, ξ ⊨ F : i ⇝ j`. -/
 def QProg.Sat (Δ : QProg) (t : List Act) (σ : Obs) (ξ : LEnv) (F : Pat) (i j : Nat) : Prop :=
-  Pat.Sat (Δ.interp t σ) t σ ξ F i j
+  Δ.interp t σ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j
 
-@[inherit_doc] scoped notation:50 Δ " ⊢ " t ", " σ ", " ξ " ⊨ " F " : " i " ⇝ " j =>
-  QProg.Sat Δ t σ ξ F i j
+@[inherit_doc] scoped notation:50
+  Δ:51 " ⬝ " t:51 " ⬝ " σ:51 " ⬝ " ξ:51 " ⊨ " F " : " i " ⇝ " j:51 => QProg.Sat Δ t σ ξ F i j
 
 /-- The execution record `e` matches the query `Q` applied to `l⃗`:
     `t, σ, [x⃗ ↦ l⃗] ⊨ P_Q : 0 ⇝ j` for some `j`.  Starting at `0` loses no
@@ -200,12 +257,16 @@ Facts about the position bounds and the algebra of the combinators.  The
 position bounds hold of `Pat.Sat` for any interpretation `Θ` that respects
 them, and `QProg.interp` does. -/
 
+section sanity
+
+variable {Θ : Interp} {t : List Act} {σ : Obs} {ξ : LEnv} {F G H : Pat} {P : QBody} {i j : Nat}
+
 /-- An interpretation only relates `i` to `j ≥ i`, and stays within the trace. -/
 structure Interp.Ok (Θ : Interp) (t : List Act) : Prop where
   le    : ∀ Q ls i j, Θ Q ls i j → i ≤ j
   bound : ∀ Q ls i j, Θ Q ls i j → i ≤ t.length → j ≤ t.length
 
-theorem Pat.Sat.le {Θ t σ ξ F i j} (hΘ : Θ.Ok t) : Pat.Sat Θ t σ ξ F i j → i ≤ j := by
+theorem Pat.Sat.le (hΘ : Θ.Ok t) : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j → i ≤ j := by
   intro h
   induction h with
   | eps => exact Nat.le_refl _
@@ -216,8 +277,8 @@ theorem Pat.Sat.le {Θ t σ ξ F i j} (hΘ : Θ.Ok t) : Pat.Sat Θ t σ ξ F i j
   | altR _ ih => exact ih
   | both _ _ hj ih₁ _ => omega
 
-theorem Pat.Sat.bound {Θ t σ ξ F i j} (hΘ : Θ.Ok t) :
-    Pat.Sat Θ t σ ξ F i j → i ≤ t.length → j ≤ t.length := by
+theorem Pat.Sat.bound (hΘ : Θ.Ok t) :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j → i ≤ t.length → j ≤ t.length := by
   intro h
   induction h with
   | eps => exact id
@@ -228,13 +289,13 @@ theorem Pat.Sat.bound {Θ t σ ξ F i j} (hΘ : Θ.Ok t) :
   | altR _ ih => exact ih
   | both _ _ hj ih₁ ih₂ => intro hi; have := ih₁ hi; have := ih₂ hi; omega
 
-theorem QBody.Sat.le {Θ t σ ξ P i j} (hΘ : Θ.Ok t) : QBody.Sat Θ t σ ξ P i j → i ≤ j := by
+theorem QBody.Sat.le (hΘ : Θ.Ok t) : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j → i ≤ j := by
   intro h
   cases h with
   | mk _ _ hb _ _ => exact hb.le hΘ
 
-theorem QBody.Sat.bound {Θ t σ ξ P i j} (hΘ : Θ.Ok t) :
-    QBody.Sat Θ t σ ξ P i j → i ≤ t.length → j ≤ t.length := by
+theorem QBody.Sat.bound (hΘ : Θ.Ok t) :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j → i ≤ t.length → j ≤ t.length := by
   intro h
   cases h with
   | mk _ _ hb _ _ => exact hb.bound hΘ
@@ -270,8 +331,8 @@ loses no generality. -/
 def Interp.LowerStart (Θ : Interp) : Prop :=
   ∀ Q ls i j i', Θ Q ls i j → i' ≤ i → ∃ j', j' ≤ j ∧ Θ Q ls i' j'
 
-theorem Pat.Sat.lower_start {Θ t σ ξ F i j} (hΘ : Θ.LowerStart) (h : Pat.Sat Θ t σ ξ F i j) :
-    ∀ i', i' ≤ i → ∃ j', j' ≤ j ∧ Pat.Sat Θ t σ ξ F i' j' := by
+theorem Pat.Sat.lower_start (hΘ : Θ.LowerStart) (h : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j) :
+    ∀ i', i' ≤ i → ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i' ⇝ j' := by
   induction h with
   | eps => intro i' hi; exact ⟨i', hi, .eps⟩
   | act hij hj ht => intro i' hi; exact ⟨_, Nat.le_refl _, .act (by omega) hj ht⟩
@@ -298,8 +359,8 @@ theorem Pat.Sat.lower_start {Θ t σ ξ F i j} (hΘ : Θ.LowerStart) (h : Pat.Sa
     obtain ⟨j₂', hj₂', h₂⟩ := ih₂ i' hi
     exact ⟨max j₁' j₂', by omega, .both h₁ h₂ rfl⟩
 
-theorem QBody.Sat.lower_start {Θ t σ ξ P i j} (hΘ : Θ.LowerStart) (h : QBody.Sat Θ t σ ξ P i j) :
-    ∀ i', i' ≤ i → ∃ j', j' ≤ j ∧ QBody.Sat Θ t σ ξ P i' j' := by
+theorem QBody.Sat.lower_start (hΘ : Θ.LowerStart) (h : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j) :
+    ∀ i', i' ≤ i → ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i' ⇝ j' := by
   intro i' hi
   cases h with
   | mk hlen hξ' hpat hwhen hexcept =>
@@ -329,8 +390,8 @@ theorem Exec.Matches.of_interp {Δ : QProg} {e : Exec} {Q : QName} {ls : List Lo
   ⟨j', h'⟩
 
 /-- `ε` is a unit for `;` on the left. -/
-theorem Pat.Sat.seq_eps_left {Θ t σ ξ F i j} :
-    Pat.Sat Θ t σ ξ (.seq .eps F) i j ↔ Pat.Sat Θ t σ ξ F i j := by
+theorem Pat.Sat.seq_eps_left :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .seq .eps F : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -338,8 +399,8 @@ theorem Pat.Sat.seq_eps_left {Θ t σ ξ F i j} :
   · intro h; exact .seq .eps h
 
 /-- `ε` is a unit for `;` on the right. -/
-theorem Pat.Sat.seq_eps_right {Θ t σ ξ F i j} :
-    Pat.Sat Θ t σ ξ (.seq F .eps) i j ↔ Pat.Sat Θ t σ ξ F i j := by
+theorem Pat.Sat.seq_eps_right :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .seq F .eps : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -347,8 +408,8 @@ theorem Pat.Sat.seq_eps_right {Θ t σ ξ F i j} :
   · intro h; exact .seq h .eps
 
 /-- `;` is associative. -/
-theorem Pat.Sat.seq_assoc {Θ t σ ξ F G H i j} :
-    Pat.Sat Θ t σ ξ (.seq (.seq F G) H) i j ↔ Pat.Sat Θ t σ ξ (.seq F (.seq G H)) i j := by
+theorem Pat.Sat.seq_assoc :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .seq (.seq F G) H : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .seq F (.seq G H) : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -362,8 +423,8 @@ theorem Pat.Sat.seq_assoc {Θ t σ ξ F G H i j} :
       | seq h₂ h₃ => exact .seq (.seq h₁ h₂) h₃
 
 /-- `‖` is commutative. -/
-theorem Pat.Sat.alt_comm {Θ t σ ξ F G i j} :
-    Pat.Sat Θ t σ ξ (.alt F G) i j ↔ Pat.Sat Θ t σ ξ (.alt G F) i j := by
+theorem Pat.Sat.alt_comm :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .alt F G : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .alt G F : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -375,8 +436,8 @@ theorem Pat.Sat.alt_comm {Θ t σ ξ F G i j} :
     | altR h => exact .altL h
 
 /-- `‖` is idempotent. -/
-theorem Pat.Sat.alt_idem {Θ t σ ξ F i j} :
-    Pat.Sat Θ t σ ξ (.alt F F) i j ↔ Pat.Sat Θ t σ ξ F i j := by
+theorem Pat.Sat.alt_idem :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .alt F F : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -385,8 +446,8 @@ theorem Pat.Sat.alt_idem {Θ t σ ξ F i j} :
   · intro h; exact .altL h
 
 /-- `&` is commutative. -/
-theorem Pat.Sat.both_comm {Θ t σ ξ F G i j} :
-    Pat.Sat Θ t σ ξ (.both F G) i j ↔ Pat.Sat Θ t σ ξ (.both G F) i j := by
+theorem Pat.Sat.both_comm :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .both F G : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .both G F : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -396,8 +457,8 @@ theorem Pat.Sat.both_comm {Θ t σ ξ F G i j} :
     | both h₁ h₂ hj => exact .both h₂ h₁ (by omega)
 
 /-- `&` is idempotent; in particular `a & a` is matched whenever `a` is. -/
-theorem Pat.Sat.both_idem {Θ t σ ξ F i j} :
-    Pat.Sat Θ t σ ξ (.both F F) i j ↔ Pat.Sat Θ t σ ξ F i j := by
+theorem Pat.Sat.both_idem :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .both F F : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -410,8 +471,8 @@ theorem Pat.Sat.both_idem {Θ t σ ξ F i j} :
   · intro h; exact .both h h (by omega)
 
 /-- `&` is associative. -/
-theorem Pat.Sat.both_assoc {Θ t σ ξ F G H i j} :
-    Pat.Sat Θ t σ ξ (.both (.both F G) H) i j ↔ Pat.Sat Θ t σ ξ (.both F (.both G H)) i j := by
+theorem Pat.Sat.both_assoc :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .both (.both F G) H : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .both F (.both G H) : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -425,8 +486,8 @@ theorem Pat.Sat.both_assoc {Θ t σ ξ F G H i j} :
       | both h₂ h₃ hk => exact .both (.both h₁ h₂ rfl) h₃ (by omega)
 
 /-- `ε` is a unit for `&`, for interpretations that respect positions. -/
-theorem Pat.Sat.both_eps {Θ t σ ξ F i j} (hΘ : Θ.Ok t) :
-    Pat.Sat Θ t σ ξ (.both F .eps) i j ↔ Pat.Sat Θ t σ ξ F i j := by
+theorem Pat.Sat.both_eps (hΘ : Θ.Ok t) :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .both F .eps : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -441,30 +502,27 @@ theorem Pat.Sat.both_eps {Θ t σ ξ F i j} (hΘ : Θ.Ok t) :
 
 /-! ### Inversion lemmas for `Pat.Sat` -/
 
-section inversion
-
-variable {Θ : Interp} {t : List Act} {σ : Obs} {ξ : LEnv} {i j : Nat}
-
-theorem Pat.sat_eps : Pat.Sat Θ t σ ξ .eps i j ↔ j = i := by
+theorem Pat.sat_eps : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .eps : i ⇝ j ↔ j = i := by
   constructor
   · intro h; cases h; rfl
   · rintro rfl; exact .eps
 
 theorem Pat.sat_act {a : QAct} :
-    Pat.Sat Θ t σ ξ (.act a) i j ↔ i < j ∧ j ≤ t.length ∧ t[j - 1]? = some (a.inst ξ) := by
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .act a : i ⇝ j ↔ i < j ∧ j ≤ t.length ∧ t[j - 1]? = some (a.inst ξ) := by
   constructor
   · intro h; cases h with | act h₁ h₂ h₃ => exact ⟨h₁, h₂, h₃⟩
   · rintro ⟨h₁, h₂, h₃⟩; exact .act h₁ h₂ h₃
 
 theorem Pat.sat_seq {F₁ F₂ : Pat} :
-    Pat.Sat Θ t σ ξ (.seq F₁ F₂) i j ↔
-      ∃ k, Pat.Sat Θ t σ ξ F₁ i k ∧ Pat.Sat Θ t σ ξ F₂ k j := by
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .seq F₁ F₂ : i ⇝ j ↔
+      ∃ k, Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₁ : i ⇝ k ∧ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₂ : k ⇝ j := by
   constructor
   · intro h; cases h with | seq h₁ h₂ => exact ⟨_, h₁, h₂⟩
   · rintro ⟨k, h₁, h₂⟩; exact .seq h₁ h₂
 
 theorem Pat.sat_alt {F₁ F₂ : Pat} :
-    Pat.Sat Θ t σ ξ (.alt F₁ F₂) i j ↔ Pat.Sat Θ t σ ξ F₁ i j ∨ Pat.Sat Θ t σ ξ F₂ i j := by
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .alt F₁ F₂ : i ⇝ j ↔
+      Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₁ : i ⇝ j ∨ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₂ : i ⇝ j := by
   constructor
   · intro h
     cases h with
@@ -475,19 +533,19 @@ theorem Pat.sat_alt {F₁ F₂ : Pat} :
     · exact .altR h
 
 theorem Pat.sat_both {F₁ F₂ : Pat} :
-    Pat.Sat Θ t σ ξ (.both F₁ F₂) i j ↔
-      ∃ j₁ j₂, Pat.Sat Θ t σ ξ F₁ i j₁ ∧ Pat.Sat Θ t σ ξ F₂ i j₂ ∧ j = max j₁ j₂ := by
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .both F₁ F₂ : i ⇝ j ↔
+      ∃ j₁ j₂, Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₁ : i ⇝ j₁ ∧ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F₂ : i ⇝ j₂ ∧ j = max j₁ j₂ := by
   constructor
   · intro h; cases h with | both h₁ h₂ h₃ => exact ⟨_, _, h₁, h₂, h₃⟩
   · rintro ⟨j₁, j₂, h₁, h₂, h₃⟩; exact .both h₁ h₂ h₃
 
 theorem Pat.sat_query {Q : QName} {zs : List Var} :
-    Pat.Sat Θ t σ ξ (.query Q zs) i j ↔ Θ Q (zs.map ξ) i j := by
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ .query Q zs : i ⇝ j ↔ Θ Q (zs.map ξ) i j := by
   constructor
   · intro h; cases h with | query h => exact h
   · intro h; exact .query h
 
-end inversion
+end sanity
 
 /-! ### Coincidence (locality in the free variables)
 
@@ -526,7 +584,7 @@ theorem LEnv.bind_indep (ξ₁ ξ₂ : LEnv) :
 
 theorem Pat.sat_coincide {Θ : Interp} {t : List Act} {σ : Obs} {i j : Nat} :
     ∀ {F : Pat} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ F.vars, ξ₁ x = ξ₂ x) →
-      (Pat.Sat Θ t σ ξ₁ F i j ↔ Pat.Sat Θ t σ ξ₂ F i j)
+      (Θ ⬝ t ⬝ σ ⬝ ξ₁ ⊨ F : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ₂ ⊨ F : i ⇝ j)
   | .eps, _, _, _ => by rw [Pat.sat_eps, Pat.sat_eps]
   | .act a, ξ₁, ξ₂, h => by
       have hinst : a.inst ξ₁ = a.inst ξ₂ := by
@@ -581,7 +639,7 @@ theorem Pat.sat_coincide {Θ : Interp} {t : List Act} {σ : Obs} {i j : Nat} :
           (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; right; exact hx))).2 h₂, h₃⟩
 
 theorem Pred.sat_coincide {σ : Obs} :
-    ∀ {p : Pred} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ p.vars, ξ₁ x = ξ₂ x) → (Pred.Sat σ ξ₁ p ↔ Pred.Sat σ ξ₂ p)
+    ∀ {p : Pred} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ p.vars, ξ₁ x = ξ₂ x) → (σ ⬝ ξ₁ ⊨ p ↔ σ ⬝ ξ₂ ⊨ p)
   | .sk x, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
   | .ac x, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
   | .dep x₁ x₂, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h.1, h.2]
@@ -589,7 +647,7 @@ theorem Pred.sat_coincide {σ : Obs} :
   | .hv x c, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
 
 theorem Inv.sat_coincide {σ : Obs} :
-    ∀ {I : Inv} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ I.vars, ξ₁ x = ξ₂ x) → (Inv.Sat σ ξ₁ I ↔ Inv.Sat σ ξ₂ I)
+    ∀ {I : Inv} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ I.vars, ξ₁ x = ξ₂ x) → (σ ⬝ ξ₁ ⊨ I ↔ σ ⬝ ξ₂ ⊨ I)
   | .pred p, ξ₁, ξ₂, h => Pred.sat_coincide h
   | .not I, ξ₁, ξ₂, h => by simp only [Inv.Sat, Inv.sat_coincide (I := I) h]
   | .or I₁ I₂, ξ₁, ξ₂, h => by
@@ -607,9 +665,9 @@ theorem Inv.sat_coincide {σ : Obs} :
     guard's own locals (which get rebound internally regardless). -/
 theorem QBody.sat_coincide {Θ : Interp} {t : List Act} {σ : Obs} {P : QBody} {i j : Nat}
     {ξ₁ ξ₂ : LEnv} (h : ∀ x ∈ P.vars, x ∉ P.locals → ξ₁ x = ξ₂ x) :
-    QBody.Sat Θ t σ ξ₁ P i j ↔ QBody.Sat Θ t σ ξ₂ P i j := by
+    Θ ⬝ t ⬝ σ ⬝ ξ₁ ⊨ P : i ⇝ j ↔ Θ ⬝ t ⬝ σ ⬝ ξ₂ ⊨ P : i ⇝ j := by
   have mp : ∀ {ξ₁ ξ₂ : LEnv}, (∀ x ∈ P.vars, x ∉ P.locals → ξ₁ x = ξ₂ x) →
-      QBody.Sat Θ t σ ξ₁ P i j → QBody.Sat Θ t σ ξ₂ P i j := by
+      Θ ⬝ t ⬝ σ ⬝ ξ₁ ⊨ P : i ⇝ j → Θ ⬝ t ⬝ σ ⬝ ξ₂ ⊨ P : i ⇝ j := by
     intro ξ₁ ξ₂ h hs
     cases hs with
     | mk hlen hξ' hpat hwhen hexcept =>
@@ -638,7 +696,7 @@ theorem QProg.interp_head (q : Query) (Δ : QProg) (t : List Act) (σ : Obs) (ls
     (i j : Nat) :
     (QProg.interp t σ (q :: Δ)) q.name ls i j ↔
       ls.length = q.params.length ∧
-      QBody.Sat (QProg.interp t σ Δ) t σ (LEnv.empty.bind q.params ls) q.body i j := by
+      QProg.interp t σ Δ ⬝ t ⬝ σ ⬝ LEnv.empty.bind q.params ls ⊨ q.body : i ⇝ j := by
   simp [QProg.interp]
 
 /-- Unfolding of `QProg.interp` at a query other than the head. -/
@@ -651,8 +709,8 @@ theorem QProg.interp_tail (q : Query) (Δ : QProg) (t : List Act) (σ : Obs) {Q 
 theorem Exec.Matches.iff_head (q : Query) (Δ : QProg) (e : Exec) (ls : List Loc) :
     Exec.Matches (q :: Δ) e q.name ls ↔
       ls.length = q.params.length ∧
-      ∃ j, QBody.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
-        (LEnv.empty.bind q.params ls) q.body 0 j := by
+      ∃ j, Δ.interp e.trc.toList e.obs ⬝
+        e.trc.toList ⬝ e.obs ⬝ LEnv.empty.bind q.params ls ⊨ q.body : 0 ⇝ j := by
   simp only [Exec.Matches, QProg.interp, if_true]
   constructor
   · rintro ⟨j, h₁, h₂⟩; exact ⟨h₁, j, h₂⟩

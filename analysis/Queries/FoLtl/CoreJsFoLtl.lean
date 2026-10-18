@@ -12,7 +12,7 @@
   temporal logic, so that each of the usual components has a single,
   identifiable home:
 
-  | Component                         | Here                                   |
+  | Component                          | Here                                   |
   |------------------------------------|-----------------------------------------|
   | Signature (sorts, relation symbols)| `## Signature`, `Atom`'s constructors    |
   | Terms                              | `## Terms` (variables only, see below)  |
@@ -20,6 +20,10 @@
   | Formula grammar                    | `Ltl ν`                                 |
   | Structures / models                | `Model`                                 |
   | Satisfaction relation `⊨`          | `Atom.Sat`, `Ltl.Sat`, `Ltl.Holds`       |
+
+  `Atom.Sat`/`Ltl.Sat` are written `m ⬝ ξ ⬝ i ⊨ φ` (the usual `m, ξ, i ⊨ φ`;
+  `⬝` instead of `,`, which after a term would clash with tuples — as for the
+  query notation of `CoreJsQuerySemantics.lean`).
 
   ## Conventions
 
@@ -260,7 +264,7 @@ def upd {ν : Type} [DecidableEq ν] (ξ : ν → Loc) (x : ν) (l : Loc) : ν �
 
 /-! ## Satisfaction relation `⊨` -/
 
-/-- Atoms: `m, ξ, i ⊨ a`. -/
+/-- Atoms: `m ⬝ ξ ⬝ i ⊨ a`. -/
 def Atom.Sat {ν : Type} (m : Model) (ξ : ν → Loc) (i : Nat) : Atom ν → Prop
   | .lookup x₁ x₂ x₃ => m.holds i (.lookup (ξ x₁) (ξ x₂) (ξ x₃))
   | .update x₁ x₂ x₃ => m.holds i (.update (ξ x₁) (ξ x₂) (ξ x₃))
@@ -273,25 +277,42 @@ def Atom.Sat {ν : Type} (m : Model) (ξ : ν → Loc) (i : Nat) : Atom ν → P
   | .hv x c          => m.obs.val (ξ x) = some c
   | .eq x₁ x₂        => ξ x₁ = ξ x₂
 
-/-- `m, ξ, i ⊨ φ`, for `i` a boundary `0 … n`. -/
+@[inherit_doc] scoped notation:50 m:51 " ⬝ " ξ:51 " ⬝ " i:51 " ⊨ " a:51 => Atom.Sat m ξ i a
+
+-- Declared before `Ltl.Sat` so that its defining equations can use it; without
+-- hygiene, `Ltl.Sat` is resolved where the notation is used.
+set_option hygiene false in
+/-- `m ⬝ ξ ⬝ i ⊨ φ`: the usual `m, ξ, i ⊨ φ`. -/
+scoped notation:50 (name := ltlSatNotation)
+  m:51 " ⬝ " ξ:51 " ⬝ " i:51 " ⊨ " φ:51 => Ltl.Sat m ξ φ i
+
+/-- `m ⬝ ξ ⬝ i ⊨ φ`, for `i` a boundary `0 … n`. -/
 def Ltl.Sat {ν : Type} [DecidableEq ν] (m : Model) : (ν → Loc) → Ltl ν → Nat → Prop
-  | ξ, .atom a,        i => a.Sat m ξ i
+  | ξ, .atom a,        i => m ⬝ ξ ⬝ i ⊨ a
   | _, .tt,            _ => True
   | _, .ff,            _ => False
-  | ξ, .not φ,         i => ¬ φ.Sat m ξ i
-  | ξ, .and φ ψ,       i => φ.Sat m ξ i ∧ ψ.Sat m ξ i
-  | ξ, .or φ ψ,        i => φ.Sat m ξ i ∨ ψ.Sat m ξ i
-  | ξ, .next φ,        i => i < m.len ∧ φ.Sat m ξ (i + 1)
+  | ξ, .not φ,         i => ¬ m ⬝ ξ ⬝ i ⊨ φ
+  | ξ, .and φ ψ,       i => m ⬝ ξ ⬝ i ⊨ φ ∧ m ⬝ ξ ⬝ i ⊨ ψ
+  | ξ, .or φ ψ,        i => m ⬝ ξ ⬝ i ⊨ φ ∨ m ⬝ ξ ⬝ i ⊨ ψ
+  | ξ, .next φ,        i => i < m.len ∧ m ⬝ ξ ⬝ i + 1 ⊨ φ
   | ξ, .until φ ψ,     i =>
-      ∃ k, i ≤ k ∧ k ≤ m.len ∧ ψ.Sat m ξ k ∧ ∀ p, i ≤ p → p < k → φ.Sat m ξ p
-  | ξ, .yesterday φ,   i => i ≠ 0 ∧ φ.Sat m ξ (i - 1)
-  | ξ, .since φ ψ,     i => ∃ k, k ≤ i ∧ ψ.Sat m ξ k ∧ ∀ p, k < p → p ≤ i → φ.Sat m ξ p
-  | ξ, .ex x φ,        i => ∃ l, φ.Sat m (upd ξ x l) i
-  | ξ, .all x φ,       i => ∀ l, φ.Sat m (upd ξ x l) i
+      ∃ k, i ≤ k ∧ k ≤ m.len ∧ m ⬝ ξ ⬝ k ⊨ ψ ∧ ∀ p, i ≤ p → p < k → m ⬝ ξ ⬝ p ⊨ φ
+  | ξ, .yesterday φ,   i => i ≠ 0 ∧ m ⬝ ξ ⬝ i - 1 ⊨ φ
+  | ξ, .since φ ψ,     i => ∃ k, k ≤ i ∧ m ⬝ ξ ⬝ k ⊨ ψ ∧ ∀ p, k < p → p ≤ i → m ⬝ ξ ⬝ p ⊨ φ
+  | ξ, .ex x φ,        i => ∃ l, m ⬝ upd ξ x l ⬝ i ⊨ φ
+  | ξ, .all x φ,       i => ∀ l, m ⬝ upd ξ x l ⬝ i ⊨ φ
+
+/- `notation` generates no unexpander for a constant that does not exist yet, so
+   goals would show `Ltl.Sat m ξ φ i`; this one restores the notation.  (A quotation
+   would be ambiguous with `Atom.Sat`'s, hence the explicit node of the right kind.) -/
+@[scoped app_unexpander Ltl.Sat] def unexpandLtlSat : Lean.PrettyPrinter.Unexpander
+  | `($_ $m $ξ $φ $i) => pure <| Lean.mkNode ``ltlSatNotation
+      #[m, Lean.mkAtom "⬝", ξ, Lean.mkAtom "⬝", i, Lean.mkAtom "⊨", φ]
+  | _ => throw ()
 
 /-- A formula holds in a model iff it holds at the first boundary. -/
 def Ltl.Holds {ν : Type} [DecidableEq ν] (m : Model) (ξ : ν → Loc) (φ : Ltl ν) : Prop :=
-  φ.Sat m ξ 0
+  m ⬝ ξ ⬝ 0 ⊨ φ
 
 /-! ## Basic facts -/
 
@@ -300,11 +321,11 @@ section facts
 variable {ν : Type} [DecidableEq ν] {m : Model} {ξ : ν → Loc} {i : Nat}
 
 theorem Ltl.sat_F {φ : Ltl ν} :
-    φ.F.Sat m ξ i ↔ ∃ k, i ≤ k ∧ k ≤ m.len ∧ φ.Sat m ξ k := by
+    m ⬝ ξ ⬝ i ⊨ φ.F ↔ ∃ k, i ≤ k ∧ k ≤ m.len ∧ m ⬝ ξ ⬝ k ⊨ φ := by
   simp [Ltl.F, Ltl.Sat]
 
 theorem Ltl.sat_G {φ : Ltl ν} :
-    φ.G.Sat m ξ i ↔ ∀ k, i ≤ k → k ≤ m.len → φ.Sat m ξ k := by
+    m ⬝ ξ ⬝ i ⊨ φ.G ↔ ∀ k, i ≤ k → k ≤ m.len → m ⬝ ξ ⬝ k ⊨ φ := by
   simp only [Ltl.G, Ltl.Sat, Ltl.sat_F]
   constructor
   · intro h k hik hk
@@ -313,11 +334,11 @@ theorem Ltl.sat_G {φ : Ltl ν} :
     exact hφ (h k hik hk)
 
 theorem Ltl.sat_O {φ : Ltl ν} :
-    φ.O.Sat m ξ i ↔ ∃ k, k ≤ i ∧ φ.Sat m ξ k := by
+    m ⬝ ξ ⬝ i ⊨ φ.O ↔ ∃ k, k ≤ i ∧ m ⬝ ξ ⬝ k ⊨ φ := by
   simp [Ltl.O, Ltl.Sat]
 
 theorem Ltl.sat_H {φ : Ltl ν} :
-    φ.H.Sat m ξ i ↔ ∀ k, k ≤ i → φ.Sat m ξ k := by
+    m ⬝ ξ ⬝ i ⊨ φ.H ↔ ∀ k, k ≤ i → m ⬝ ξ ⬝ k ⊨ φ := by
   simp only [Ltl.H, Ltl.Sat, Ltl.sat_O]
   constructor
   · intro h k hk
@@ -326,16 +347,16 @@ theorem Ltl.sat_H {φ : Ltl ν} :
     exact hφ (h k hk)
 
 /-- `Y ⊤` is false at `0` and true everywhere else. -/
-theorem Ltl.sat_yesterday_tt : (Ltl.yesterday (Ltl.tt : Ltl ν)).Sat m ξ i ↔ i ≠ 0 := by
+theorem Ltl.sat_yesterday_tt : m ⬝ ξ ⬝ i ⊨ (Ltl.yesterday (Ltl.tt : Ltl ν)) ↔ i ≠ 0 := by
   simp [Ltl.Sat]
 
 /-- `first` holds only at boundary `0`. -/
-theorem Ltl.sat_first : (Ltl.first : Ltl ν).Sat m ξ i ↔ i = 0 := by
+theorem Ltl.sat_first : m ⬝ ξ ⬝ i ⊨ (Ltl.first : Ltl ν) ↔ i = 0 := by
   simp [Ltl.first, Ltl.Sat]
 
 /-- `atStart φ` holds at any boundary iff `φ` holds at boundary `0`: it reaches back to
     the start of the trace, from anywhere. -/
-theorem Ltl.sat_atStart {φ : Ltl ν} : (Ltl.atStart φ).Sat m ξ i ↔ φ.Sat m ξ 0 := by
+theorem Ltl.sat_atStart {φ : Ltl ν} : m ⬝ ξ ⬝ i ⊨ Ltl.atStart φ ↔ m ⬝ ξ ⬝ 0 ⊨ φ := by
   simp only [Ltl.atStart, Ltl.sat_O, Ltl.Sat, Ltl.sat_first]
   constructor
   · rintro ⟨k, _, hφ, rfl⟩; exact hφ
@@ -344,41 +365,41 @@ theorem Ltl.sat_atStart {φ : Ltl ν} : (Ltl.atStart φ).Sat m ξ i ↔ φ.Sat m
 /-- `atStart φ` therefore has the same truth value at every boundary — it behaves like a
     state atom, regardless of what `φ` itself is. -/
 theorem Ltl.sat_atStart_indep {φ : Ltl ν} {i' : Nat} :
-    (Ltl.atStart φ).Sat m ξ i ↔ (Ltl.atStart φ).Sat m ξ i' := by
+    m ⬝ ξ ⬝ i ⊨ Ltl.atStart φ ↔ m ⬝ ξ ⬝ i' ⊨ Ltl.atStart φ := by
   rw [Ltl.sat_atStart, Ltl.sat_atStart]
 
 theorem Ltl.sat_imp {φ ψ : Ltl ν} :
-    (φ.imp ψ).Sat m ξ i ↔ (φ.Sat m ξ i → ψ.Sat m ξ i) := by
+    m ⬝ ξ ⬝ i ⊨ φ.imp ψ ↔ (m ⬝ ξ ⬝ i ⊨ φ → m ⬝ ξ ⬝ i ⊨ ψ) := by
   simp only [Ltl.imp, Ltl.Sat]
   constructor
   · rintro (h | h) hφ
     · exact absurd hφ h
     · exact h
   · intro h
-    by_cases hφ : φ.Sat m ξ i
+    by_cases hφ : m ⬝ ξ ⬝ i ⊨ φ
     · exact Or.inr (h hφ)
     · exact Or.inl hφ
 
 theorem Ltl.sat_conj {l : List (Ltl ν)} :
-    (Ltl.conj l).Sat m ξ i ↔ ∀ φ ∈ l, φ.Sat m ξ i := by
+    m ⬝ ξ ⬝ i ⊨ Ltl.conj l ↔ ∀ φ ∈ l, m ⬝ ξ ⬝ i ⊨ φ := by
   induction l with
   | nil => simp [Ltl.conj, Ltl.Sat]
   | cons φ l ih => simp [Ltl.conj, Ltl.Sat, ih]
 
 theorem Ltl.sat_disj {l : List (Ltl ν)} :
-    (Ltl.disj l).Sat m ξ i ↔ ∃ φ ∈ l, φ.Sat m ξ i := by
+    m ⬝ ξ ⬝ i ⊨ Ltl.disj l ↔ ∃ φ ∈ l, m ⬝ ξ ⬝ i ⊨ φ := by
   induction l with
   | nil => simp [Ltl.disj, Ltl.Sat]
   | cons φ l ih => simp [Ltl.disj, Ltl.Sat, ih]
 
 theorem Ltl.sat_allN_of {vs : List ν} {φ : Ltl ν}
-    (h : ∀ ξ', φ.Sat m ξ' i) : (Ltl.allN vs φ).Sat m ξ i := by
+    (h : ∀ ξ', m ⬝ ξ' ⬝ i ⊨ φ) : m ⬝ ξ ⬝ i ⊨ Ltl.allN vs φ := by
   induction vs generalizing ξ with
   | nil => exact h ξ
   | cons v vs ih => intro l; exact ih
 
 /-- `X ⊤` holds exactly before the sentinel. -/
-theorem Ltl.sat_next_tt : (Ltl.next (Ltl.tt : Ltl ν)).Sat m ξ i ↔ i < m.len := by
+theorem Ltl.sat_next_tt : m ⬝ ξ ⬝ i ⊨ (Ltl.next (Ltl.tt : Ltl ν)) ↔ i < m.len := by
   simp [Ltl.Sat]
 
 /-- Action atoms never hold at the sentinel: they hold only at a state. -/
@@ -387,7 +408,7 @@ def Atom.IsAction {ν : Type} : Atom ν → Prop
   | _ => False
 
 omit [DecidableEq ν] in
-theorem Atom.sat_action_lt {a : Atom ν} (ha : a.IsAction) (h : a.Sat m ξ i) : i < m.len := by
+theorem Atom.sat_action_lt {a : Atom ν} (ha : a.IsAction) (h : m ⬝ ξ ⬝ i ⊨ a) : i < m.len := by
   have hh : ∀ act, m.holds i act → i < m.len := by
     rintro act ⟨s, hs, _⟩
     exact (List.getElem?_eq_some_iff.1 hs).1
@@ -397,12 +418,12 @@ omit [DecidableEq ν] in
 /-- State atoms read only the static part of the model, hence hold at every boundary
     or at none. -/
 theorem Atom.sat_state_indep {a : Atom ν} (ha : ¬ a.IsAction) {i i' : Nat} :
-    a.Sat m ξ i ↔ a.Sat m ξ i' := by
+    m ⬝ ξ ⬝ i ⊨ a ↔ m ⬝ ξ ⬝ i' ⊨ a := by
   cases a <;> simp [Atom.IsAction] at ha <;> simp [Atom.Sat]
 
 /-- `G p ≡ p` for a state atom `p`, at any boundary of the model. -/
 theorem Ltl.sat_G_state {a : Atom ν} (ha : ¬ a.IsAction) (hi : i ≤ m.len) :
-    (Ltl.G (.atom a)).Sat m ξ i ↔ a.Sat m ξ i := by
+    m ⬝ ξ ⬝ i ⊨ Ltl.G (.atom a) ↔ m ⬝ ξ ⬝ i ⊨ a := by
   rw [Ltl.sat_G]
   constructor
   · intro h; exact h i (Nat.le_refl _) hi
@@ -411,7 +432,7 @@ theorem Ltl.sat_G_state {a : Atom ν} (ha : ¬ a.IsAction) (hi : i ≤ m.len) :
 
 /-- `F p ≡ p` for a state atom `p`, at any boundary of the model. -/
 theorem Ltl.sat_F_state {a : Atom ν} (ha : ¬ a.IsAction) (hi : i ≤ m.len) :
-    (Ltl.F (.atom a)).Sat m ξ i ↔ a.Sat m ξ i := by
+    m ⬝ ξ ⬝ i ⊨ Ltl.F (.atom a) ↔ m ⬝ ξ ⬝ i ⊨ a := by
   rw [Ltl.sat_F]
   constructor
   · rintro ⟨k, _, _, h⟩; exact (Atom.sat_state_indep ha).1 h
@@ -419,7 +440,7 @@ theorem Ltl.sat_F_state {a : Atom ν} (ha : ¬ a.IsAction) (hi : i ≤ m.len) :
 
 /-- For an action atom, `F(a ∧ X ⊤)` is just `F a`: an action at `p` implies `p + 1` exists. -/
 theorem Ltl.sat_F_action_next {a : Atom ν} (ha : a.IsAction) :
-    (Ltl.F (.and (.atom a) (.next .tt))).Sat m ξ i ↔ (Ltl.F (.atom a)).Sat m ξ i := by
+    m ⬝ ξ ⬝ i ⊨ Ltl.F (.and (.atom a) (.next .tt)) ↔ m ⬝ ξ ⬝ i ⊨ Ltl.F (.atom a) := by
   simp only [Ltl.sat_F, Ltl.Sat]
   constructor
   · rintro ⟨k, h₁, h₂, h₃, _⟩; exact ⟨k, h₁, h₂, h₃⟩
@@ -497,7 +518,7 @@ def Shape.act : Shape → (Nat → Loc) → Act
   | .retn,   l => .ret (l 0) (l 1)
 
 theorem Atom.sat_shape {ν : Type} (m : Model) (ξ : ν → Loc) (i : Nat) (s : Shape) (x : Nat → ν) :
-    (s.atom x).Sat m ξ i ↔ m.holds i (s.act fun k => ξ (x k)) := by
+    m ⬝ ξ ⬝ i ⊨ s.atom x ↔ m.holds i (s.act fun k => ξ (x k)) := by
   cases s <;> simp [Shape.atom, Shape.act, Atom.Sat, List.map_map, Function.comp_def]
 
 theorem map_range_eq {f g : Nat → Loc} {n : Nat}
@@ -557,7 +578,7 @@ def Ltl.excl {ν : Type} (v : Nat → ν) (shapes : List Shape) : Ltl ν :=
   Ltl.G (Ltl.conj (shapes.flatMap fun s => shapes.map fun s' => Shape.pairExcl v s s'))
 
 theorem Shape.sat_pairExcl {ν : Type} [DecidableEq ν] {m : Model} (hm : m.Excl) (v : Nat → ν)
-    (s s' : Shape) (ξ : ν → Loc) (i : Nat) : (Shape.pairExcl v s s').Sat m ξ i := by
+    (s s' : Shape) (ξ : ν → Loc) (i : Nat) : m ⬝ ξ ⬝ i ⊨ Shape.pairExcl v s s' := by
   apply Ltl.sat_allN_of
   intro ξ'
   rintro ⟨hA, hB, hC⟩
@@ -572,7 +593,7 @@ theorem Shape.sat_pairExcl {ν : Type} [DecidableEq ν] {m : Model} (hm : m.Excl
 
 /-- Every exclusive model satisfies the exclusivity formula, for any set of shapes. -/
 theorem Model.Excl.sat_excl {ν : Type} [DecidableEq ν] {m : Model} (hm : m.Excl) (v : Nat → ν)
-    (shapes : List Shape) (ξ : ν → Loc) (i : Nat) : (Ltl.excl v shapes).Sat m ξ i := by
+    (shapes : List Shape) (ξ : ν → Loc) (i : Nat) : m ⬝ ξ ⬝ i ⊨ Ltl.excl v shapes := by
   rw [Ltl.excl, Ltl.sat_G]
   intro k _ _
   rw [Ltl.sat_conj]

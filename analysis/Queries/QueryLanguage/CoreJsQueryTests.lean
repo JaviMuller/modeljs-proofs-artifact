@@ -322,16 +322,18 @@ def QRuns (s : Stmt) (Δ : QProg) (Q : QName) (ls : List Loc) (b : Prop) : Prop 
   Runs s fun r => Exec.Matches Δ (Exec.ofRes r) Q ls ↔ b
 
 /-- Matching a query with no locals: body, invariant, and (absent) `except`. -/
-theorem _root_.CoreJS.QBody.Sat.simple {Θ t σ ξ} {P : QBody} {i j : Nat} (hl : P.locals = [])
-    (hn : P.except = none) (hb : Pat.Sat Θ t σ ξ P.pattern i j) (hi : Inv.Sat σ ξ P.when) :
-    QBody.Sat Θ t σ ξ P i j :=
+theorem _root_.CoreJS.QBody.Sat.simple {Θ : Interp} {t : List Act} {σ : Obs} {ξ : LEnv}
+    {P : QBody} {i j : Nat} (hl : P.locals = [])
+    (hn : P.except = none) (hb : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P.pattern : i ⇝ j) (hi : σ ⬝ ξ ⊨ P.when) :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j :=
   .mk (ls := []) (by simp [hl]) (by rw [hl]; rfl) hb hi (by simp [hn])
 
 /-- Inversion for a query with no locals. -/
-theorem _root_.CoreJS.QBody.Sat.invert {Θ t σ ξ} {P : QBody} {i j : Nat} (hl : P.locals = [])
-    (h : QBody.Sat Θ t σ ξ P i j) :
-    Pat.Sat Θ t σ ξ P.pattern i j ∧ Inv.Sat σ ξ P.when ∧
-      ∀ F', P.except = some F' → ∀ k, ¬ Pat.Sat Θ t σ ξ F' 0 k := by
+theorem _root_.CoreJS.QBody.Sat.invert {Θ : Interp} {t : List Act} {σ : Obs} {ξ : LEnv}
+    {P : QBody} {i j : Nat} (hl : P.locals = [])
+    (h : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j) :
+    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P.pattern : i ⇝ j ∧ σ ⬝ ξ ⊨ P.when ∧
+      ∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F' : 0 ⇝ k := by
   cases h with
   | mk hlen hξ hb hi he =>
     rw [hl] at hlen hξ
@@ -356,15 +358,15 @@ macro_rules
 /-- Head query of a program matches: unfold and supply the query body. -/
 theorem matches_of {q : Query} {Δ : QProg} {e : Exec} {ls : List Loc} {j : Nat}
     (hlen : ls.length = q.params.length)
-    (h : QBody.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
-           (LEnv.empty.bind q.params ls) q.body 0 j) :
+    (h : Δ.interp e.trc.toList e.obs ⬝
+      e.trc.toList ⬝ e.obs ⬝ LEnv.empty.bind q.params ls ⊨ q.body : 0 ⇝ j) :
     Exec.Matches (q :: Δ) e q.name ls :=
   (Exec.Matches.iff_head q Δ e ls).2 ⟨hlen, j, h⟩
 
 /-- Head query of a program does not match: the query body has no match. -/
 theorem not_matches_of {q : Query} {Δ : QProg} {e : Exec} {ls : List Loc}
-    (h : ∀ j, ¬ QBody.Sat (Δ.interp e.trc.toList e.obs) e.trc.toList e.obs
-           (LEnv.empty.bind q.params ls) q.body 0 j) :
+    (h : ∀ j, ¬ Δ.interp e.trc.toList e.obs ⬝
+      e.trc.toList ⬝ e.obs ⬝ LEnv.empty.bind q.params ls ⊨ q.body : 0 ⇝ j) :
     ¬ Exec.Matches (q :: Δ) e q.name ls := by
   rintro ⟨j, hj⟩
   exact h j ((QProg.interp_head q Δ _ _ ls 0 j).1 hj).2
