@@ -24,4 +24,12 @@ globs = [
     "Queries.QueryModel.CoreJsQModelSyntax",
     "Queries.QueryModel.CoreJsQModelSemantics",
     "Queries.QueryModel.CoreJsQueryToQModel",
+    "ModelChecking.CoreJsMcInterface",
+    "ModelChecking.CoreJsMcExplore",
+    "ModelChecking.CoreJsMcDomain",
+    "ModelChecking.CoreJsMcTracker",
+    "ModelChecking.CoreJsMcAlgorithm",
+    "ModelChecking.CoreJsMcInstance",
+    "ModelChecking.CoreJsMcFinite",
+    "ModelChecking.CoreJsMcTests",
 ]

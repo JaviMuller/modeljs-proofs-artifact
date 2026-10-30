@@ -46,7 +46,7 @@ names. The list is currently complete.
 
 ### Layout
 
-Sources live under `analysis/` in five directories (module names never
+Sources live under `analysis/` in six directories (module names never
 contain spaces, hence the camel case):
 
 - `CoreJS/` — the language and its concrete semantics
@@ -58,7 +58,9 @@ contain spaces, hence the camel case):
   (`CoreJsFoLtl`, `CoreJsFoLtlTests`, `CoreJsQueryToLtl`);
 - `Queries/QueryModel/` — query models (the automaton form of queries, for
   the model checker) and the query-to-model translation
-  (`CoreJsQModel{Syntax,Semantics}`, `CoreJsQueryToQModel`).
+  (`CoreJsQModel{Syntax,Semantics}`, `CoreJsQueryToQModel`);
+- `ModelChecking/` — model checking query models against an abstraction of
+  the program (`CoreJsMc{Interface,Explore,Domain,Tracker,Algorithm,Instance,Finite,Tests}`).
 
 ## Architecture
 
@@ -81,9 +83,16 @@ are listed above):
 - `CoreJsQModelSyntax` ← `CoreJsQuerySyntax`
 - `CoreJsQModelSemantics` ← `CoreJsQuerySemantics`, `CoreJsQModelSyntax`
 - `CoreJsQueryToQModel` ← `CoreJsQModelSemantics`
+- `CoreJsMcInterface` ← `CoreJsQueryToQModel`; then `CoreJsMcExplore` ←
+  `CoreJsMcInterface`, `CoreJsMcDomain` ← `CoreJsMcExplore`,
+  `CoreJsMcTracker` ← `CoreJsMcDomain`, `CoreJsMcAlgorithm` ← `CoreJsMcTracker`,
+  `CoreJsMcTests` ← `CoreJsMcAlgorithm`
+- `CoreJsMcFinite` ← `CoreJsMcInstance`
+- `CoreJsMcInstance` ← `CoreJsMcAlgorithm`, `CoreJsAutomatonSoundness` (the
+  only file joining the query chain and the automaton chain)
 
 The query chain and the automaton chain are independent of each other; both
-sit on top of the concrete semantics.
+sit on top of the concrete semantics, and meet only in `CoreJsMcInstance`.
 
 ### The language and concrete semantics
 
@@ -387,6 +396,81 @@ the end of `CoreJsAutomatonSemantics.lean`.
     construction; `patOK` (induction on the pattern), `bodyOK`, `buildOK`
     (induction on the program). `#guard`s at the end show computed models —
     update them deliberately if the construction changes.
+
+### Model checking
+
+Formulated generically, over interfaces with specifications, decided with the
+user (not tied to the OCaml verifier in `model-js/src/verifier`, of which it is
+an abstraction). `MODELCHECK_PLAN.md` (untracked) records the design and the
+phases; both (the positive part; `except` with *must* semantics and
+trackers) are done.
+
+17. **`CoreJsMcInterface.lean`** — trace systems `TSys` (walks yield abstract
+    records: visible labels + facts), abstractions `Abs` (`act`/`facts` relate
+    concrete to abstract; `matchA`, `may`, `must`, `mustA` are the abstract
+    judgements, `inhab` says an abstract value certainly denotes a location;
+    `Abs.Sound` their specification), `Covers` (every concrete record of
+    interest is abstracted by a walk's — the shape of `sound_top`), invariants
+    by polarity (`Abs.inv`), `LRun` (runs of a component over a list of
+    labels; `Run.toLRun`/`LRun.toRun` bridge to and from `Run`), the abstract
+    semantics `QModel.ASat` (main accepts in *may* polarity; no `except`
+    component of the final state *must*-accepts the same labels,
+    `QComp.AMust`/`QModel.AExcl`), and `QModel.asat_of_matches` (completeness
+    of the abstraction).
+    - `QComp.AMust` ignores final states with nested `except`s (no trackers
+      of trackers) and asks `inhab` of the new values of the variables the
+      final invariants read: a must-judgement needs a concrete location to
+      instantiate the component's own variables with. Variables occurring in
+      must-matched actions get one from the trace (`Abs.Sound.mustA`).
+18. **`CoreJsMcExplore.lean`** — generic worklist exploration with a visited
+    set (*progress*): terminates given an existential finite closed list
+    (only in the termination measure; erased), `mem_explore` (exactly the
+    reachable states). Proofs use the generated `exploreAux.induct`.
+19. **`CoreJsMcDomain.lean`** — assignment domains `ADom` with `ADom.Spec`
+    (`top`: every variable unconstrained — this is what constrains variables
+    occurring only in invariants; `constrain` exact; `refine` loses no
+    solution; `solve` exact, with an extra test `g` reading only given
+    variables — the `except` check; finitely many reachable elements); separable
+    matching `Abs.Sep`; the non-relational instance `nonrel` (generalised arc
+    consistency, enumeration in `solve`) with `nonrel_spec`/`nonrel_finite`.
+20. **`CoreJsMcTracker.lean`** — trackers `Tracker` (a summary of the labels
+    read, `step`ped at every visible label; `excl` reads off the `except`
+    check; `Tracker.Spec`: after reading `T`, `excl` is `QModel.AExcl … T`),
+    `LRun` composition lemmas, `ε`-closure by `explore`, and the
+    enumerating instance `enumTracker` (entries `(k, q, vs)`: component `k`
+    at `q` under the values `vs` of `QModel.compVars`; always a filter of the
+    finite `tUniv`) with `enumTracker_spec`.
+21. **`CoreJsMcAlgorithm.lean`** — finite trace systems `FinTSys`, search
+    states `(p, q, d, τ)` (`τ` a tracker), `mcSucc`, `witnesses` (acceptance
+    passes `excOk` to `solve`); `witnesses_ne_nil_iff` (the search decides
+    `ASat` exactly), `mem_witnesses`, `model_check_complete`(`_enum`).
+    Refining with the current state's invariants is sound because of
+    `QComp.Mono`. Trackers are deterministic in the labels
+    (`reach_sound`: `τ = tr.run T`), which is why progress loses nothing.
+22. **`CoreJsMcInstance.lean`** — the program automaton labeled by an analysis
+    result as `autTSys`/`autAbs` (values `Option ALoc`, facts `topFacts` = join
+    of the top-level final configurations, `must`/`mustA`/`inhab` never
+    true, so `except`s never exclude there), `aut_covers` (from `sound_top`),
+    `aut_asat`, `Covers.of_walks` (to move to a finite presentation).
+    Must-matching on function identity would need `α` to map only
+    `litLoc (.fid f)` to `litLocA (.fid f)`, an invariant `SoundRun` does not
+    expose (`AllocSafe` does not say what allocated locations map to).
+23. **`CoreJsMcFinite.lean`** — what the algorithm runs on for the program.
+    Finitely many abstract values `FV locs` (a location of `locs` or `•`;
+    `FV.cl` collapses, `FV.mem_all`), location-list actions `FAct V`, Boolean
+    fact tables `FFacts V`, their abstraction `listAbs` (sound, separable:
+    `listSep`); `FAct.Over`/`FFacts.Over` (containment of the automaton's
+    collapsed labels and facts), `Covers.of_finite`; `FinForm Γ s₀ L locs`
+    (finite trace system + facts + the two containment proofs),
+    `FinForm.check` and **`FinForm.check_complete`** (the end-to-end
+    theorem: every matching run of the program yields a witness); the
+    coarsest finite form `FinForm.univ` (needs only the program's arities,
+    via `AGraph.call_arity`) and `check_complete_univ`. The automaton's
+    domains are predicates, so a *precise* finite form is not computed here.
+24. **`CoreJsMcTests.lean`** — `#guard`s on a toy trace system, including the
+    query of the issue where a variable occurs only in the invariant, and
+    `except` tests (a certain call excludes, a possible one does not, a loop
+    that can be skipped keeps its witness).
 
 ## Lean gotchas hit in this repository
 

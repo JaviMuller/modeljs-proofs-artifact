@@ -83,10 +83,30 @@ observations.
   full query language. Its invariants only grow along edges
   (`Query.toQModel_wf`), so a model checker may discard a substitution as
   soon as it violates the current state's invariants.
+- **Model checking** (`ModelChecking/`). Formulated over interfaces: a trace
+  system abstracting the program, an abstraction of actions and observations
+  with *may*/*must* judgements, a domain of candidate assignments, and
+  *trackers* that check the `except` components along the walk. An `except`
+  excludes a candidate only when the excluded pattern *must* occur. The
+  search explores product states with a visited set and always terminates.
+  It finds a witness exactly when the abstract semantics of the query model
+  holds (`witnesses_ne_nil_iff`), and every run matching the query yields one
+  (`model_check_complete`). The program automaton is an instance
+  (`aut_asat`); its may-analysis has no must-facts, so there its `except`s
+  never exclude anything. To run the algorithm on the program, the labeled
+  automaton is given in *finite form* (`FinForm`: a finite trace system
+  with location-list labels, finite facts, finitely many abstract values),
+  related to the automaton by proved containment of walks and facts.
+  `FinForm.check_complete`: every run of the program matching a
+  well-formed query yields a witness of the algorithm run on any finite
+  form; `FinForm.univ` is a finite form of every labeled automaton, so
+  `check_complete_univ` holds with no finite-form assumption. Computing a
+  precise finite form from the analysis is not covered: the analysis is
+  stated over predicates.
 
 ## Repository layout
 
-All sources are in `analysis/`, in namespace `CoreJS`, split into five
+All sources are in `analysis/`, in namespace `CoreJS`, split into six
 directories:
 
 ```
@@ -96,6 +116,7 @@ analysis/
 │   ├── QueryLanguage/      queries, their semantics, tests
 │   ├── FoLtl/              FO-LTL, its tests, the query translation
 │   └── QueryModel/         query models and the query translation into them
+├── ModelChecking/          model checking query models against the analysis
 └── ProgramAutomaton/       the automaton-based analysis
 ```
 
@@ -122,6 +143,15 @@ analysis/
 | `CoreJsQModelSyntax.lean` | query models: variables, states, edges, labelled components |
 | `CoreJsQModelSemantics.lean` | runs, acceptance, satisfaction of query models over execution records |
 | `CoreJsQueryToQModel.lean` | the query-to-model translation, its correctness, computed examples |
+| **`ModelChecking/`** | |
+| `CoreJsMcInterface.lean` | trace systems, abstractions and their specification, the abstract semantics, completeness of the abstraction |
+| `CoreJsMcExplore.lean` | exploration with a visited set: termination and exactness |
+| `CoreJsMcDomain.lean` | domains of candidate assignments; the non-relational instance |
+| `CoreJsMcTracker.lean` | trackers checking `except` components along a walk; the enumerating instance |
+| `CoreJsMcAlgorithm.lean` | the model-checking search and its correctness |
+| `CoreJsMcInstance.lean` | the program automaton as an instance |
+| `CoreJsMcFinite.lean` | finite forms of the labeled automaton; model checking the program is complete |
+| `CoreJsMcTests.lean` | compile-time tests on a toy system |
 
 Imports, by file name (`A ← B, C`: `A` imports `B` and `C`):
 
@@ -141,10 +171,19 @@ CoreJsQueryToLtl          ← CoreJsQuerySemantics, CoreJsFoLtl
 CoreJsQModelSyntax        ← CoreJsQuerySyntax
 CoreJsQModelSemantics     ← CoreJsQuerySemantics, CoreJsQModelSyntax
 CoreJsQueryToQModel       ← CoreJsQModelSemantics
+CoreJsMcInterface         ← CoreJsQueryToQModel
+CoreJsMcExplore           ← CoreJsMcInterface
+CoreJsMcDomain            ← CoreJsMcExplore
+CoreJsMcTracker           ← CoreJsMcDomain
+CoreJsMcAlgorithm         ← CoreJsMcTracker
+CoreJsMcInstance          ← CoreJsMcAlgorithm, CoreJsAutomatonSoundness
+CoreJsMcFinite            ← CoreJsMcInstance
+CoreJsMcTests             ← CoreJsMcAlgorithm
 ```
 
 The automaton development and the query development are independent of
-each other. Both build on the concrete semantics.
+each other. Both build on the concrete semantics, and they meet only in
+`CoreJsMcInstance.lean`.
 
 A good reading order for the analysis is syntax → semantics → automaton
 syntax → automaton semantics → relation → soundness, with totality at any
