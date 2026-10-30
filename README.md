@@ -73,10 +73,20 @@ observations.
   invocation. The translation is also computable (`Query.tr`, with
   `Query.tr_computed_correct`); `#guard` checks in the same file show the
   formulas it produces for example queries.
+- **Query models** (`Query.toQModel_correct`, `CoreJsQueryToQModel.lean`).
+  Every query compiles into a *query model*, the automaton form the model
+  checker works with: invocations are inlined, the positive pattern is a
+  nondeterministic automaton over trace actions, every `except` is a further
+  component, and each state is labelled with the invariants and variables
+  accumulated so far and, at final states, the `except` components to avoid.
+  A record satisfies the model exactly when it matches the query, for the
+  full query language. Its invariants only grow along edges
+  (`Query.toQModel_wf`), so a model checker may discard a substitution as
+  soon as it violates the current state's invariants.
 
 ## Repository layout
 
-All sources are in `analysis/`, in namespace `CoreJS`, split into four
+All sources are in `analysis/`, in namespace `CoreJS`, split into five
 directories:
 
 ```
@@ -84,7 +94,8 @@ analysis/
 ├── CoreJS/                 the language and its concrete semantics
 ├── Queries/
 │   ├── QueryLanguage/      queries, their semantics, tests
-│   └── FoLtl/              FO-LTL, its tests, the query translation
+│   ├── FoLtl/              FO-LTL, its tests, the query translation
+│   └── QueryModel/         query models and the query translation into them
 └── ProgramAutomaton/       the automaton-based analysis
 ```
 
@@ -107,6 +118,10 @@ analysis/
 | `CoreJsFoLtl.lean` | first-order LTL over finite traces, and records as its models |
 | `CoreJsFoLtlTests.lean` | compile-time tests for the logic |
 | `CoreJsQueryToLtl.lean` | the query-to-FO-LTL translation and its correctness |
+| **`Queries/QueryModel/`** | |
+| `CoreJsQModelSyntax.lean` | query models: variables, states, edges, labelled components |
+| `CoreJsQModelSemantics.lean` | runs, acceptance, satisfaction of query models over execution records |
+| `CoreJsQueryToQModel.lean` | the query-to-model translation, its correctness, computed examples |
 
 Imports, by file name (`A ← B, C`: `A` imports `B` and `C`):
 
@@ -123,6 +138,9 @@ CoreJsQueryTests          ← CoreJsQuerySemantics
 CoreJsFoLtl               ← CoreJsSemantics
 CoreJsFoLtlTests          ← CoreJsQueryTests, CoreJsFoLtl
 CoreJsQueryToLtl          ← CoreJsQuerySemantics, CoreJsFoLtl
+CoreJsQModelSyntax        ← CoreJsQuerySyntax
+CoreJsQModelSemantics     ← CoreJsQuerySemantics, CoreJsQModelSyntax
+CoreJsQueryToQModel       ← CoreJsQModelSemantics
 ```
 
 The automaton development and the query development are independent of
@@ -131,7 +149,8 @@ each other. Both build on the concrete semantics.
 A good reading order for the analysis is syntax → semantics → automaton
 syntax → automaton semantics → relation → soundness, with totality at any
 point after the automaton semantics. For the query side, read query syntax →
-query semantics → FO-LTL → translation. Each file's header explains its
+query semantics → FO-LTL → translation, and query model syntax → semantics
+→ translation. Each file's header explains its
 structure and the reasons for its non-obvious choices.
 
 ## Building

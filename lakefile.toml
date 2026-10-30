@@ -21,4 +21,7 @@ globs = [
     "Queries.FoLtl.CoreJsFoLtl",
     "Queries.FoLtl.CoreJsFoLtlTests",
     "Queries.FoLtl.CoreJsQueryToLtl",
+    "Queries.QueryModel.CoreJsQModelSyntax",
+    "Queries.QueryModel.CoreJsQModelSemantics",
+    "Queries.QueryModel.CoreJsQueryToQModel",
 ]

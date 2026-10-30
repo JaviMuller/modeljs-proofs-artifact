@@ -46,7 +46,7 @@ names. The list is currently complete.
 
 ### Layout
 
-Sources live under `analysis/` in four directories (module names never
+Sources live under `analysis/` in five directories (module names never
 contain spaces, hence the camel case):
 
 - `CoreJS/` — the language and its concrete semantics
@@ -55,7 +55,10 @@ contain spaces, hence the camel case):
 - `Queries/QueryLanguage/` — queries, their semantics, and the query tests
   (`CoreJsQuery{Syntax,Semantics,Tests}`);
 - `Queries/FoLtl/` — FO-LTL, its tests, and the query-to-FO-LTL translation
-  (`CoreJsFoLtl`, `CoreJsFoLtlTests`, `CoreJsQueryToLtl`).
+  (`CoreJsFoLtl`, `CoreJsFoLtlTests`, `CoreJsQueryToLtl`);
+- `Queries/QueryModel/` — query models (the automaton form of queries, for
+  the model checker) and the query-to-model translation
+  (`CoreJsQModel{Syntax,Semantics}`, `CoreJsQueryToQModel`).
 
 ## Architecture
 
@@ -75,6 +78,9 @@ are listed above):
 - `CoreJsFoLtl` ← `CoreJsSemantics`
 - `CoreJsFoLtlTests` ← `CoreJsQueryTests`, `CoreJsFoLtl`
 - `CoreJsQueryToLtl` ← `CoreJsQuerySemantics`, `CoreJsFoLtl`
+- `CoreJsQModelSyntax` ← `CoreJsQuerySyntax`
+- `CoreJsQModelSemantics` ← `CoreJsQuerySemantics`, `CoreJsQModelSyntax`
+- `CoreJsQueryToQModel` ← `CoreJsQModelSemantics`
 
 The query chain and the automaton chain are independent of each other; both
 sit on top of the concrete semantics.
@@ -196,8 +202,10 @@ the end of `CoreJsAutomatonSemantics.lean`.
 ### The query language
 
 8. **`CoreJsQuerySyntax.lean`** — `Query Q(x⃗) { ∃y⃗: F₁ when I except F₂ }`:
-   `QAct`, `Pred`, `Inv`, `Pat`, `QBody` (fields `locals`/`pattern`/`when`/`except`), `Query`, and the well-formedness
-   predicates `Query.WF`/`QProg.WF` (all variables declared in `x⃗ ∪ y⃗`,
+   `QAct`, `Pred`, `Inv` (generic in the variable type, default `Var`, with
+   renaming `map`s: the query model instantiates them with its own
+   variables), `Pat`, `QBody` (fields `locals`/`pattern`/`when`/`except`),
+   `Query`, and the well-formedness predicates `Query.WF`/`QProg.WF` (all variables declared in `x⃗ ∪ y⃗`,
    arities match, no duplicates, callees only *later* in the program list).
    The semantics does *not* assume either. There is no range restriction:
    a local occurring in no action (`∃y. hv(y, 3)`) ranges over all locations.
@@ -345,6 +353,41 @@ the end of `CoreJsAutomatonSemantics.lean`.
       lemmas, and `Ltl.Indep` (continuations must be insensitive to fresh-tag updates for
       the guard case's `Mono` argument to transfer).
 
+### Query models
+
+14. **`CoreJsQModelSyntax.lean`** — the automaton form of a query, decided with
+    the user for the model checker: one model (`QModel`) with every invocation
+    inlined, made of components (`QComp`): the positive part `main` and one per
+    `except` clause in `comps`, referred to by index. Variables `MVar`: `src x`
+    (the top query's) or `tag n y` (local `y` of the `n`-th inlined
+    invocation). States `QSt` are named after the pattern (`seqR f s`
+    remembers the final state of the first half, `&` is a pair), so every state
+    determines the invocations used to reach it. Edges are `ε` or
+    `act as` (one trace action equal to every action of `as`; `act []` is
+    `Any`, explicit self-loops on every state but `‖`'s start). Labels per
+    state: `inv` (invariants accumulated so far — replaces a global invariant;
+    the model checker prunes with it, sound because `inv` grows along edges,
+    `QComp.Mono`), `scope` (variables bound at this level so far), and `exc`
+    (except components, read at final states only).
+15. **`CoreJsQModelSemantics.lean`** — `Run` (reads `t[i..j)`), `QComp.Acc`
+    (new values for the final state's `scope`, a run, `inv` holds, no `exc`
+    component satisfied), `compSat` (by fuel; `QModel.depth` bounds except
+    nesting), `QModel.Sat`. Substitutions are total; why `scope` is needed (a
+    local occurring only in an `except` is bound *outside* it): see the file
+    header. `QComp.ReadsIn`/`acc_coincide`: a component only reads the
+    variables of its caller and its own scope.
+16. **`CoreJsQueryToQModel.lean`** — `Pat.build`/`QBody.build`/`QProg.build`
+    (structural; invocations resolved like `QProg.interp`, through a `Builder`
+    parameter; an unresolvable invocation is an automaton with no final state,
+    so the translation is total) and `Query.toQModel`.
+    `Query.toQModel_correct`: for `QProg.WF (q :: Δ)`, `(q.toQModel Δ).Sat e ls
+    ↔ Exec.Matches (q :: Δ) e q.name ls`, for the full language;
+    `Query.toQModel_wf`: components are `Closed` and `Mono`. Proof: `Built`
+    (bookkeeping: fresh tags, scope, `ReadsIn`) and `Correct` per
+    construction; `patOK` (induction on the pattern), `bodyOK`, `buildOK`
+    (induction on the program). `#guard`s at the end show computed models —
+    update them deliberately if the construction changes.
+
 ## Lean gotchas hit in this repository
 
 - **`omega` cannot reason about `=`/`≠` on `Loc`** (an `abbrev` for `Nat`); it
@@ -376,6 +419,11 @@ the end of `CoreJsAutomatonSemantics.lean`.
   synthesizes the `[Concrete]`/`[Abstract]` argument by instance search, not
   from the expected type. To build one for a specific instance, make the
   instance local (`attribute [local instance] …`) — see `SpecModel`.
+- **An inductive predicate may not recurse under `∃`** ("nested inductive
+  datatypes parameters cannot contain local variables"): state the recursive
+  premise as `∀ c', … → P c'` and any existence separately, non-recursively
+  (`QComp.ReadsIn`).
+- **`prefix` is a keyword**: it cannot name a structure field.
 - When a lemma's implicit configuration can be inferred from more than one
   hypothesis, Lean picks the first; pass it explicitly (`(c := …)`) if that
   is the wrong one (the call cases of `step_sound` do this).

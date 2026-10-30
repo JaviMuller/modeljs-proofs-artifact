@@ -88,7 +88,7 @@ def LEnv.bind (ξ : LEnv) : List Var → List Loc → LEnv
   | _,       _       => ξ
 
 /-- The trace action a query action denotes under `ξ`. -/
-def QAct.inst (ξ : LEnv) : QAct → Act
+def QAct.inst {ν} (ξ : ν → Loc) : QAct ν → Act
   | .lookup x₁ x₂ x₃ => .lookup (ξ x₁) (ξ x₂) (ξ x₃)
   | .update x₁ x₂ x₃ => .update (ξ x₁) (ξ x₂) (ξ x₃)
   | .call xf xs      => .call (ξ xf) (xs.map ξ)
@@ -99,7 +99,7 @@ def QAct.inst (ξ : LEnv) : QAct → Act
 /-- `σ ⬝ ξ ⊨ p`.  `sv` requires both locations to hold a value: two locations
     with no value do not "hold the same value" (and this is distinct from
     both holding `.undef`, which is a value). -/
-def Pred.Sat (σ : Obs) (ξ : LEnv) : Pred → Prop
+def Pred.Sat {ν} (σ : Obs) (ξ : ν → Loc) : Pred ν → Prop
   | .sk x      => σ.sk (ξ x)
   | .ac x      => σ.ac (ξ x)
   | .dep x₁ x₂ => σ.dep (ξ x₁) (ξ x₂)
@@ -115,7 +115,7 @@ set_option hygiene false in
 scoped notation:50 (name := invSatNotation) σ:51 " ⬝ " ξ:51 " ⊨ " I:51 => Inv.Sat σ ξ I
 
 /-- `σ ⬝ ξ ⊨ I`. -/
-def Inv.Sat (σ : Obs) (ξ : LEnv) : Inv → Prop
+def Inv.Sat {ν} (σ : Obs) (ξ : ν → Loc) : Inv ν → Prop
   | .pred p    => σ ⬝ ξ ⊨ p
   | .not I     => ¬ σ ⬝ ξ ⊨ I
   | .or I₁ I₂  => σ ⬝ ξ ⊨ I₁ ∨ σ ⬝ ξ ⊨ I₂
@@ -638,16 +638,16 @@ theorem Pat.sat_coincide {Θ : Interp} {t : List Act} {σ : Obs} {i j : Nat} :
         exact ⟨j₁, j₂, (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; left; exact hx))).2 h₁,
           (Pat.sat_coincide (fun x hx => h x (by simp [Pat.vars]; right; exact hx))).2 h₂, h₃⟩
 
-theorem Pred.sat_coincide {σ : Obs} :
-    ∀ {p : Pred} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ p.vars, ξ₁ x = ξ₂ x) → (σ ⬝ ξ₁ ⊨ p ↔ σ ⬝ ξ₂ ⊨ p)
+theorem Pred.sat_coincide {ν} {σ : Obs} :
+    ∀ {p : Pred ν} {ξ₁ ξ₂ : ν → Loc}, (∀ x ∈ p.vars, ξ₁ x = ξ₂ x) → (σ ⬝ ξ₁ ⊨ p ↔ σ ⬝ ξ₂ ⊨ p)
   | .sk x, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
   | .ac x, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
   | .dep x₁ x₂, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h.1, h.2]
   | .sv x₁ x₂, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h.1, h.2]
   | .hv x c, ξ₁, ξ₂, h => by simp [Pred.Sat, Pred.vars] at h ⊢; rw [h]
 
-theorem Inv.sat_coincide {σ : Obs} :
-    ∀ {I : Inv} {ξ₁ ξ₂ : LEnv}, (∀ x ∈ I.vars, ξ₁ x = ξ₂ x) → (σ ⬝ ξ₁ ⊨ I ↔ σ ⬝ ξ₂ ⊨ I)
+theorem Inv.sat_coincide {ν} {σ : Obs} :
+    ∀ {I : Inv ν} {ξ₁ ξ₂ : ν → Loc}, (∀ x ∈ I.vars, ξ₁ x = ξ₂ x) → (σ ⬝ ξ₁ ⊨ I ↔ σ ⬝ ξ₂ ⊨ I)
   | .pred p, ξ₁, ξ₂, h => Pred.sat_coincide h
   | .not I, ξ₁, ξ₂, h => by simp only [Inv.Sat, Inv.sat_coincide (I := I) h]
   | .or I₁ I₂, ξ₁, ξ₂, h => by

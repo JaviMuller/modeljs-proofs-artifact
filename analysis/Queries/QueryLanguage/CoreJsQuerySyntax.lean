@@ -29,33 +29,38 @@ abbrev QName := String
 
 /-! ## Query actions, predicates, invariants -/
 
+/-! Actions, predicates and invariants are generic in the type `ν` of the
+variables they mention, defaulting to the source variables `Var`: the query
+model (`Queries/QueryModel/`) instantiates them with its own variables after
+inlining invocations. -/
+
 /-- Query actions `a`, the syntactic counterparts of the trace actions. -/
-inductive QAct where
+inductive QAct (ν : Type := Var) where
   /-- `x₁ := x₂[x₃]` -/
-  | lookup (x₁ x₂ x₃ : Var)
+  | lookup (x₁ x₂ x₃ : ν)
   /-- `x₁[x₂] := x₃` -/
-  | update (x₁ x₂ x₃ : Var)
+  | update (x₁ x₂ x₃ : ν)
   /-- `Call(x_f, [x₁, ..., xₙ])` -/
-  | call   (xf : Var) (xs : List Var)
+  | call   (xf : ν) (xs : List ν)
   /-- `Retn(x_f, x)` -/
-  | retn   (xf x : Var)
+  | retn   (xf x : ν)
   deriving DecidableEq, Repr
 
 /-- Taint/value predicates `p ::= sk(x) | ac(x) | dep(x₁, x₂) | sv(x₁, x₂) | hv(x, c)`. -/
-inductive Pred where
-  | sk  (x : Var)
-  | ac  (x : Var)
-  | dep (x₁ x₂ : Var)
-  | sv  (x₁ x₂ : Var)
-  | hv  (x : Var) (c : Val)
+inductive Pred (ν : Type := Var) where
+  | sk  (x : ν)
+  | ac  (x : ν)
+  | dep (x₁ x₂ : ν)
+  | sv  (x₁ x₂ : ν)
+  | hv  (x : ν) (c : Val)
   deriving DecidableEq, Repr
 
 /-- Query invariants `I ::= p | ¬I | I ∨ I | I ∧ I | true | false`. -/
-inductive Inv where
-  | pred (p : Pred)
-  | not  (I : Inv)
-  | or   (I₁ I₂ : Inv)
-  | and  (I₁ I₂ : Inv)
+inductive Inv (ν : Type := Var) where
+  | pred (p : Pred ν)
+  | not  (I : Inv ν)
+  | or   (I₁ I₂ : Inv ν)
+  | and  (I₁ I₂ : Inv ν)
   | tt
   | ff
   deriving DecidableEq, Repr
@@ -114,14 +119,14 @@ def QProg.find? (Δ : QProg) (Q : QName) : Option Query :=
 /-! ## Variables and invocations occurring in a query -/
 
 /-- Variables of a query action. -/
-def QAct.vars : QAct → List Var
+def QAct.vars {ν} : QAct ν → List ν
   | .lookup x₁ x₂ x₃ => [x₁, x₂, x₃]
   | .update x₁ x₂ x₃ => [x₁, x₂, x₃]
   | .call xf xs      => xf :: xs
   | .retn xf x       => [xf, x]
 
 /-- Variables of a predicate. -/
-def Pred.vars : Pred → List Var
+def Pred.vars {ν} : Pred ν → List ν
   | .sk x       => [x]
   | .ac x       => [x]
   | .dep x₁ x₂  => [x₁, x₂]
@@ -129,13 +134,36 @@ def Pred.vars : Pred → List Var
   | .hv x _     => [x]
 
 /-- Variables of an invariant. -/
-def Inv.vars : Inv → List Var
+def Inv.vars {ν} : Inv ν → List ν
   | .pred p   => p.vars
   | .not I    => I.vars
   | .or I₁ I₂ => I₁.vars ++ I₂.vars
   | .and I₁ I₂ => I₁.vars ++ I₂.vars
   | .tt       => []
   | .ff       => []
+
+/-! Renaming the variables of actions, predicates and invariants. -/
+
+def QAct.map {ν μ} (ρ : ν → μ) : QAct ν → QAct μ
+  | .lookup x₁ x₂ x₃ => .lookup (ρ x₁) (ρ x₂) (ρ x₃)
+  | .update x₁ x₂ x₃ => .update (ρ x₁) (ρ x₂) (ρ x₃)
+  | .call xf xs      => .call (ρ xf) (xs.map ρ)
+  | .retn xf x       => .retn (ρ xf) (ρ x)
+
+def Pred.map {ν μ} (ρ : ν → μ) : Pred ν → Pred μ
+  | .sk x      => .sk (ρ x)
+  | .ac x      => .ac (ρ x)
+  | .dep x₁ x₂ => .dep (ρ x₁) (ρ x₂)
+  | .sv x₁ x₂  => .sv (ρ x₁) (ρ x₂)
+  | .hv x c    => .hv (ρ x) c
+
+def Inv.map {ν μ} (ρ : ν → μ) : Inv ν → Inv μ
+  | .pred p    => .pred (p.map ρ)
+  | .not I     => .not (I.map ρ)
+  | .or I₁ I₂  => .or (I₁.map ρ) (I₂.map ρ)
+  | .and I₁ I₂ => .and (I₁.map ρ) (I₂.map ρ)
+  | .tt        => .tt
+  | .ff        => .ff
 
 /-- Variables of an action pattern (including invocation arguments). -/
 def Pat.vars : Pat → List Var
