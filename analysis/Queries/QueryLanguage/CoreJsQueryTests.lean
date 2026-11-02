@@ -46,8 +46,8 @@ instance : Concrete where
   -- Site `κ` owns the block `[1000 + 100κ, 1000 + 100κ + 8)`; its next free
   -- location is the first one of the block not holding a value yet (an
   -- object's location holds its reference value).
-  allocC h κ :=
-    1000 + 100 * κ + (List.range 8).countP (fun i => (h.val (1000 + 100 * κ + i)).isSome)
+  allocC _ δ κ :=
+    1000 + 100 * κ + (List.range 8).countP (fun i => (δ.val (1000 + 100 * κ + i)).isSome)
   opSem op v₁ v₂ :=
     match op, v₁, v₂ with
     | .add,    .num a, .num b => .num (a + b)
@@ -66,12 +66,12 @@ def Γ₀ : Env := fun f =>
     some (["a"], .seq (.binOp "r" 7 .add (.var "a") (.val (.num 1))) (.ret (.var "r"))) else
   none
 
-/-- The functions of `Γ₀`, whose literals the initial heap sets up. -/
+/-- The functions of `Γ₀`, whose literals the initial register sets up. -/
 def fs₀ : List Fid := ["id", "nop", "sink", "plus1"]
 
 /-! ## Proof automation
 
-`bigstep` builds a derivation of `BigStep Γ c s ?r` for a concrete program,
+`bigstep` builds a derivation of `Γ ⊢ ⟨c, s⟩ ⇓c ?r` for a concrete program,
 discovering the result `?r` as it goes: every premise of a rule is an equation
 that `rfl` closes, apart from the `if`/`seq` choices, resolved by
 backtracking. -/
@@ -102,7 +102,7 @@ macro_rules
       | (apply BigStep.callRet <;> first | rfl | bigstep)
       | (apply BigStep.callCont <;> first | rfl | bigstep))
 
-/-- `run tac`: goal `∃ r, BigStep Γ (Conf.init Γ fs s) s r ∧ P r`; derive the run,
+/-- `run tac`: goal `∃ r, Γ ⊢ ⟨Conf.init Γ fs s, s⟩ ⇓c r ∧ P r`; derive the run,
     then prove `P r` with `tac`. -/
 macro "run " tac:tacticSeq : tactic =>
   `(tactic| (apply Exists.intro; apply And.intro; (· bigstep); · $tac))
@@ -115,7 +115,7 @@ macro "run " tac:tacticSeq : tactic =>
 
 /-- The run of `s` from the initial configuration satisfies `P`. -/
 def Runs (s : Stmt) (P : Res → Prop) : Prop :=
-  ∃ r, BigStep Γ₀ (Conf.init Γ₀ fs₀ s) s r ∧ P r
+  ∃ r, Γ₀ ⊢ ⟨Conf.init Γ₀ fs₀ s, s⟩ ⇓c r ∧ P r
 
 /-! ## 1. Statement shapes -/
 
@@ -140,23 +140,23 @@ def pBin : Stmt :=
   assign "a" (val (.num 3)) ;; assign "b" (val (.num 4)) ;;
   binOp "c" 1 .add (var "a") (var "b")
 theorem run_binOp : Runs pBin fun r =>
-    r.sto "c" = some 1100 ∧ r.heap.val 1100 = some (.num 7) ∧
+    r.sto "c" = some 1100 ∧ r.reg.val 1100 = some (.num 7) ∧
     r.reg.dep 1100 13 ∧ r.reg.dep 1100 14 ∧ ¬ r.reg.dep 1100 15 := by
-  run refine ⟨rfl, rfl, ?_, ?_, ?_⟩ <;> simp +decide [Reg.setDep, Reg.empty]
+  run refine ⟨rfl, rfl, ?_, ?_, ?_⟩ <;> simp +decide [Reg.setDep, Reg.setVal, Reg.init]
 
 /-- `x :=κ {pᵢ : eᵢ}` -/
 def pObjLit : Stmt :=
   assign "a" (val (.num 5)) ;; objLit "o" 2 [("p", var "a")]
 theorem run_objLit : Runs pObjLit fun r =>
     r.trc.toList = [] ∧ r.sto "o" = some 1200 ∧ r.heap.obj 1200 "p" = some 15 ∧
-    r.heap.obj 1200 "q" = none ∧ r.heap.val 1200 = some (.loc 1200) := by
+    r.heap.obj 1200 "q" = none ∧ r.reg.val 1200 = some (.loc 1200) := by
   run exact ⟨rfl, rfl, rfl, rfl, rfl⟩
 
 /-- An object reference is a value: a binary operation accepts it (here the
     test `opSem` maps it to `undefined`), where JS would compute e.g.
     `"[object Object]"`. -/
 def pObjOp : Stmt := objLit "o" 2 [] ;; binOp "s" 3 .concat (var "o") (val (.str ""))
-theorem run_objOp : Runs pObjOp fun r => r.heap.val 1300 = some .undef := by
+theorem run_objOp : Runs pObjOp fun r => r.reg.val 1300 = some .undef := by
   run rfl
 
 /-- Two empty object literals from the same site are distinct objects: the
@@ -232,21 +232,21 @@ theorem run_updateD : Runs pUpdateD fun r =>
     r.trc.toList = [.update 1200 101 15] ∧ r.heap.obj 1200 "p" = some 15 := by
   run exact ⟨rfl, rfl⟩
 
-/-- `x :=κ f(e⃗)`, explicit return: the call evaluates to the returned location. -/
+/-- `x :=κ f(es)`, explicit return: the call evaluates to the returned location. -/
 def pCallRet : Stmt := assign "a" (val (.num 3)) ;; call "r" 1 (val (.fid "id")) [var "a"]
 theorem run_callRet : Runs pCallRet fun r =>
     r.trc.toList = [.call 202 [13], .ret 202 13] ∧ r.sto "r" = some 13 := by
   run exact ⟨rfl, rfl⟩
 
 /-- A callee whose body uses a literal that the main statement does not: the
-    initial heap sets up the literals of every function body, so `1` is
+    initial register sets up the literals of every function body, so `1` is
     there when `plus1` runs. -/
 def pCallLit : Stmt := assign "a" (val (.num 3)) ;; call "r" 1 (val (.fid "plus1")) [var "a"]
 theorem run_callLit : Runs pCallLit fun r =>
-    r.sto "r" = some 1700 ∧ r.heap.val 1700 = some (.num 4) := by
+    r.sto "r" = some 1700 ∧ r.reg.val 1700 = some (.num 4) := by
   run exact ⟨rfl, rfl⟩
 
-/-- `x :=κ f(e⃗)`, implicit return: the call evaluates to `undefined`. -/
+/-- `x :=κ f(es)`, implicit return: the call evaluates to `undefined`. -/
 def pCallCont : Stmt := assign "a" (val (.num 3)) ;; call "r" 1 (val (.fid "nop")) [var "a"]
 theorem run_callCont : Runs pCallCont fun r =>
     r.trc.toList = [.call 203 [13], .ret 203 0] ∧ r.sto "r" = some 0 := by
@@ -272,8 +272,8 @@ def pWhile : Stmt :=
      binOp "b" 4 .lt (var "i") (var "lim"))
 theorem run_while : Runs pWhile fun r =>
     r.trc.toList = [.update 1500 101 10, .update 1500 101 1300] ∧
-    r.sto "i" = some 1301 ∧ r.heap.val 1301 = some (.num 2) ∧
-    r.heap.val 1401 = some (.bool false) := by
+    r.sto "i" = some 1301 ∧ r.reg.val 1301 = some (.num 2) ∧
+    r.reg.val 1401 = some (.bool false) := by
   run exact ⟨rfl, rfl, rfl, rfl⟩
 
 /-- `return e` -/
@@ -303,7 +303,7 @@ theorem run_taint : Runs pTaint fun r =>
     r.reg.sk 204 ∧ ¬ r.reg.sk 15 ∧ r.reg.ac 15 ∧ ¬ r.reg.ac 1100 ∧
     (Exec.ofRes r).obs.ac 1100 ∧ ¬ (Exec.ofRes r).obs.ac 11 := by
   run refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
-      <;> simp +decide [Exec.ofRes, Obs.ofRun, Reg.setDep, Reg.empty]
+      <;> simp +decide [Exec.ofRes, Obs.ofRun, Reg.setDep, Reg.setVal, Reg.init]
 
 /-! ## 2. Queries
 
@@ -317,23 +317,19 @@ def mkQ (name : QName) (params : List Var) (F : Pat) (I : Inv := .tt)
     (E : Option Pat := none) (locals : List Var := []) : Query :=
   ⟨name, params, { locals, pattern := F, when := I, except := E }⟩
 
-/-- `Q` matches the execution record of the run of `s` on the arguments `ls`. -/
-def QRuns (s : Stmt) (Δ : QProg) (Q : QName) (ls : List Loc) (b : Prop) : Prop :=
-  Runs s fun r => Exec.Matches Δ (Exec.ofRes r) Q ls ↔ b
-
 /-- Matching a query with no locals: body, invariant, and (absent) `except`. -/
-theorem _root_.CoreJS.QBody.Sat.simple {Θ : Interp} {t : List Act} {σ : Obs} {ξ : LEnv}
+theorem _root_.CoreJS.QBody.Sat.simple {Θ : Interp} {t : List Act} {δ : Obs} {ξ : LEnv}
     {P : QBody} {i j : Nat} (hl : P.locals = [])
-    (hn : P.except = none) (hb : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P.pattern : i ⇝ j) (hi : σ ⬝ ξ ⊨ P.when) :
-    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j :=
+    (hn : P.except = none) (hb : Θ ⬝ t ⬝ δ ⬝ ξ ⊨ P.pattern : i ⇝ j) (hi : δ ⬝ ξ ⊨ P.when) :
+    Θ ⬝ t ⬝ δ ⬝ ξ ⊨ P : i ⇝ j :=
   .mk (ls := []) (by simp [hl]) (by rw [hl]; rfl) hb hi (by simp [hn])
 
 /-- Inversion for a query with no locals. -/
-theorem _root_.CoreJS.QBody.Sat.invert {Θ : Interp} {t : List Act} {σ : Obs} {ξ : LEnv}
+theorem _root_.CoreJS.QBody.Sat.invert {Θ : Interp} {t : List Act} {δ : Obs} {ξ : LEnv}
     {P : QBody} {i j : Nat} (hl : P.locals = [])
-    (h : Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j) :
-    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P.pattern : i ⇝ j ∧ σ ⬝ ξ ⊨ P.when ∧
-      ∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F' : 0 ⇝ k := by
+    (h : Θ ⬝ t ⬝ δ ⬝ ξ ⊨ P : i ⇝ j) :
+    Θ ⬝ t ⬝ δ ⬝ ξ ⊨ P.pattern : i ⇝ j ∧ δ ⬝ ξ ⊨ P.when ∧
+      ∀ F', P.except = some F' → ∀ k ≤ t.length, ¬ Θ ⬝ t ⬝ δ ⬝ ξ ⊨ F' : 0 ⇝ k := by
   cases h with
   | mk hlen hξ hb hi he =>
     rw [hl] at hlen hξ
@@ -347,7 +343,7 @@ syntax "obs_simp" "[" Lean.Parser.Tactic.simpLemma,* "]" : tactic
 macro_rules
   | `(tactic| obs_simp [$ids,*]) =>
     `(tactic| simp +decide [$ids,*, mkQ, Inv.Sat, Pred.Sat, Exec.ofRes, Obs.ofRun, LEnv.bind,
-        LEnv.empty, Reg.setDep, Reg.empty])
+        LEnv.empty, Reg.setDep, Reg.setVal, Reg.init])
 
 /-- `simp` set that evaluates the trace of a run and the action patterns against it. -/
 syntax "tr_simp" (Lean.Parser.Tactic.location)? : tactic
@@ -467,7 +463,7 @@ theorem q_exceptHit_no : Runs pTaint fun r =>
     ¬ Exec.Matches [qExceptHit] (Exec.ofRes r) "ExceptHit" [204, 1100, 0] := by
   run refine not_matches_of fun j hj => ?_
       obtain ⟨_, _, he⟩ := hj.invert rfl
-      exact he _ rfl 2 (.act (by decide) (by decide) (by decide))
+      exact he _ rfl 2 (by decide) (.act (by decide) (by decide) (by decide))
 
 /-- ... whereas excluding `Retn(f,x)` (never performed: it would return `1100`) leaves it matched. -/
 def qExceptMiss : Query :=
@@ -476,7 +472,7 @@ theorem q_exceptMiss : Runs pTaint fun r =>
     Exec.Matches [qExceptMiss] (Exec.ofRes r) "ExceptMiss" [204, 1100] := by
   run refine matches_of (j := 1) rfl
         (.mk (ls := []) rfl rfl (.act (by decide) (by decide) (by decide)) (by obs_simp [qExceptMiss])
-          fun F' hF' k hk => ?_)
+          fun F' hF' k _ hk => ?_)
       cases hF'
       cases hk with
       | @act _ _ k h₁ h₂ h₃ =>
@@ -595,7 +591,7 @@ theorem q_exceptWhole_no : Runs pTaint fun r =>
         | query h =>
           obtain ⟨_, hPs⟩ := (QProg.interp_head qLate [] _ _ _ _ _).1 h
           obtain ⟨_, _, he⟩ := hPs.invert rfl
-          exact he _ rfl 1 (.act (by decide) (by decide) (by decide))
+          exact he _ rfl 1 (by decide) (.act (by decide) (by decide) (by decide))
 
 /-- ... but `Late` on its own can still be one alternative of a `‖`: its failing `except`
     only rules out that alternative, and `Retn(f, r)` on the right still matches. -/

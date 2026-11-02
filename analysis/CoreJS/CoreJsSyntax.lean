@@ -30,7 +30,7 @@ abbrev PropName := String
 /-- Locations `l ∈ Loc`. -/
 abbrev Loc := Nat
 
-/-- Instruction indices `κ`, used by the heap allocator to annotate binary
+/-- Instruction indices `κ`, used by the allocator to annotate binary
     operations and object initialisations. -/
 abbrev Idx := Nat
 
@@ -154,8 +154,8 @@ inductive Stmt where
 
 /-! ## Literals occurring in a program
 
-Needed for the well-formedness of concrete heaps w.r.t. a statement
-(`Heap.WF`): every literal `v` occurring in `s` must be stored at its fixed
+Needed for the well-formedness of taint registers w.r.t. a statement
+(`Reg.WF`): every literal `v` occurring in `s` must be stored at its fixed
 location `l_v`.
 
 Note that the static lookup/update rules emit trace actions mentioning `l_p`,

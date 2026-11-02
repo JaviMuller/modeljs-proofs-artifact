@@ -6,7 +6,7 @@
   abstract configuration at every state) to be valid:
 
   * abstract locations, value sets, heaps, stores and taint registers, their
-    order and join, and the parameters of the analysis (`Abstract`,
+    order, and the parameters of the analysis (`Abstract`,
     `AbstractSpec`);
   * abstract trace actions (`AAct`), the labels of the edges;
   * the per-statement effects on abstract configurations;
@@ -14,6 +14,10 @@
     labelings and their validity, analysis results, and walks (`AWalk`);
   * the invariant that functions' canonical locations hold only those
     functions, preserved by every edge.
+
+  Abstract heaps, stores, registers and locations are named `hₐ`, `ρₐ`, `δₐ`,
+  `lₐ` — written with a hat in the paper (a Lean identifier cannot carry a
+  combining hat).
 
   Control flow is purely structural: whether a statement returned or
   continued is a matter of which states and edges exist, never a value
@@ -37,7 +41,7 @@ def ALoc := Nat
 instance : DecidableEq ALoc := inferInstanceAs (DecidableEq Nat)
 instance : Inhabited ALoc   := inferInstanceAs (Inhabited Nat)
 
-/-- `P(L̂oc)`, represented as a predicate. -/
+/-- `P(ALoc)`, represented as a predicate. -/
 def ALocSet := ALoc → Prop
 
 instance : EmptyCollection ALocSet  := ⟨fun _ => False⟩
@@ -47,7 +51,7 @@ instance : Union ALocSet            := ⟨fun A B l => A l ∨ B l⟩
 instance : HasSubset ALocSet        := ⟨fun A B => ∀ l, A l → B l⟩
 
 /-- `V ∈ P(Val)^⊤`: value sets extended with a distinguished `⊤`, produced by
-    the widening of `⊕̂`. -/
+    the widening of `opSemA` (the abstract `⊕`). -/
 inductive VSet where
   | vals (V : Val → Prop)
   | top
@@ -66,25 +70,28 @@ def VSet.join : VSet → VSet → VSet
 instance : EmptyCollection VSet := ⟨.vals fun _ => False⟩
 instance : Membership Val VSet  := ⟨VSet.Mem⟩
 instance : HasSubset VSet       := ⟨VSet.Subset⟩
-instance : Union VSet           := ⟨VSet.join⟩
 
 /-! ## Abstract heap, store and taint register -/
 
-/-- Abstract stores `ρ̂ ∈ Ŝto : Var ⇀ P(L̂oc)`, modelled total into `∅`. -/
+/-- Abstract stores `ρₐ ∈ ASto : Var ⇀ P(ALoc)`, modelled total into `∅`. -/
 def ASto := Var → ALocSet
 
+/-- Abstract heaps `ĥ`: the properties each abstract object may have. As
+    concretely, values are not part of the heap but of the taint register. -/
 structure AHeap where
   obj : ALoc → PropName → ALocSet
-  val : ALoc → VSet
 
+/-- Abstract taint registers `δₐ`: the values each abstract location may hold
+    (`val`), and the taint facts `dep`/`ac`/`sk`, mirroring `Reg`. -/
 structure AReg where
+  val : ALoc → VSet
   dep : ALoc → ALocSet
   ac  : ALocSet
   sk  : ALocSet
 
 def ASto.bot : ASto := fun _ => ∅
-def AHeap.bot : AHeap := { obj := fun _ _ => ∅, val := fun _ => ∅ }
-def AReg.bot : AReg := { dep := fun _ => ∅, ac := ∅, sk := ∅ }
+def AHeap.bot : AHeap := { obj := fun _ _ => ∅ }
+def AReg.bot : AReg := { val := fun _ => ∅, dep := fun _ => ∅, ac := ∅, sk := ∅ }
 
 /-- Abstract trace actions: the labels of the automaton's edges. They mirror
     the concrete `Act`, with every location widened to a set of abstract
@@ -106,15 +113,16 @@ def AAct.visible : AAct → List AAct
   | .epsilon => []
   | a        => [a]
 
-/-! ### Order and join -/
+/-! ### Order -/
 
-def AHeap.Le (h₁ h₂ : AHeap) : Prop :=
-  (∀ l p, h₁.obj l p ⊆ h₂.obj l p) ∧ (∀ l, (h₁.val l) ⊆ (h₂.val l))
+def AHeap.Le (hₐ₁ hₐ₂ : AHeap) : Prop :=
+  ∀ l p, hₐ₁.obj l p ⊆ hₐ₂.obj l p
 
-def ASto.Le (ρ₁ ρ₂ : ASto) : Prop := ∀ x, ρ₁ x ⊆ ρ₂ x
+def ASto.Le (ρₐ₁ ρₐ₂ : ASto) : Prop := ∀ x, ρₐ₁ x ⊆ ρₐ₂ x
 
-def AReg.Le (δ₁ δ₂ : AReg) : Prop :=
-  (∀ l, δ₁.dep l ⊆ δ₂.dep l) ∧ δ₁.ac ⊆ δ₂.ac ∧ δ₁.sk ⊆ δ₂.sk
+def AReg.Le (δₐ₁ δₐ₂ : AReg) : Prop :=
+  (∀ l, (δₐ₁.val l) ⊆ (δₐ₂.val l)) ∧ (∀ l, δₐ₁.dep l ⊆ δₐ₂.dep l) ∧
+    δₐ₁.ac ⊆ δₐ₂.ac ∧ δₐ₁.sk ⊆ δₐ₂.sk
 
 instance : LE VSet  := ⟨VSet.Subset⟩
 instance : LE ASto  := ⟨ASto.Le⟩
@@ -123,45 +131,23 @@ instance : LE AReg  := ⟨AReg.Le⟩
 
 scoped infix:50 " ⊑ " => LE.le
 
-class Join (α : Type) where
-  join : α → α → α
-
-scoped infixl:65 " ⊔ " => Join.join
-
-def AHeap.join (h₁ h₂ : AHeap) : AHeap :=
-  { obj := fun l p => h₁.obj l p ∪ h₂.obj l p
-    val := fun l => (h₁.val l) ∪ (h₂.val l) }
-
-def ASto.join (ρ₁ ρ₂ : ASto) : ASto := fun x => ρ₁ x ∪ ρ₂ x
-
-def AReg.join (δ₁ δ₂ : AReg) : AReg :=
-  { dep := fun l => δ₁.dep l ∪ δ₂.dep l
-    ac  := δ₁.ac ∪ δ₂.ac
-    sk  := δ₁.sk ∪ δ₂.sk }
-
-instance : Join VSet    := ⟨VSet.join⟩
-instance : Join ALocSet := ⟨fun A B => A ∪ B⟩
-instance : Join AHeap   := ⟨AHeap.join⟩
-instance : Join ASto    := ⟨ASto.join⟩
-instance : Join AReg    := ⟨AReg.join⟩
-
 /-! ## Lifting the heap/register to sets of locations -/
 
-def AHeap.valOf (h : AHeap) (L : ALocSet) : VSet :=
-  .vals (fun v => ∃ l, L l ∧ (h.val l).Mem v)
+def AReg.valOf (δₐ : AReg) (L : ALocSet) : VSet :=
+  .vals (fun v => ∃ l, L l ∧ (δₐ.val l).Mem v)
 
-def AHeap.objOf (h : AHeap) (L : ALocSet) (p : PropName) : ALocSet :=
-  fun l' => ∃ l, L l ∧ h.obj l p l'
+def AHeap.objOf (hₐ : AHeap) (L : ALocSet) (p : PropName) : ALocSet :=
+  fun l' => ∃ l, L l ∧ hₐ.obj l p l'
 
 /-- `V` contains a value that may denote the property name `q` as a key
     (`Val.KeyOf`). -/
 def VSet.HasKey (V : VSet) (q : PropName) : Prop := ∃ v, V.Mem v ∧ v.KeyOf q
 
-def AHeap.objOfV (h : AHeap) (L : ALocSet) (V : VSet) : ALocSet :=
-  fun l' => ∃ l p, L l ∧ V.HasKey p ∧ h.obj l p l'
+def AHeap.objOfV (hₐ : AHeap) (L : ALocSet) (V : VSet) : ALocSet :=
+  fun l' => ∃ l p, L l ∧ V.HasKey p ∧ hₐ.obj l p l'
 
-def AReg.depOf (δ : AReg) (L : ALocSet) : ALocSet :=
-  fun l' => ∃ l, L l ∧ δ.dep l l'
+def AReg.depOf (δₐ : AReg) (L : ALocSet) : ALocSet :=
+  fun l' => ∃ l, L l ∧ δₐ.dep l l'
 
 /-! ## Abstract updates
 
@@ -173,27 +159,27 @@ it abstracts, so an update of one of them must not erase the others. -/
     abstract location. -/
 def VSet.refs : VSet := .vals fun v => ∃ l, v = .loc l
 
-def AHeap.weakSetVal (h : AHeap) (l : ALoc) (V : VSet) : AHeap :=
-  { h with val := fun l' => if l' = l then VSet.join V (h.val l') else h.val l' }
+def AReg.weakSetVal (δₐ : AReg) (lₐ : ALoc) (V : VSet) : AReg :=
+  { δₐ with val := fun l' => if l' = lₐ then VSet.join V (δₐ.val l') else δₐ.val l' }
 
-def AHeap.weakSetObj (h : AHeap) (L : ALocSet) (p : PropName) (L' : ALocSet) :
+def AHeap.weakSetObj (hₐ : AHeap) (L : ALocSet) (p : PropName) (L' : ALocSet) :
     AHeap :=
-  { h with obj := fun l q l' => h.obj l q l' ∨ (L l ∧ q = p ∧ L' l') }
+  { hₐ with obj := fun l q l' => hₐ.obj l q l' ∨ (L l ∧ q = p ∧ L' l') }
 
-def AHeap.weakSetObjV (h : AHeap) (L : ALocSet) (V : VSet) (L' : ALocSet) :
+def AHeap.weakSetObjV (hₐ : AHeap) (L : ALocSet) (V : VSet) (L' : ALocSet) :
     AHeap :=
-  { h with obj := fun l q l' => h.obj l q l' ∨ (L l ∧ V.HasKey q ∧ L' l') }
+  { hₐ with obj := fun l q l' => hₐ.obj l q l' ∨ (L l ∧ V.HasKey q ∧ L' l') }
 
-def AHeap.weakSetObjs (h : AHeap) (l : ALoc) :
+def AHeap.weakSetObjs (hₐ : AHeap) (lₐ : ALoc) :
     List (PropName × ALocSet) → AHeap
-  | []           => h
-  | (p, L) :: ps => (h.weakSetObj {l} p L).weakSetObjs l ps
+  | []           => hₐ
+  | (p, L) :: ps => (hₐ.weakSetObj {lₐ} p L).weakSetObjs lₐ ps
 
-def AReg.weakSetDep (δ : AReg) (l : ALoc) (d : ALocSet) : AReg :=
-  { δ with dep := fun l' => if l' = l then d ∪ δ.dep l' else δ.dep l' }
+def AReg.weakSetDep (δₐ : AReg) (lₐ : ALoc) (d : ALocSet) : AReg :=
+  { δₐ with dep := fun l' => if l' = lₐ then d ∪ δₐ.dep l' else δₐ.dep l' }
 
-def ASto.upd (ρ : ASto) (x : Var) (L : ALocSet) : ASto :=
-  fun y => if y = x then L else ρ y
+def ASto.upd (ρₐ : ASto) (x : Var) (L : ALocSet) : ASto :=
+  fun y => if y = x then L else ρₐ y
 
 def ASto.ofParams : List Var → List ALocSet → ASto
   | x :: xs, L :: Ls => (ASto.ofParams xs Ls).upd x L
@@ -203,7 +189,7 @@ def ASto.ofParams : List Var → List ALocSet → ASto
 
 class Abstract where
   litLocA : Val → ALoc
-  allocA  : AHeap → Idx → ALoc
+  allocA  : AHeap → AReg → Idx → ALoc
   opSemA  : BinOp → VSet → VSet → VSet
 
 open Abstract
@@ -211,7 +197,7 @@ open Abstract
 structure AbstractSpec [Abstract] : Prop where
   opSemA_mono : ∀ op V₁ V₁' V₂ V₂', V₁ ⊑ V₁' → V₂ ⊑ V₂' →
     (opSemA op V₁ V₂) ⊑ (opSemA op V₁' V₂')
-  allocA_site : ∀ h h' κ, allocA h κ = allocA h' κ
+  allocA_site : ∀ h δ h' δ' κ, allocA h δ κ = allocA h' δ' κ
   /-- A function's canonical location is reserved for it: no other literal
       (in particular no other function) shares it. This makes `f ↦ litLocA
       (.fid f)` one-to-one, which is what lets `AAct.call`/`.ret` name the
@@ -219,31 +205,39 @@ structure AbstractSpec [Abstract] : Prop where
   litLocA_fid : ∀ f v, litLocA (.fid f) = litLocA v → v = .fid f
   /-- No allocation site is abstracted to a function's canonical location, so
       nothing an allocation writes can reach it. -/
-  allocA_fid : ∀ h κ f, allocA h κ ≠ litLocA (.fid f)
+  allocA_fid : ∀ h δ κ f, allocA h δ κ ≠ litLocA (.fid f)
 
-/-- `⟦e⟧ρ̂`. Total: an unbound variable evaluates to `∅`. -/
-def aevalE [Abstract] (ρ : ASto) : Expr → ALocSet
+/-- `⟦e⟧ρₐ`. Total: an unbound variable evaluates to `∅`. -/
+def aevalE [Abstract] (ρₐ : ASto) : Expr → ALocSet
   | .val v => {litLocA v}
-  | .var x => ρ x
+  | .var x => ρₐ x
 
-def aevalEs [Abstract] (ρ : ASto) : List Expr → List ALocSet
+/-- `⟦e⟧ρₐ`, as in the paper (the same notation as `⟦e⟧ρ`; the type of
+    the store selects the evaluation). -/
+scoped notation:max (name := aevalENotation) "⟦" e "⟧" ρₐ:max => aevalE ρₐ e
+
+def aevalEs [Abstract] (ρₐ : ASto) : List Expr → List ALocSet
   | []      => []
-  | e :: es => aevalE ρ e :: aevalEs ρ es
+  | e :: es => ⟦e⟧ρₐ :: aevalEs ρₐ es
+
+/-- `⟦es⟧ρₐ`, pointwise. -/
+scoped notation:max (name := aevalEsNotation) "⟦" es "⟧" ρₐ:max => aevalEs ρₐ es
+
 
 /-! ## Call candidates -/
 
 /-- `f` is a candidate callee at a site whose callee expression abstracts to
     `L_f` and which passes `n` arguments. -/
-def IsCandidate [Abstract] (Γ : Env) (h : AHeap) (L_f : ALocSet) (n : Nat)
+def IsCandidate [Abstract] (Γ : Env) (δₐ : AReg) (L_f : ALocSet) (n : Nat)
     (f : Fid) : Prop :=
-  ((h.valOf L_f).Mem (.fid f)) ∧ (Γ f).isSome ∧ (Γ.params f).length = n
+  ((δₐ.valOf L_f).Mem (.fid f)) ∧ (Γ f).isSome ∧ (Γ.params f).length = n
 
 structure EnvSpec (Γ : Env) : Prop where
   fin : ∃ fs : List Fid, ∀ f, (Γ f).isSome → f ∈ fs
 
 /-! ## Abstract configurations -/
 
-/-- `⟨ĥ, ρ̂, δ̂⟩`: what a labeling assigns to every automaton state. -/
+/-- `⟨hₐ, ρₐ, δₐ⟩`: what a labeling assigns to every automaton state. -/
 structure AConf where
   heap : AHeap
   sto  : ASto
@@ -265,17 +259,17 @@ Every statement shape that allocates no automaton state of its own
 `AConf`, attached to the edges as (part of) their contribution. -/
 
 def AConf.doAssign [Abstract] (x : Var) (e : Expr) (c : AConf) : AConf :=
-  { c with sto := c.sto.upd x (aevalE c.sto e) }
+  { c with sto := c.sto.upd x ⟦e⟧c.sto }
 
 def AConf.doBinOp [Abstract] (x : Var) (κ : Idx) (op : BinOp) (e₁ e₂ : Expr)
     (c : AConf) : AConf :=
-  let L₁ := aevalE c.sto e₁
-  let L₂ := aevalE c.sto e₂
-  let l   := allocA c.heap κ
-  let V   := opSemA op (c.heap.valOf L₁) (c.heap.valOf L₂)
-  { heap := c.heap.weakSetVal l V
+  let L₁ := ⟦e₁⟧c.sto
+  let L₂ := ⟦e₂⟧c.sto
+  let l   := allocA c.heap c.reg κ
+  let V   := opSemA op (c.reg.valOf L₁) (c.reg.valOf L₂)
+  { heap := c.heap
     sto  := c.sto.upd x {l}
-    reg  := c.reg.weakSetDep l (c.reg.depOf L₁ ∪ c.reg.depOf L₂ ∪ L₁ ∪ L₂) }
+    reg  := (c.reg.weakSetVal l V).weakSetDep l (c.reg.depOf L₁ ∪ c.reg.depOf L₂ ∪ L₁ ∪ L₂) }
 
 /-- Object initialisation. Concretely the new object's dependencies are reset
     to `∅`; abstractly this is a weak update, i.e. no change. A strong update
@@ -284,46 +278,45 @@ def AConf.doBinOp [Abstract] (x : Var) (κ : Idx) (op : BinOp) (e₁ e₂ : Expr
     `binOp` allocated, whenever the two sites share an abstract location. -/
 def AConf.doObjLit [Abstract] (x : Var) (κ : Idx) (fs : List (PropName × Expr))
     (c : AConf) : AConf :=
-  let Ls := aevalEs c.sto (fs.map Prod.snd)
-  let l   := allocA c.heap κ
-  { heap := (c.heap.weakSetObjs l (("__proto__", {litLocA .proto}) :: (fs.map Prod.fst).zip Ls)).weakSetVal
-      l VSet.refs
+  let Ls := ⟦fs.map Prod.snd⟧c.sto
+  let l   := allocA c.heap c.reg κ
+  { heap := c.heap.weakSetObjs l (("__proto__", {litLocA .proto}) :: (fs.map Prod.fst).zip Ls)
     sto  := c.sto.upd x {l}
-    reg  := c.reg }
+    reg  := c.reg.weakSetVal l VSet.refs }
 
 /-- What a static lookup of `p` on objects `L` may return: an own property, or,
     when the own property is missing, `Object.prototype`'s (`litLocA .proto`),
     or, when that is missing too, `undefined`. The abstract heap only records
     which properties an object *may* have, never which it must, so a lookup
     can never be known to hit, and all three are always included. -/
-def AHeap.lookupS [Abstract] (h : AHeap) (L : ALocSet) (p : PropName) : ALocSet :=
-  h.objOf L p ∪ h.objOf {litLocA .proto} p ∪ {litLocA .undef}
+def AHeap.lookupS [Abstract] (hₐ : AHeap) (L : ALocSet) (p : PropName) : ALocSet :=
+  hₐ.objOf L p ∪ hₐ.objOf {litLocA .proto} p ∪ {litLocA .undef}
 
 /-- The same for a dynamic lookup with keys `V`. -/
-def AHeap.lookupD [Abstract] (h : AHeap) (L : ALocSet) (V : VSet) : ALocSet :=
-  h.objOfV L V ∪ h.objOfV {litLocA .proto} V ∪ {litLocA .undef}
+def AHeap.lookupD [Abstract] (hₐ : AHeap) (L : ALocSet) (V : VSet) : ALocSet :=
+  hₐ.objOfV L V ∪ hₐ.objOfV {litLocA .proto} V ∪ {litLocA .undef}
 
 def AConf.doLookupS [Abstract] (x : Var) (e : Expr) (p : PropName) (c : AConf) :
     AConf :=
-  { c with sto := c.sto.upd x (c.heap.lookupS (aevalE c.sto e) p) }
+  { c with sto := c.sto.upd x (c.heap.lookupS ⟦e⟧c.sto p) }
 
 def AConf.doLookupD [Abstract] (x : Var) (e₁ e₂ : Expr) (c : AConf) : AConf :=
   { c with sto :=
-      c.sto.upd x (c.heap.lookupD (aevalE c.sto e₁) (c.heap.valOf (aevalE c.sto e₂))) }
+      c.sto.upd x (c.heap.lookupD ⟦e₁⟧c.sto (c.reg.valOf ⟦e₂⟧c.sto)) }
 
 def AConf.doUpdateS [Abstract] (e₁ : Expr) (p : PropName) (e₂ : Expr)
     (c : AConf) : AConf :=
-  { c with heap := c.heap.weakSetObj (aevalE c.sto e₁) p (aevalE c.sto e₂) }
+  { c with heap := c.heap.weakSetObj ⟦e₁⟧c.sto p ⟦e₂⟧c.sto }
 
 def AConf.doUpdateD [Abstract] (e₁ e₂ e₃ : Expr) (c : AConf) : AConf :=
   { c with heap :=
-      c.heap.weakSetObjV (aevalE c.sto e₁) (c.heap.valOf (aevalE c.sto e₂)) (aevalE c.sto e₃) }
+      c.heap.weakSetObjV ⟦e₁⟧c.sto (c.reg.valOf ⟦e₂⟧c.sto) ⟦e₃⟧c.sto }
 
 def AConf.doSetTaint [Abstract] (e : Expr) (c : AConf) : AConf :=
-  { c with reg := { c.reg with ac := aevalE c.sto e ∪ c.reg.ac } }
+  { c with reg := { c.reg with ac := ⟦e⟧c.sto ∪ c.reg.ac } }
 
 def AConf.doSetSink [Abstract] (e : Expr) (c : AConf) : AConf :=
-  { c with reg := { c.reg with sk := aevalE c.sto e ∪ c.reg.sk } }
+  { c with reg := { c.reg with sk := ⟦e⟧c.sto ∪ c.reg.sk } }
 
 /-! ## Action labels of the heap-accessing statements
 
@@ -334,21 +327,21 @@ instance `[Static Property Lookup]` emits `lookup l₂ l₁ l_p` with `l₁` the
 object, `l₂` the property's location). -/
 
 def AConf.actLookupS [Abstract] (e : Expr) (p : PropName) (c : AConf) : AAct :=
-  .lookup (c.heap.lookupS (aevalE c.sto e) p) (aevalE c.sto e) {litLocA (.str p)}
+  .lookup (c.heap.lookupS ⟦e⟧c.sto p) ⟦e⟧c.sto {litLocA (.str p)}
 
 def AConf.actLookupD [Abstract] (e₁ e₂ : Expr) (c : AConf) : AAct :=
-  .lookup (c.heap.lookupD (aevalE c.sto e₁) (c.heap.valOf (aevalE c.sto e₂)))
-    (aevalE c.sto e₁) (aevalE c.sto e₂)
+  .lookup (c.heap.lookupD ⟦e₁⟧c.sto (c.reg.valOf ⟦e₂⟧c.sto))
+    ⟦e₁⟧c.sto ⟦e₂⟧c.sto
 
 def AConf.actUpdateS [Abstract] (e₁ : Expr) (p : PropName) (e₂ : Expr) (c : AConf) : AAct :=
-  .update (aevalE c.sto e₁) {litLocA (.str p)} (aevalE c.sto e₂)
+  .update ⟦e₁⟧c.sto {litLocA (.str p)} ⟦e₂⟧c.sto
 
 def AConf.actUpdateD [Abstract] (e₁ e₂ e₃ : Expr) (c : AConf) : AAct :=
-  .update (aevalE c.sto e₁) (aevalE c.sto e₂) (aevalE c.sto e₃)
+  .update ⟦e₁⟧c.sto ⟦e₂⟧c.sto ⟦e₃⟧c.sto
 
 /-- `f` is a candidate callee of `e(es)` at configuration `c`. -/
 def AConf.Calls [Abstract] (Γ : Env) (e : Expr) (n : Nat) (f : Fid) (c : AConf) : Prop :=
-  IsCandidate Γ c.heap (aevalE c.sto e) n f
+  IsCandidate Γ c.reg ⟦e⟧c.sto n f
 
 /-- A labeling assigns an `AConf` to every automaton state. -/
 def Labeling := AState → AConf
@@ -554,12 +547,12 @@ inductive AEdge [Abstract] (Γ : Env) :
         (fun L =>
           let v := pending (L entry)
           if v.Calls Γ e es.length f then
-            { heap := v.heap, sto := ASto.ofParams params (aevalEs v.sto es), reg := v.reg }
+            { heap := v.heap, sto := ASto.ofParams params ⟦es⟧v.sto, reg := v.reg }
           else AConf.bot)
         (fun L =>
           let v := pending (L entry)
           if v.Calls Γ e es.length f then
-            some (.call (litLocA (.fid f)) (aevalEs v.sto es))
+            some (.call (litLocA (.fid f)) ⟦es⟧v.sto)
           else none)
   /-- One edge per `ret` reachable inside a candidate callee's body, wired
       directly to this call's own continuation. Gated on the same candidate check as `callEntry`, evaluated at the
@@ -577,11 +570,11 @@ inductive AEdge [Abstract] (Γ : Env) :
         (fun L =>
           if (pending (L entry)).Calls Γ e es.length f then
             let w := rpending (L r)
-            { heap := w.heap, sto := ASto.bot.upd x (aevalE w.sto e'), reg := w.reg }
+            { heap := w.heap, sto := ASto.bot.upd x ⟦e'⟧w.sto, reg := w.reg }
           else AConf.bot)
         (fun L =>
           if (pending (L entry)).Calls Γ e es.length f then
-            some (.ret (litLocA (.fid f)) (aevalE (rpending (L r)).sto e'))
+            some (.ret (litLocA (.fid f)) (⟦e'⟧(rpending (L r)).sto))
           else none)
   /-- A candidate callee whose body can *fall through* (reach any
       `.cont`-outcome exit, structurally: any `AExit` fact of its body)
@@ -647,17 +640,19 @@ def Labeling.Valid [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) : Prop :=
 def InitLit (Γ : Env) (s : Stmt) (v : Val) : Prop :=
   v ∈ Val.undef :: s.lits ∨ ∃ f params body, Γ f = some (params, body) ∧ v ∈ body.lits
 
-/-- The abstract counterpart of `Heap.init Γ fs s`: each literal `v` of `s`,
-    of every function body of `Γ`, and `undefined`, at `litLocA v`; no object
-    has any property. Stated as a predicate, it covers every function of `Γ`
-    without needing them listed, so it covers `Heap.init Γ fs s` for every
-    `fs`. -/
-def AHeap.init [Abstract] (Γ : Env) (s : Stmt) : AHeap where
-  obj := fun _ _ => ∅
+/-- The abstract counterpart of `Reg.init Γ fs s`: each literal `v` of `s`,
+    of every function body of `Γ`, and `undefined`, at `litLocA v`; no
+    dependencies, nothing attacker-controlled, no sinks. Stated as a
+    predicate, it covers every function of `Γ` without needing them listed,
+    so it covers `Reg.init Γ fs s` for every `fs`. -/
+def AReg.init [Abstract] (Γ : Env) (s : Stmt) : AReg where
   val := fun a => .vals (fun v => InitLit Γ s v ∧ litLocA v = a)
+  dep := fun _ => ∅
+  ac  := ∅
+  sk  := ∅
 
 /-- The abstract counterpart of `Conf.init Γ fs s`. -/
-def AConf.init [Abstract] (Γ : Env) (s : Stmt) : AConf := ⟨AHeap.init Γ s, ASto.bot, AReg.bot⟩
+def AConf.init [Abstract] (Γ : Env) (s : Stmt) : AConf := ⟨AHeap.bot, ASto.bot, AReg.init Γ s⟩
 
 /-- The top-level analysis result: `L` is a valid labeling for the program
     `(Γ, s₀)` whose top-level entry covers the initial configuration. -/
@@ -747,29 +742,26 @@ post-fixed-point condition over the edges; the least analysis result
 /-- The value set at each function's canonical location contains at most that
     function. -/
 def AConf.FidReserved [Abstract] (c : AConf) : Prop :=
-  ∀ f v, (c.heap.val (litLocA (.fid f))).Mem v → v = .fid f
+  ∀ f v, (c.reg.val (litLocA (.fid f))).Mem v → v = .fid f
 
 theorem AConf.FidReserved.bot [Abstract] : AConf.bot.FidReserved :=
   fun _ _ h => h.elim
-
-theorem AHeap.weakSetObjs_val (h : AHeap) (l : ALoc) :
-    ∀ ps, (h.weakSetObjs l ps).val = h.val
-  | []          => rfl
-  | (_, _) :: ps => AHeap.weakSetObjs_val _ l ps
 
 theorem AConf.FidReserved.pendingClosed [Abstract] (aspec : AbstractSpec) :
     PendingClosed (fun g => ∀ c, AConf.FidReserved c → AConf.FidReserved (g c)) where
   id := fun _ h => h
   assign := fun _ _ hf c hc => hf c hc
   binOp := fun {g} x κ op e₁ e₂ hf c hc f v hv => by
-    have hne : litLocA (.fid f) ≠ allocA (g c).heap κ := fun h => aspec.allocA_fid _ _ _ h.symm
-    simp only [Function.comp, AConf.doBinOp, AHeap.weakSetVal] at hv
+    have hne : litLocA (.fid f) ≠ allocA (g c).heap (g c).reg κ :=
+      fun h => aspec.allocA_fid _ _ _ _ h.symm
+    simp only [Function.comp, AConf.doBinOp, AReg.weakSetDep, AReg.weakSetVal] at hv
     rw [if_neg hne] at hv
     exact hf c hc f v hv
   objLit := fun {g} x κ fs hf c hc f v hv => by
-    have hne : litLocA (.fid f) ≠ allocA (g c).heap κ := fun h => aspec.allocA_fid _ _ _ h.symm
-    simp only [Function.comp, AConf.doObjLit, AHeap.weakSetVal] at hv
-    rw [if_neg hne, AHeap.weakSetObjs_val] at hv
+    have hne : litLocA (.fid f) ≠ allocA (g c).heap (g c).reg κ :=
+      fun h => aspec.allocA_fid _ _ _ _ h.symm
+    simp only [Function.comp, AConf.doObjLit, AReg.weakSetVal] at hv
+    rw [if_neg hne] at hv
     exact hf c hc f v hv
   setTaint := fun _ hf c hc => hf c hc
   setSink := fun _ hf c hc => hf c hc

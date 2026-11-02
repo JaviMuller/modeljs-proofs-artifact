@@ -9,7 +9,7 @@
   * **Trace systems** (`TSys`): states, an initial state, final states, and
     edges labeled by abstract actions `A` or silent (`none`).  A walk from the
     initial to a final state yields an *abstract execution record*: its
-    visible labels, together with the abstract facts `φ : Φ` about the final
+    visible labels, together with the abstract facts `δₐ : Φ` about the final
     observation.
   * **Abstractions** (`Abs`): how concrete actions and observations relate to
     abstract ones (`act`, `facts`, through a map `α : Loc → V` of locations to
@@ -107,43 +107,43 @@ variable {A V Φ : Type}
 structure Abs.Sound (𝔄 : Abs A V Φ) : Prop where
   matchA : ∀ (α : Loc → V) (ξ : MEnv) (a : QAct MVar) (c : Act) (B : A),
     𝔄.act α c B → c = a.inst ξ → 𝔄.matchA (α ∘ ξ) a B = true
-  may : ∀ (α : Loc → V) σ φ (ξ : MEnv) (p : Pred MVar),
-    𝔄.facts α σ φ → Pred.Sat σ ξ p → 𝔄.may φ (α ∘ ξ) p = true
-  must : ∀ (α : Loc → V) σ φ (ξ : MEnv) (p : Pred MVar),
-    𝔄.facts α σ φ → 𝔄.must φ (α ∘ ξ) p = true → Pred.Sat σ ξ p
-  may_congr : ∀ φ (ξ ξ' : MVar → V) (p : Pred MVar),
-    (∀ x ∈ p.vars, ξ x = ξ' x) → 𝔄.may φ ξ p = 𝔄.may φ ξ' p
-  must_congr : ∀ φ (ξ ξ' : MVar → V) (p : Pred MVar),
-    (∀ x ∈ p.vars, ξ x = ξ' x) → 𝔄.must φ ξ p = 𝔄.must φ ξ' p
+  may : ∀ (α : Loc → V) δ δₐ (ξ : MEnv) (p : Pred MVar),
+    𝔄.facts α δ δₐ → Pred.Sat δ ξ p → 𝔄.may δₐ (α ∘ ξ) p = true
+  must : ∀ (α : Loc → V) δ δₐ (ξ : MEnv) (p : Pred MVar),
+    𝔄.facts α δ δₐ → 𝔄.must δₐ (α ∘ ξ) p = true → Pred.Sat δ ξ p
+  may_congr : ∀ δₐ (ξ ξ' : MVar → V) (p : Pred MVar),
+    (∀ x ∈ p.vars, ξ x = ξ' x) → 𝔄.may δₐ ξ p = 𝔄.may δₐ ξ' p
+  must_congr : ∀ δₐ (ξ ξ' : MVar → V) (p : Pred MVar),
+    (∀ x ∈ p.vars, ξ x = ξ' x) → 𝔄.must δₐ ξ p = 𝔄.must δₐ ξ' p
   mustA : ∀ (α : Loc → V) (ξ : MVar → V) (b : QAct MVar) (c : Act) (B : A),
     𝔄.act α c B → 𝔄.mustA ξ b B = true →
       (∀ x ∈ b.vars, ∃ l, α l = ξ x) ∧
       ∀ ξc : MEnv, (∀ x ∈ b.vars, α (ξc x) = ξ x) → c = b.inst ξc
   mustA_congr : ∀ (ξ ξ' : MVar → V) (b : QAct MVar) (B : A),
     (∀ x ∈ b.vars, ξ x = ξ' x) → 𝔄.mustA ξ b B = 𝔄.mustA ξ' b B
-  inhab : ∀ (α : Loc → V) σ φ v, 𝔄.facts α σ φ → 𝔄.inhab φ v = true → ∃ l, α l = v
+  inhab : ∀ (α : Loc → V) δ δₐ v, 𝔄.facts α δ δₐ → 𝔄.inhab δₐ v = true → ∃ l, α l = v
 
 /-- Invariants in polarity `pol`: `true` = may hold, `false` = must hold. -/
-def Abs.inv (𝔄 : Abs A V Φ) (φ : Φ) (ξ : MVar → V) : Bool → Inv MVar → Bool
-  | pol,   .pred p    => if pol then 𝔄.may φ ξ p else 𝔄.must φ ξ p
-  | pol,   .not I     => !(𝔄.inv φ ξ (!pol) I)
-  | pol,   .or I₁ I₂  => 𝔄.inv φ ξ pol I₁ || 𝔄.inv φ ξ pol I₂
-  | pol,   .and I₁ I₂ => 𝔄.inv φ ξ pol I₁ && 𝔄.inv φ ξ pol I₂
+def Abs.inv (𝔄 : Abs A V Φ) (δₐ : Φ) (ξ : MVar → V) : Bool → Inv MVar → Bool
+  | pol,   .pred p    => if pol then 𝔄.may δₐ ξ p else 𝔄.must δₐ ξ p
+  | pol,   .not I     => !(𝔄.inv δₐ ξ (!pol) I)
+  | pol,   .or I₁ I₂  => 𝔄.inv δₐ ξ pol I₁ || 𝔄.inv δₐ ξ pol I₂
+  | pol,   .and I₁ I₂ => 𝔄.inv δₐ ξ pol I₁ && 𝔄.inv δₐ ξ pol I₂
   | _,     .tt        => true
   | _,     .ff        => false
 
 /-- Concrete truth implies *may*; *must* implies concrete truth. -/
-theorem Abs.inv_sound {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) {α : Loc → V} {σ : Obs} {φ : Φ}
-    (hf : 𝔄.facts α σ φ) (ξ : MEnv) :
-    ∀ I : Inv MVar, (Inv.Sat σ ξ I → 𝔄.inv φ (α ∘ ξ) true I = true) ∧
-      (𝔄.inv φ (α ∘ ξ) false I = true → Inv.Sat σ ξ I)
-  | .pred p => ⟨fun h => by simpa [Abs.inv] using h𝔄.may α σ φ ξ p hf h,
-      fun h => h𝔄.must α σ φ ξ p hf (by simpa [Abs.inv] using h)⟩
+theorem Abs.inv_sound {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) {α : Loc → V} {δ : Obs} {δₐ : Φ}
+    (hf : 𝔄.facts α δ δₐ) (ξ : MEnv) :
+    ∀ I : Inv MVar, (Inv.Sat δ ξ I → 𝔄.inv δₐ (α ∘ ξ) true I = true) ∧
+      (𝔄.inv δₐ (α ∘ ξ) false I = true → Inv.Sat δ ξ I)
+  | .pred p => ⟨fun h => by simpa [Abs.inv] using h𝔄.may α δ δₐ ξ p hf h,
+      fun h => h𝔄.must α δ δₐ ξ p hf (by simpa [Abs.inv] using h)⟩
   | .not I => by
       obtain ⟨h₁, h₂⟩ := Abs.inv_sound h𝔄 hf ξ I
       refine ⟨fun h => ?_, fun h => ?_⟩
       · simp only [Abs.inv, Bool.not_true, Bool.not_eq_eq_eq_not]
-        cases hI : 𝔄.inv φ (α ∘ ξ) false I
+        cases hI : 𝔄.inv δₐ (α ∘ ξ) false I
         · rfl
         · exact absurd (h₂ hI) h
       · simp only [Abs.inv, Bool.not_false, Bool.not_eq_eq_eq_not, Bool.not_true] at h
@@ -166,32 +166,32 @@ theorem Abs.inv_sound {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) {α : Loc → V} 
   | .ff => ⟨fun h => h.elim, fun h => by simp [Abs.inv] at h⟩
 
 /-- Invariants only read their own variables. -/
-theorem Abs.inv_congr {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) (φ : Φ) {ξ ξ' : MVar → V} :
+theorem Abs.inv_congr {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) (δₐ : Φ) {ξ ξ' : MVar → V} :
     ∀ (pol : Bool) (I : Inv MVar), (∀ x ∈ I.vars, ξ x = ξ' x) →
-      𝔄.inv φ ξ pol I = 𝔄.inv φ ξ' pol I
+      𝔄.inv δₐ ξ pol I = 𝔄.inv δₐ ξ' pol I
   | pol, .pred p, h => by
-      cases pol <;> simp [Abs.inv, h𝔄.may_congr φ ξ ξ' p h, h𝔄.must_congr φ ξ ξ' p h]
-  | pol, .not I, h => by simp [Abs.inv, Abs.inv_congr h𝔄 φ (!pol) I h]
+      cases pol <;> simp [Abs.inv, h𝔄.may_congr δₐ ξ ξ' p h, h𝔄.must_congr δₐ ξ ξ' p h]
+  | pol, .not I, h => by simp [Abs.inv, Abs.inv_congr h𝔄 δₐ (!pol) I h]
   | pol, .or I₁ I₂, h => by
       simp only [Abs.inv]
-      rw [Abs.inv_congr h𝔄 φ pol I₁ (fun x hx => h x (by simp [Inv.vars, hx])),
-        Abs.inv_congr h𝔄 φ pol I₂ (fun x hx => h x (by simp [Inv.vars, hx]))]
+      rw [Abs.inv_congr h𝔄 δₐ pol I₁ (fun x hx => h x (by simp [Inv.vars, hx])),
+        Abs.inv_congr h𝔄 δₐ pol I₂ (fun x hx => h x (by simp [Inv.vars, hx]))]
   | pol, .and I₁ I₂, h => by
       simp only [Abs.inv]
-      rw [Abs.inv_congr h𝔄 φ pol I₁ (fun x hx => h x (by simp [Inv.vars, hx])),
-        Abs.inv_congr h𝔄 φ pol I₂ (fun x hx => h x (by simp [Inv.vars, hx]))]
+      rw [Abs.inv_congr h𝔄 δₐ pol I₁ (fun x hx => h x (by simp [Inv.vars, hx])),
+        Abs.inv_congr h𝔄 δₐ pol I₂ (fun x hx => h x (by simp [Inv.vars, hx]))]
   | _, .tt, _ => rfl
   | _, .ff, _ => rfl
 
-/-- The record `e` is abstracted by the visible labels `T` and the facts `φ`. -/
-def RecAbs (𝔄 : Abs A V Φ) (α : Loc → V) (e : Exec) (T : List A) (φ : Φ) : Prop :=
-  Pointwise (𝔄.act α) e.trc.toList T ∧ 𝔄.facts α e.obs φ
+/-- The record `e` is abstracted by the visible labels `T` and the facts `δₐ`. -/
+def RecAbs (𝔄 : Abs A V Φ) (α : Loc → V) (e : Exec) (T : List A) (δₐ : Φ) : Prop :=
+  Pointwise (𝔄.act α) e.trc.toList T ∧ 𝔄.facts α e.obs δₐ
 
 /-- Every record satisfying `R` is abstracted by the record of a walk from the
-    initial to a final state, with the facts `φ`. -/
-def Covers (S : TSys A) (𝔄 : Abs A V Φ) (φ : Φ) (R : Exec → Prop) : Prop :=
+    initial to a final state, with the facts `δₐ`. -/
+def Covers (S : TSys A) (𝔄 : Abs A V Φ) (δₐ : Φ) (R : Exec → Prop) : Prop :=
   ∀ e, R e → ∃ (T : List A) (s : S.St) (α : Loc → V),
-    S.Walk S.init T s ∧ S.final s ∧ RecAbs 𝔄 α e T φ
+    S.Walk S.init T s ∧ S.final s ∧ RecAbs 𝔄 α e T δₐ
 
 /-! ## Runs of a component over a list of labels
 
@@ -298,32 +298,32 @@ def Abs.MustFires (𝔄 : Abs A V Φ) (ξ : MVar → V) (as : List (QAct MVar)) 
     values of the variables they read certainly denote locations.  A final
     state with `except`s of its own is never used (it would need trackers of
     trackers, the polarity flipping again): this only ever accepts less. -/
-def QComp.AMust (c : QComp) (𝔄 : Abs A V Φ) (φ : Φ) (T : List A) (ξ : MVar → V) : Prop :=
+def QComp.AMust (c : QComp) (𝔄 : Abs A V Φ) (δₐ : Φ) (T : List A) (ξ : MVar → V) : Prop :=
   ∃ f ∈ c.finals, c.exc f = [] ∧ ∃ ξ' : MVar → V, (∀ v, v ∉ c.scope f → ξ' v = ξ v) ∧
-    LRun c.edges (𝔄.MustFires ξ') c.start T f ∧ (∀ J ∈ c.inv f, 𝔄.inv φ ξ' false J = true) ∧
-    ∀ x ∈ c.scope f, x ∈ (c.inv f).flatMap Inv.vars → 𝔄.inhab φ (ξ' x) = true
+    LRun c.edges (𝔄.MustFires ξ') c.start T f ∧ (∀ J ∈ c.inv f, 𝔄.inv δₐ ξ' false J = true) ∧
+    ∀ x ∈ c.scope f, x ∈ (c.inv f).flatMap Inv.vars → 𝔄.inhab δₐ (ξ' x) = true
 
 /-- `except` component `k` of `M` must accept `T` under `ξ` (at depth `0`,
     like `compSat`, no component is ever satisfied). -/
-def QModel.AExcl (M : QModel) (𝔄 : Abs A V Φ) (φ : Φ) (T : List A) (k : Nat)
+def QModel.AExcl (M : QModel) (𝔄 : Abs A V Φ) (δₐ : Φ) (T : List A) (k : Nat)
     (ξ : MVar → V) : Prop :=
-  M.depth ≠ 0 ∧ ∃ c, M.comps[k]? = some c ∧ c.AMust 𝔄 φ T ξ
+  M.depth ≠ 0 ∧ ∃ c, M.comps[k]? = some c ∧ c.AMust 𝔄 δₐ T ξ
 
 /-- The abstract semantics of `M`: for the record of some walk of `S` and some
     abstract assignment, `main` reads the walk's labels to a final state whose
     invariants may hold, and no `except` component of that state must accept
     the same labels.  Polarity flips at the `except`: a candidate is excluded
     only when the excluded pattern certainly occurs. -/
-def QModel.ASat (M : QModel) (S : TSys A) (𝔄 : Abs A V Φ) (φ : Φ) : Prop :=
+def QModel.ASat (M : QModel) (S : TSys A) (𝔄 : Abs A V Φ) (δₐ : Φ) : Prop :=
   ∃ (T : List A) (s : S.St), S.Walk S.init T s ∧ S.final s ∧
     ∃ f ∈ M.main.finals, ∃ ξ : MVar → V,
       LRun M.main.edges (𝔄.Fires ξ) M.main.start T f ∧
-      (∀ J ∈ M.main.inv f, 𝔄.inv φ ξ true J = true) ∧ ∀ k ∈ M.main.exc f, ¬ M.AExcl 𝔄 φ T k ξ
+      (∀ J ∈ M.main.inv f, 𝔄.inv δₐ ξ true J = true) ∧ ∀ k ∈ M.main.exc f, ¬ M.AExcl 𝔄 δₐ T k ξ
 
 /-- A component must-accepting the abstraction of a record accepts the record
     itself, under any assignment abstracted by the abstract one. -/
 theorem QComp.AMust.acc {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) {α : Loc → V} {e : Exec} {T : List A}
-    {φ : Φ} (hrec : RecAbs 𝔄 α e T φ) {c : QComp} {ξ : MEnv} (h : c.AMust 𝔄 φ T (α ∘ ξ))
+    {δₐ : Φ} (hrec : RecAbs 𝔄 α e T δₐ) {c : QComp} {ξ : MEnv} (h : c.AMust 𝔄 δₐ T (α ∘ ξ))
     (X : Nat → MEnv → Prop) :
     c.Acc e.trc.toList e.obs X ξ 0 e.trc.toList.length := by
   classical
@@ -344,17 +344,17 @@ theorem QComp.AMust.acc {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) {α : Loc → V
     obtain ⟨hex, huniq⟩ := h𝔄.mustA α ξa b cA B hR (hF b hb)
     exact huniq ξ' fun x hx => hα x fun _ => hex x hx
   · refine (Abs.inv_sound h𝔄 hrec.2 ξ' J).2 ?_
-    rw [Abs.inv_congr h𝔄 φ false J (ξ := α ∘ ξ') (ξ' := ξa) (fun x hx => hα x fun hs =>
-      h𝔄.inhab α _ φ _ hrec.2 (hinh x hs (List.mem_flatMap.2 ⟨J, hJ, hx⟩)))]
+    rw [Abs.inv_congr h𝔄 δₐ false J (ξ := α ∘ ξ') (ξ' := ξa) (fun x hx => hα x fun hs =>
+      h𝔄.inhab α _ δₐ _ hrec.2 (hinh x hs (List.mem_flatMap.2 ⟨J, hJ, hx⟩)))]
     exact hinv J hJ
 
 /-- **Completeness of the abstraction.** A record matching the query, and
     covered by the abstraction, makes the abstract semantics of its model
     hold. -/
-theorem QModel.asat_of_matches {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) {S : TSys A} {φ : Φ}
-    {R : Exec → Prop} (hcov : Covers S 𝔄 φ R) {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ))
+theorem QModel.asat_of_matches {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) {S : TSys A} {δₐ : Φ}
+    {R : Exec → Prop} (hcov : Covers S 𝔄 δₐ R) {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ))
     {e : Exec} (he : R e) {ls : List Loc} (hlen : ls.length = q.params.length)
-    (hm : Exec.Matches (q :: Δ) e q.name ls) : (q.toQModel Δ).ASat S 𝔄 φ := by
+    (hm : Exec.Matches (q :: Δ) e q.name ls) : (q.toQModel Δ).ASat S 𝔄 δₐ := by
   obtain ⟨f, hf, ξ, _, hrun, hinv, hexc⟩ := (Query.toQModel_correct hwf e hlen).2 hm
   obtain ⟨T, s, α, hw, hs, hrec⟩ := hcov e he
   refine ⟨T, s, hw, hs, f, hf, α ∘ ξ, ?_, fun J hJ => (Abs.inv_sound h𝔄 hrec.2 ξ J).1 (hinv J hJ),

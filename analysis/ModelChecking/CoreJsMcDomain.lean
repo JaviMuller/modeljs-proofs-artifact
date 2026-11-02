@@ -50,20 +50,20 @@ structure ADom (A V Φ : Type) where
   solve     : D → List (Inv MVar) → List MVar → ((MVar → V) → Bool) → Option (MVar → V)
   empty     : D → Bool
 
-/-- The specification of a domain, relative to an abstraction `𝔄`, facts `φ`,
+/-- The specification of a domain, relative to an abstraction `𝔄`, facts `δₐ`,
     and the action lists `good` it must represent exactly. -/
-structure ADom.Spec (dom : ADom A V Φ) (𝔄 : Abs A V Φ) (φ : Φ)
+structure ADom.Spec (dom : ADom A V Φ) (𝔄 : Abs A V Φ) (δₐ : Φ)
     (good : List (QAct MVar) → Prop) : Prop where
   top            : ∀ ξ, dom.mem dom.top ξ
   constrain      : ∀ d as B ξ, good as →
     (dom.mem (dom.constrain d as B) ξ ↔ dom.mem d ξ ∧ 𝔄.Fires ξ as B)
   refine_sub     : ∀ d I ξ, dom.mem (dom.refine d I) ξ → dom.mem d ξ
-  refine_keep    : ∀ d I ξ, dom.mem d ξ → (∀ J ∈ I, 𝔄.inv φ ξ true J = true) →
+  refine_keep    : ∀ d I ξ, dom.mem d ξ → (∀ J ∈ I, 𝔄.inv δₐ ξ true J = true) →
     dom.mem (dom.refine d I) ξ
   solve_sound    : ∀ d I ys g ξ, dom.solve d I ys g = some ξ →
-    dom.mem d ξ ∧ (∀ J ∈ I, 𝔄.inv φ ξ true J = true) ∧ g ξ = true
+    dom.mem d ξ ∧ (∀ J ∈ I, 𝔄.inv δₐ ξ true J = true) ∧ g ξ = true
   solve_complete : ∀ d I ys g ξ, (∀ ξ₁ ξ₂, (∀ x ∈ ys, ξ₁ x = ξ₂ x) → g ξ₁ = g ξ₂) →
-    dom.mem d ξ → (∀ J ∈ I, 𝔄.inv φ ξ true J = true) → g ξ = true →
+    dom.mem d ξ → (∀ J ∈ I, 𝔄.inv δₐ ξ true J = true) → g ξ = true →
     (dom.solve d I ys g).isSome
   empty          : ∀ d ξ, dom.mem d ξ → dom.empty d = false
   /-- Finitely many elements are reachable from `top`. -/
@@ -261,13 +261,13 @@ theorem dflt_mem {e : List (List V)} {y : MVar} (h : dget vals xs e y ≠ []) :
   | nil => exact absurd hd h
   | cons a l => simp
 
-variable (𝔄 : Abs A V Φ) (φ : Φ) (S : 𝔄.Sep)
+variable (𝔄 : Abs A V Φ) (δₐ : Φ) (S : 𝔄.Sep)
 
 /-- Arc consistency of the value `v` of `x` with the conjunct `J`. -/
 def supported (e : List (List V)) (x : MVar) (v : V) (J : Inv MVar) : Bool :=
   !(decide (x ∈ J.vars)) ||
     (assigns (fun y => if y = x then [v] else dget vals xs e y) (dflt vals xs e) J.vars).any
-      fun ξ => 𝔄.inv φ ξ true J
+      fun ξ => 𝔄.inv δₐ ξ true J
 
 /-- One set of values per variable of `xs` (`none`: certainly empty). -/
 def nonrel : ADom A V Φ where
@@ -286,27 +286,27 @@ def nonrel : ADom A V Φ where
   refine
     | none,   _ => none
     | some e, I => some (xs.map fun x => (dget vals xs e x).filter fun v =>
-        I.all (supported vals xs 𝔄 φ e x v))
+        I.all (supported vals xs 𝔄 δₐ e x v))
   solve
     | none,   _, _,  _ => none
     | some e, I, ys, g =>
       if xs.all (fun x => !(dget vals xs e x).isEmpty) then
         (assigns (dget vals xs e) (dflt vals xs e) (I.flatMap Inv.vars ++ ys)).find?
-          fun ξ => I.all (𝔄.inv φ ξ true) && g ξ
+          fun ξ => I.all (𝔄.inv δₐ ξ true) && g ξ
       else none
   empty
     | none   => true
     | some e  => xs.any fun x => (dget vals xs e x).isEmpty
 
 theorem nonrel_mem (e : List (List V)) (ξ : MVar → V) :
-    (nonrel vals xs 𝔄 φ S).mem (some e) ξ ↔ ∀ x ∈ xs, ξ x ∈ dget vals xs e x := Iff.rfl
+    (nonrel vals xs 𝔄 δₐ S).mem (some e) ξ ↔ ∀ x ∈ xs, ξ x ∈ dget vals xs e x := Iff.rfl
 
 theorem nonrel_refine (e : List (List V)) (I : List (Inv MVar)) :
-    (nonrel vals xs 𝔄 φ S).refine (some e) I = some (xs.map fun x =>
-      (dget vals xs e x).filter fun v => I.all (supported vals xs 𝔄 φ e x v)) := rfl
+    (nonrel vals xs 𝔄 δₐ S).refine (some e) I = some (xs.map fun x =>
+      (dget vals xs e x).filter fun v => I.all (supported vals xs 𝔄 δₐ e x v)) := rfl
 
 theorem nonrel_constrain (e : List (List V)) (as : List (QAct MVar)) (B : A) :
-    (nonrel vals xs 𝔄 φ S).constrain (some e) as B = (match S.all B as with
+    (nonrel vals xs 𝔄 δₐ S).constrain (some e) as B = (match S.all B as with
       | none    => none
       | some cs => some (xs.map fun y => (dget vals xs e y).filter fun v =>
           cs.all fun c => !(decide (c.1 = y)) || c.2 v)) := rfl
@@ -314,9 +314,9 @@ theorem nonrel_constrain (e : List (List V)) (as : List (QAct MVar)) (B : A) :
 /-- Finitely many elements are reachable from `top`: one sublist of `vals`
     per variable of `xs`. -/
 theorem nonrel_finite :
-    ∃ UD : List (nonrel vals xs 𝔄 φ S).D, (nonrel vals xs 𝔄 φ S).top ∈ UD ∧
-      ∀ d ∈ UD, (∀ I, (nonrel vals xs 𝔄 φ S).refine d I ∈ UD) ∧
-        ∀ as B, (nonrel vals xs 𝔄 φ S).constrain d as B ∈ UD := by
+    ∃ UD : List (nonrel vals xs 𝔄 δₐ S).D, (nonrel vals xs 𝔄 δₐ S).top ∈ UD ∧
+      ∀ d ∈ UD, (∀ I, (nonrel vals xs 𝔄 δₐ S).refine d I ∈ UD) ∧
+        ∀ as B, (nonrel vals xs 𝔄 δₐ S).constrain d as B ∈ UD := by
     -- Canonical elements: one sublist of `vals` per variable of `xs`.
     have mk : ∀ g : MVar → List V, (∀ y, (g y).Sublist vals) →
         some (xs.map g) ∈ none :: (tuples (subs vals) xs.length).map some := by
@@ -342,7 +342,7 @@ theorem nonrel_finite :
 /-- The instance meets the specification, for action lists whose variables
     are among `xs`, when `vals` contains every abstract value. -/
 theorem nonrel_spec (h𝔄 : 𝔄.Sound) (hvals : ∀ v, v ∈ vals) :
-    (nonrel vals xs 𝔄 φ S).Spec 𝔄 φ (fun as => ∀ b ∈ as, ∀ x ∈ b.vars, x ∈ xs) where
+    (nonrel vals xs 𝔄 δₐ S).Spec 𝔄 δₐ (fun as => ∀ b ∈ as, ∀ x ∈ b.vars, x ∈ xs) where
   top ξ := fun x hx => by
     show ξ x ∈ dget vals xs (xs.map fun _ => vals) x
     rw [dget_map _ _ hx]; exact hvals _
@@ -404,7 +404,7 @@ theorem nonrel_spec (h𝔄 : 𝔄.Sound) (hvals : ∀ v, v ∈ vals) :
               · exact hd y hy
               · rw [dget_not_mem _ _ hy]; exact hvals _)
         refine List.any_eq_true.2 ⟨ξ', hξ', ?_⟩
-        rw [Abs.inv_congr h𝔄 φ true J (fun y hy => hagree y hy)]
+        rw [Abs.inv_congr h𝔄 δₐ true J (fun y hy => hagree y hy)]
         exact hI J hJ
       · simp [hxJ]
   solve_sound d I ys g ξ h := by
@@ -447,7 +447,7 @@ theorem nonrel_spec (h𝔄 : 𝔄.Sound) (hvals : ∀ v, v ∈ vals) :
       refine List.find?_isSome.2 ⟨ξ', hξ', ?_⟩
       simp only [Bool.and_eq_true]
       refine ⟨List.all_eq_true.2 fun J hJ => ?_, ?_⟩
-      · rw [Abs.inv_congr h𝔄 φ true J (fun y hy =>
+      · rw [Abs.inv_congr h𝔄 δₐ true J (fun y hy =>
           hagree y (List.mem_append_left _ (List.mem_flatMap.2 ⟨J, hJ, hy⟩)))]
         exact hI J hJ
       · rw [hg ξ' ξ (fun y hy => hagree y (List.mem_append_right _ hy))]
@@ -463,7 +463,7 @@ theorem nonrel_spec (h𝔄 : 𝔄.Sound) (hvals : ∀ v, v ∈ vals) :
       cases h' : dget vals xs e x with
       | nil => rw [h'] at this; simp at this
       | cons _ _ => rw [h'] at he; simp at he
-  finite := nonrel_finite vals xs 𝔄 φ S
+  finite := nonrel_finite vals xs 𝔄 δₐ S
 
 end nonrel
 

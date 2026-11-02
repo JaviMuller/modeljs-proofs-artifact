@@ -4,8 +4,8 @@
   The construction of the query model of a query (`Query.toQModel`), and the
   theorem that it is semantically equivalent to the query
   (`Query.toQModel_correct`): for a well-formed program `q :: Δ`, an execution
-  record satisfies the model of `q` applied to `l⃗` iff it matches `q`
-  applied to `l⃗` (`Exec.Matches`).  This holds for the whole query language,
+  record satisfies the model of `q` applied to `ls` iff it matches `q`
+  applied to `ls` (`Exec.Matches`).  This holds for the whole query language,
   `except` and invocation included.
 
   ## Construction
@@ -27,7 +27,7 @@
     one side may be the `Any` loop of the other: that is how one side
     progresses while the other waits; a step where both sides progress uses
     one trace action for both, so `a & a` matches a single `a`);
-  * `Q(z⃗)` inlines the body of `Q` (`QBody.build`): `Q`'s parameters are
+  * `Q(zs)` inlines the body of `Q` (`QBody.build`): `Q`'s parameters are
     renamed to the arguments, its locals to fresh tags `tag n y`
     (`Query.ren`), its `when` is added to `inv` of all its states and its
     locals to their `scope`; its `except` becomes a new component, added to
@@ -339,7 +339,7 @@ end edges
 
 section runs
 
-variable {t : List Act} {σ : Obs} {X : Nat → MEnv → Prop} {ξ : MEnv}
+variable {t : List Act} {δ : Obs} {X : Nat → MEnv → Prop} {ξ : MEnv}
 
 theorem Run.lift {es es' : List QEdge} {w : QSt → QSt}
     (h : ∀ s l s', (s, l, s') ∈ es → (w s, l, w s') ∈ es') {s s' i j}
@@ -352,7 +352,7 @@ theorem Run.lift {es es' : List QEdge} {w : QSt → QSt}
 /-- The labels of a final state made of two final states. -/
 theorem QComp.ok_append {c A B : QComp} {f a b : QSt}
     (hi : c.inv f = A.inv a ++ B.inv b) (he : c.exc f = A.exc a ++ B.exc b) :
-    c.Ok σ X ξ f ↔ A.Ok σ X ξ a ∧ B.Ok σ X ξ b := by
+    c.Ok δ X ξ f ↔ A.Ok δ X ξ a ∧ B.Ok δ X ξ b := by
   simp only [QComp.Ok, hi, he, List.mem_append]
   constructor
   · rintro ⟨h₁, h₂⟩
@@ -364,7 +364,7 @@ theorem QComp.ok_append {c A B : QComp} {f a b : QSt}
 /-- Acceptance by an automaton without labels is reachability of a final state. -/
 theorem QComp.acc_plain {c : QComp} (hi : ∀ s, c.inv s = []) (hs : ∀ s, c.scope s = [])
     (he : ∀ s, c.exc s = []) {i j : Nat} :
-    c.Acc t σ X ξ i j ↔ ∃ f ∈ c.finals, Run c.edges t ξ c.start i f j := by
+    c.Acc t δ X ξ i j ↔ ∃ f ∈ c.finals, Run c.edges t ξ c.start i f j := by
   constructor
   · rintro ⟨f, hf, ξ', hξ', hr, _⟩
     have : ξ' = ξ := funext fun v => hξ' v (by simp [hs])
@@ -372,11 +372,11 @@ theorem QComp.acc_plain {c : QComp} (hi : ∀ s, c.inv s = []) (hs : ∀ s, c.sc
   · rintro ⟨f, hf, hr⟩
     exact ⟨f, hf, ξ, fun _ _ => rfl, hr, by simp [QComp.Ok, hi, he]⟩
 
-theorem acc_empty {i j : Nat} : QComp.empty.Acc t σ X ξ i j ↔ False := by
+theorem acc_empty {i j : Nat} : QComp.empty.Acc t δ X ξ i j ↔ False := by
   rw [QComp.acc_plain (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)]
   simp [QComp.empty]
 
-theorem acc_eps {i j : Nat} (hj : j ≤ t.length) : QComp.eps.Acc t σ X ξ i j ↔ i ≤ j := by
+theorem acc_eps {i j : Nat} (hj : j ≤ t.length) : QComp.eps.Acc t δ X ξ i j ↔ i ≤ j := by
   rw [QComp.acc_plain (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)]
   simp only [QComp.eps, QComp.empty, List.mem_singleton, exists_eq_left]
   exact ⟨Run.le, fun h => Run.loop (by simp) h hj⟩
@@ -405,13 +405,13 @@ theorem run_act {a : QAct MVar} {i j : Nat} (hj : j ≤ t.length) :
         (Run.loop (by simp [QComp.act]) hpj hj))
 
 theorem acc_act {a : QAct MVar} {i j : Nat} (hj : j ≤ t.length) :
-    (QComp.act a).Acc t σ X ξ i j ↔ ∃ p, i ≤ p ∧ p < j ∧ t[p]? = some (a.inst ξ) := by
+    (QComp.act a).Acc t δ X ξ i j ↔ ∃ p, i ≤ p ∧ p < j ∧ t[p]? = some (a.inst ξ) := by
   rw [QComp.acc_plain (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)]
   simp only [QComp.act, List.mem_singleton, exists_eq_left]
   exact run_act hj
 
 theorem acc_alt {A B : QComp} {i j : Nat} :
-    (QComp.alt A B).Acc t σ X ξ i j ↔ A.Acc t σ X ξ i j ∨ B.Acc t σ X ξ i j := by
+    (QComp.alt A B).Acc t δ X ξ i j ↔ A.Acc t δ X ξ i j ∨ B.Acc t δ X ξ i j := by
   have embL : ∀ {s x i j} {ξ : MEnv}, Run (QComp.alt A B).edges t ξ (.altL s) i x j ↔
       ∃ s', x = .altL s' ∧ Run A.edges t ξ s i s' j :=
     Run.embed (fun s l x => by
@@ -514,11 +514,11 @@ theorem run_seq {A B : QComp} {s f g : QSt} {i j : Nat} :
       ((embR hf).2 ⟨g, rfl, h₂⟩))
 
 theorem acc_seq {A B : QComp} {i j : Nat} :
-    (QComp.seq A B).Acc t σ X ξ i j ↔
+    (QComp.seq A B).Acc t δ X ξ i j ↔
       ∃ f ∈ A.finals, ∃ g ∈ B.finals, ∃ ξ' : MEnv,
         (∀ v, v ∉ A.scope f → v ∉ B.scope g → ξ' v = ξ v) ∧
         (∃ m, Run A.edges t ξ' A.start i f m ∧ Run B.edges t ξ' B.start m g j) ∧
-        A.Ok σ X ξ' f ∧ B.Ok σ X ξ' g := by
+        A.Ok δ X ξ' f ∧ B.Ok δ X ξ' g := by
   constructor
   · rintro ⟨x, hx, ξ', hξ', hr, hok⟩
     simp only [QComp.seq, List.mem_flatMap, List.mem_map] at hx
@@ -592,11 +592,11 @@ theorem run_both {A B : QComp} (hA : A.Closed) (hB : B.Closed) {a b a' b' : QSt}
           (ih (hA.edges _ _ _ he).2 (hB.edges _ _ _ he').2 hr₂)
 
 theorem acc_both {A B : QComp} (hA : A.Closed) (hB : B.Closed) {i j : Nat} :
-    (QComp.both A B).Acc t σ X ξ i j ↔
+    (QComp.both A B).Acc t δ X ξ i j ↔
       ∃ a ∈ A.finals, ∃ b ∈ B.finals, ∃ ξ' : MEnv,
         (∀ v, v ∉ A.scope a → v ∉ B.scope b → ξ' v = ξ v) ∧
         Run A.edges t ξ' A.start i a j ∧ Run B.edges t ξ' B.start i b j ∧
-        A.Ok σ X ξ' a ∧ B.Ok σ X ξ' b := by
+        A.Ok δ X ξ' a ∧ B.Ok δ X ξ' b := by
   constructor
   · rintro ⟨x, hx, ξ', hξ', hr, hok⟩
     simp only [QComp.both, List.mem_flatMap, List.mem_map] at hx
@@ -850,26 +850,26 @@ end built
 
 section correct
 
-variable {t : List Act} {σ : Obs}
+variable {t : List Act} {δ : Obs}
 
 /-- Acceptance of `t[i..j)` by the constructed automaton agrees with `R`
     holding from `i` to some `j' ≤ j`, whatever the components it is
     eventually placed among, for fuel at least `d`. -/
-def Correct (t : List Act) (σ : Obs) (d : Nat) (r : BRes) (R : MEnv → Nat → Nat → Prop) : Prop :=
+def Correct (t : List Act) (δ : Obs) (d : Nat) (r : BRes) (R : MEnv → Nat → Nat → Prop) : Prop :=
   ∀ M : List QComp, r.comps <+: M → ∀ fuel, d ≤ fuel → ∀ (ξ : MEnv) (i j : Nat), j ≤ t.length →
-    (r.comp.Acc t σ (compSat M t σ fuel) ξ i j ↔ ∃ j', j' ≤ j ∧ R ξ i j')
+    (r.comp.Acc t δ (compSat M t δ fuel) ξ i j ↔ ∃ j', j' ≤ j ∧ R ξ i j')
 
 /-- Every pattern construction is `Built` and `Correct`. -/
-def PatOK (t : List Act) (σ : Obs) (Ψ : Builder) (Θ : Interp) (d : Nat) : Prop :=
+def PatOK (t : List Act) (δ : Obs) (Ψ : Builder) (Θ : Interp) (d : Nat) : Prop :=
   ∀ (ρ : Var → MVar) (F : Pat) (n : Nat) (cs : List QComp), (∀ x, (ρ x).Below n) →
     Built n cs (F.build Ψ ρ n cs) ∧
-    Correct t σ d (F.build Ψ ρ n cs) (fun ξ i j => Θ ⬝ t ⬝ σ ⬝ (ξ ∘ ρ) ⊨ F : i ⇝ j)
+    Correct t δ d (F.build Ψ ρ n cs) (fun ξ i j => Θ ⬝ t ⬝ δ ⬝ (ξ ∘ ρ) ⊨ F : i ⇝ j)
 
 /-- Every invocation construction is `Built` and `Correct`. -/
-def BuilderOK (t : List Act) (σ : Obs) (Ψ : Builder) (Θ : Interp) (d : Nat) : Prop :=
+def BuilderOK (t : List Act) (δ : Obs) (Ψ : Builder) (Θ : Interp) (d : Nat) : Prop :=
   ∀ (Q : QName) (args : List MVar) (n : Nat) (cs : List QComp), (∀ v ∈ args, v.Below n) →
     Built n cs (Ψ Q args n cs) ∧
-    Correct t σ d (Ψ Q args n cs) (fun ξ i j => Θ Q (args.map ξ) i j)
+    Correct t δ d (Ψ Q args n cs) (fun ξ i j => Θ Q (args.map ξ) i j)
 
 /-- New values for tags minted from `n` do not change what `ρ`, all of whose
     variables are below `n`, denotes. -/
@@ -881,15 +881,16 @@ theorem comp_eq_of_scope {ρ : Var → MVar} {n : Nat} (hρ : ∀ x, (ρ x).Belo
 /-- Satisfaction of components reads `V` if the components do. -/
 theorem compSat_reads {M : List QComp} {V : MVar → Prop} (fuel : Nat) :
     ∀ k c', M[k]? = some c' → QComp.ReadsIn M V c' →
-      ∀ ξ₁ ξ₂ : MEnv, (∀ v, V v → ξ₁ v = ξ₂ v) → (compSat M t σ fuel k ξ₁ ↔ compSat M t σ fuel k ξ₂) :=
+      ∀ ξ₁ ξ₂ : MEnv, (∀ v, V v → ξ₁ v = ξ₂ v) →
+        (compSat M t δ fuel k ξ₁ ↔ compSat M t δ fuel k ξ₂) :=
   fun k c' hc hr ξ₁ ξ₂ h => compSat_coincide fuel k c' hc hr ξ₁ ξ₂ h
 
 /-- A run and the labels of its final state survive changing the
     substitution outside what the automaton reads. -/
 theorem run_ok_coincide {A : QComp} {M : List QComp} {V : MVar → Prop} {fuel : Nat}
     (hR : A.ReadsIn M V) {ξa ξb : MEnv} (h : ∀ v, V v → ξa v = ξb v) {f : QSt} {i m : Nat}
-    (hr : Run A.edges t ξa A.start i f m) (hok : A.Ok σ (compSat M t σ fuel) ξa f) :
-    Run A.edges t ξb A.start i f m ∧ A.Ok σ (compSat M t σ fuel) ξb f :=
+    (hr : Run A.edges t ξa A.start i f m) (hok : A.Ok δ (compSat M t δ fuel) ξa f) :
+    Run A.edges t ξb A.start i f m ∧ A.Ok δ (compSat M t δ fuel) ξb f :=
   ⟨hr.coincide hR.edges h, (QComp.ok_coincide (compSat_reads fuel) hR h f).1 hok⟩
 
 /-- Two consecutive constructions: the second one's new values do not
@@ -899,9 +900,9 @@ theorem combine_acc {n : Nat} {cs : List QComp} {r₁ r₂ : BRes} {ρ : Var →
     {M : List QComp} (hM : r₂.comps <+: M) {fuel : Nat} {ξ ξa ξb : MEnv} {f g : QSt}
     (hξa : ∀ v, v ∉ r₁.comp.scope f → ξa v = ξ v) (hξb : ∀ v, v ∉ r₂.comp.scope g → ξb v = ξa v)
     {i m : Nat} (hr : Run r₁.comp.edges t ξa r₁.comp.start i f m)
-    (hok : r₁.comp.Ok σ (compSat M t σ fuel) ξa f) :
+    (hok : r₁.comp.Ok δ (compSat M t δ fuel) ξa f) :
     (∀ v, v ∉ r₁.comp.scope f → v ∉ r₂.comp.scope g → ξb v = ξ v) ∧
-    Run r₁.comp.edges t ξb r₁.comp.start i f m ∧ r₁.comp.Ok σ (compSat M t σ fuel) ξb f ∧
+    Run r₁.comp.edges t ξb r₁.comp.start i f m ∧ r₁.comp.Ok δ (compSat M t δ fuel) ξb f ∧
     ξa ∘ ρ = ξ ∘ ρ := by
   have hagree : ∀ v, v.Below r₁.next → ξa v = ξb v :=
     fun v hv => (hξb v (fun hs => (h₂.scope g v hs).not_below hv)).symm
@@ -910,8 +911,8 @@ theorem combine_acc {n : Nat} {cs : List QComp} {r₁ r₂ : BRes} {ρ : Var →
     comp_eq_of_scope hρ (S := fun v => v ∈ r₁.comp.scope f)
       (fun v hv => (h₁.scope f v hv).not_below) hξa⟩
 
-theorem patOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hΨ : BuilderOK t σ Ψ Θ d)
-    (hΘ : Θ.Ok t) (hΘl : Θ.LowerStart) : PatOK t σ Ψ Θ d := by
+theorem patOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hΨ : BuilderOK t δ Ψ Θ d)
+    (hΘ : Θ.Ok t) (hΘl : Θ.LowerStart) : PatOK t δ Ψ Θ d := by
   intro ρ F
   induction F with
   | eps =>
@@ -919,7 +920,7 @@ theorem patOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hΨ : BuilderOK t σ Ψ Θ
     refine ⟨Built.plain closed_eps (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
       (by intro s l s' h; simp [QComp.eps, QComp.empty] at h; simp [h.2.1, MLbl.vars]), ?_⟩
     intro M _ fuel _ ξ i j hj
-    show QComp.eps.Acc t σ _ ξ i j ↔ _
+    show QComp.eps.Acc t δ _ ξ i j ↔ _
     rw [acc_eps hj]
     simp only [Pat.sat_eps]
     exact ⟨fun h => ⟨i, h, rfl⟩, fun ⟨j', h, he⟩ => he ▸ h⟩
@@ -933,7 +934,7 @@ theorem patOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hΨ : BuilderOK t σ Ψ Θ
       obtain ⟨x, _, rfl⟩ := hv
       exact hρ x
     · intro M _ fuel _ ξ i j hj
-      show (QComp.act (a.map ρ)).Acc t σ _ ξ i j ↔ _
+      show (QComp.act (a.map ρ)).Acc t δ _ ξ i j ↔ _
       rw [acc_act hj, QAct.inst_map]
       simp only [Pat.sat_act]
       constructor
@@ -956,7 +957,7 @@ theorem patOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hΨ : BuilderOK t σ Ψ Θ
       (fun _ _ _ he _ hv => vars_seq he hv) (fun _ _ h => Lbl.mem_seq h)
       (fun _ _ h => Lbl.mem_seq h) (fun _ _ h => Lbl.mem_seq h), ?_⟩
     intro M hM fuel hf ξ i j hj
-    show (QComp.seq _ _).Acc t σ _ ξ i j ↔ _
+    show (QComp.seq _ _).Acc t δ _ ξ i j ↔ _
     have hM₁ := hB₂.pre.trans hM
     rw [acc_seq]
     constructor
@@ -993,7 +994,7 @@ theorem patOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hΨ : BuilderOK t σ Ψ Θ
       (fun _ _ _ he _ hv => vars_alt he hv) (fun _ _ h => Lbl.mem_alt h)
       (fun _ _ h => Lbl.mem_alt h) (fun _ _ h => Lbl.mem_alt h), ?_⟩
     intro M hM fuel hf ξ i j hj
-    show (QComp.alt _ _).Acc t σ _ ξ i j ↔ _
+    show (QComp.alt _ _).Acc t δ _ ξ i j ↔ _
     rw [acc_alt, hC₁ M (hB₂.pre.trans hM) fuel hf ξ i j hj, hC₂ M hM fuel hf ξ i j hj]
     simp only [Pat.sat_alt]
     constructor
@@ -1013,7 +1014,7 @@ theorem patOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hΨ : BuilderOK t σ Ψ Θ
       (fun _ _ _ he _ hv => vars_both he hv) (fun _ _ h => Lbl.mem_both h)
       (fun _ _ h => Lbl.mem_both h) (fun _ _ h => Lbl.mem_both h), ?_⟩
     intro M hM fuel hf ξ i j hj
-    show (QComp.both _ _).Acc t σ _ ξ i j ↔ _
+    show (QComp.both _ _).Acc t δ _ ξ i j ↔ _
     have hM₁ := hB₂.pre.trans hM
     rw [acc_both hB₁.closed hB₂.closed]
     constructor
@@ -1044,13 +1045,13 @@ end correct
 
 section body
 
-variable {t : List Act} {σ : Obs}
+variable {t : List Act} {δ : Obs}
 
 theorem QBody.sat_iff {Θ : Interp} {ξ : LEnv} {P : QBody} {i j : Nat} :
-    Θ ⬝ t ⬝ σ ⬝ ξ ⊨ P : i ⇝ j ↔
+    Θ ⬝ t ⬝ δ ⬝ ξ ⊨ P : i ⇝ j ↔
       ∃ ls : List Loc, ls.length = P.locals.length ∧
-        (Θ ⬝ t ⬝ σ ⬝ ξ.bind P.locals ls ⊨ P.pattern : i ⇝ j) ∧ (σ ⬝ ξ.bind P.locals ls ⊨ P.when) ∧
-        ∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ σ ⬝ ξ.bind P.locals ls ⊨ F' : 0 ⇝ k := by
+        (Θ ⬝ t ⬝ δ ⬝ ξ.bind P.locals ls ⊨ P.pattern : i ⇝ j) ∧ (δ ⬝ ξ.bind P.locals ls ⊨ P.when) ∧
+        ∀ F', P.except = some F' → ∀ k ≤ t.length, ¬ Θ ⬝ t ⬝ δ ⬝ ξ.bind P.locals ls ⊨ F' : 0 ⇝ k := by
   constructor
   · intro h
     cases h with
@@ -1076,7 +1077,7 @@ structure BodyRen (P : QBody) (ρ : Var → MVar) (n : Nat) : Prop where
   sep   : ∀ x ∈ P.vars, x ∉ P.locals → ∀ y ∈ P.locals, ρ x ≠ ρ y
 
 /-- Choosing new values for the renamed locals is choosing values for the
-    locals: the two forms of a body's `∃ y⃗`. -/
+    locals: the two forms of a body's `∃ ys`. -/
 theorem bind_bridge {P : QBody} {ρ : Var → MVar} {n : Nat} (hren : BodyRen P ρ n)
     {ξ : MEnv} {ξq : LEnv} (hval : ∀ x ∈ P.vars, x ∉ P.locals → ξ (ρ x) = ξq x)
     (Φ : LEnv → Prop) (hΦ : ∀ η₁ η₂ : LEnv, (∀ x ∈ P.vars, η₁ x = η₂ x) → (Φ η₁ ↔ Φ η₂)) :
@@ -1123,10 +1124,10 @@ theorem bind_bridge {P : QBody} {ρ : Var → MVar} {n : Nat} (hren : BodyRen P 
 theorem acc_guard {A : QComp} {I : Inv MVar} {locs : List MVar} {ks : List Nat}
     {X : Nat → MEnv → Prop} {ξ : MEnv} {i j : Nat}
     (hind : ∀ f ξ' ξ₁, (∀ v, v ∉ A.scope f → ξ' v = ξ₁ v) →
-      ((σ ⬝ ξ' ⊨ I) ↔ (σ ⬝ ξ₁ ⊨ I)) ∧ ∀ k ∈ ks, (X k ξ' ↔ X k ξ₁)) :
-    (A.guard I locs ks).Acc t σ X ξ i j ↔
-      ∃ ξ₁ : MEnv, (∀ v, v ∉ locs → ξ₁ v = ξ v) ∧ (σ ⬝ ξ₁ ⊨ I) ∧ (∀ k ∈ ks, ¬ X k ξ₁) ∧
-        A.Acc t σ X ξ₁ i j := by
+      ((δ ⬝ ξ' ⊨ I) ↔ (δ ⬝ ξ₁ ⊨ I)) ∧ ∀ k ∈ ks, (X k ξ' ↔ X k ξ₁)) :
+    (A.guard I locs ks).Acc t δ X ξ i j ↔
+      ∃ ξ₁ : MEnv, (∀ v, v ∉ locs → ξ₁ v = ξ v) ∧ (δ ⬝ ξ₁ ⊨ I) ∧ (∀ k ∈ ks, ¬ X k ξ₁) ∧
+        A.Acc t δ X ξ₁ i j := by
   constructor
   · rintro ⟨f, hf, ξ', hξ', hr, hinv, hexc⟩
     simp only [QComp.guard, List.mem_cons, List.mem_append, not_or] at hξ' hinv hexc
@@ -1164,14 +1165,14 @@ structure BodyBuilt (P : QBody) (ρ : Var → MVar) (n : Nat) (cs : List QComp) 
   mono   : r.comp.Mono
   comps  : (∀ c ∈ cs, c.Closed ∧ c.Mono) → ∀ c ∈ r.comps, c.Closed ∧ c.Mono
 
-theorem bodyOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hPat : PatOK t σ Ψ Θ d) (hΘ : Θ.Ok t)
+theorem bodyOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hPat : PatOK t δ Ψ Θ d) (hΘ : Θ.Ok t)
     {P : QBody} {ρ : Var → MVar} {n : Nat} (hren : BodyRen P ρ n) (cs : List QComp) :
     BodyBuilt P ρ n cs (P.build Ψ ρ n cs) ∧
     ∀ M : List QComp, (P.build Ψ ρ n cs).comps <+: M → ∀ fuel, d + 1 ≤ fuel →
       ∀ (ξ : MEnv) (ξq : LEnv), (∀ x ∈ P.vars, x ∉ P.locals → ξ (ρ x) = ξq x) →
       ∀ i j, j ≤ t.length →
-        ((P.build Ψ ρ n cs).comp.Acc t σ (compSat M t σ fuel) ξ i j ↔
-          ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ σ ⬝ ξq ⊨ P : i ⇝ j') := by
+        ((P.build Ψ ρ n cs).comp.Acc t δ (compSat M t δ fuel) ξ i j ↔
+          ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ δ ⬝ ξq ⊨ P : i ⇝ j') := by
   obtain ⟨hB, hC⟩ := hPat ρ P.pattern n cs hren.below
   -- Everything the body adds reads only variables below the fresh tags.
   have hlocs : ∀ v ∈ P.locals.map ρ, v.Below n := by
@@ -1187,32 +1188,32 @@ theorem bodyOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hPat : PatOK t σ Ψ Θ d
       (P.pattern.build Ψ ρ n cs).comps <+: M → d ≤ fuel → j ≤ t.length →
       (∀ x ∈ P.vars, x ∉ P.locals → ξ (ρ x) = ξq x) →
       (∀ k ∈ ks, ∀ η η' : MEnv, η ∘ ρ = η' ∘ ρ →
-        (compSat M t σ fuel k η ↔ compSat M t σ fuel k η')) →
-      (∀ (η : MEnv), (∀ k ∈ ks, ¬ compSat M t σ fuel k η) ↔
-        ∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ σ ⬝ (η ∘ ρ) ⊨ F' : 0 ⇝ k) →
-      (((P.pattern.build Ψ ρ n cs).comp.guard (P.when.map ρ) (P.locals.map ρ) ks).Acc t σ
-          (compSat M t σ fuel) ξ i j ↔ ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ σ ⬝ ξq ⊨ P : i ⇝ j') := by
+        (compSat M t δ fuel k η ↔ compSat M t δ fuel k η')) →
+      (∀ (η : MEnv), (∀ k ∈ ks, ¬ compSat M t δ fuel k η) ↔
+        ∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ δ ⬝ (η ∘ ρ) ⊨ F' : 0 ⇝ k) →
+      (((P.pattern.build Ψ ρ n cs).comp.guard (P.when.map ρ) (P.locals.map ρ) ks).Acc t δ
+          (compSat M t δ fuel) ξ i j ↔ ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ δ ⬝ ξq ⊨ P : i ⇝ j') := by
     intro M fuel ks ξ ξq i j hM hf hj hval hksρ hks
     rw [acc_guard (fun f ξ' ξ₁ h => ⟨by rw [Inv.sat_map, Inv.sat_map, hρeq f ξ' ξ₁ h],
       fun k hk => hksρ k hk ξ' ξ₁ (hρeq f ξ' ξ₁ h)⟩)]
     -- Reorganise both sides around the choice of the locals.
-    have lhs : ∀ ξ₁ : MEnv, ((σ ⬝ ξ₁ ⊨ P.when.map ρ) ∧ (∀ k ∈ ks, ¬ compSat M t σ fuel k ξ₁) ∧
-        (P.pattern.build Ψ ρ n cs).comp.Acc t σ (compSat M t σ fuel) ξ₁ i j) ↔
-        ((σ ⬝ (ξ₁ ∘ ρ) ⊨ P.when) ∧
-          (∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ σ ⬝ (ξ₁ ∘ ρ) ⊨ F' : 0 ⇝ k) ∧
-          ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ σ ⬝ (ξ₁ ∘ ρ) ⊨ P.pattern : i ⇝ j') := by
+    have lhs : ∀ ξ₁ : MEnv, ((δ ⬝ ξ₁ ⊨ P.when.map ρ) ∧ (∀ k ∈ ks, ¬ compSat M t δ fuel k ξ₁) ∧
+        (P.pattern.build Ψ ρ n cs).comp.Acc t δ (compSat M t δ fuel) ξ₁ i j) ↔
+        ((δ ⬝ (ξ₁ ∘ ρ) ⊨ P.when) ∧
+          (∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ δ ⬝ (ξ₁ ∘ ρ) ⊨ F' : 0 ⇝ k) ∧
+          ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ δ ⬝ (ξ₁ ∘ ρ) ⊨ P.pattern : i ⇝ j') := by
       intro ξ₁
       rw [Inv.sat_map, hks ξ₁, hC M hM fuel hf ξ₁ i j hj]
     simp only [lhs]
-    rw [bind_bridge hren hval (fun η => (σ ⬝ η ⊨ P.when) ∧
-      (∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ σ ⬝ η ⊨ F' : 0 ⇝ k) ∧
-      ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ σ ⬝ η ⊨ P.pattern : i ⇝ j')]
+    rw [bind_bridge hren hval (fun η => (δ ⬝ η ⊨ P.when) ∧
+      (∀ F', P.except = some F' → ∀ k, ¬ Θ ⬝ t ⬝ δ ⬝ η ⊨ F' : 0 ⇝ k) ∧
+      ∃ j', j' ≤ j ∧ Θ ⬝ t ⬝ δ ⬝ η ⊨ P.pattern : i ⇝ j')]
     · constructor
       · rintro ⟨ls, hlen, hw, hx, j', hj', hp⟩
-        exact ⟨j', hj', QBody.sat_iff.2 ⟨ls, hlen, hp, hw, hx⟩⟩
+        exact ⟨j', hj', QBody.sat_iff.2 ⟨ls, hlen, hp, hw, fun F' hF' k _ => hx F' hF' k⟩⟩
       · rintro ⟨j', hj', hb⟩
         obtain ⟨ls, hlen, hp, hw, hx⟩ := QBody.sat_iff.1 hb
-        exact ⟨ls, hlen, hw, hx, j', hj', hp⟩
+        exact ⟨ls, hlen, hw, fun F' hF' => (Pat.not_sat_zero_iff hΘ).1 (hx F' hF'), j', hj', hp⟩
     · intro η₁ η₂ h
       have hp : ∀ x ∈ P.pattern.vars, η₁ x = η₂ x := fun x hx =>
         h x (List.mem_append.2 (Or.inl (List.mem_append.2 (Or.inl hx))))
@@ -1286,8 +1287,8 @@ theorem bodyOK {Ψ : Builder} {Θ : Interp} {d : Nat} (hPat : PatOK t σ Ψ Θ d
       have hME : M[E.comps.length]? = some E.comp := by
         rw [getElem?_of_prefix hM hElt]; exact hEget
       -- The `except` component is satisfied iff the excluded pattern occurs.
-      have hX : ∀ η : MEnv, compSat M t σ (m + 1) E.comps.length η ↔
-          ∃ k, Θ ⬝ t ⬝ σ ⬝ (η ∘ ρ) ⊨ F' : 0 ⇝ k := by
+      have hX : ∀ η : MEnv, compSat M t δ (m + 1) E.comps.length η ↔
+          ∃ k, Θ ⬝ t ⬝ δ ⬝ (η ∘ ρ) ⊨ F' : 0 ⇝ k := by
         intro η
         simp only [compSat, hME, Option.some.injEq, exists_eq_left']
         rw [hCe M (hEpre.trans hM) m (by omega) η 0 t.length (Nat.le_refl _)]
@@ -1307,7 +1308,7 @@ end body
 
 section program
 
-variable {t : List Act} {σ : Obs}
+variable {t : List Act} {δ : Obs}
 
 theorem assoc_mem {x : Var} : ∀ {ps : List Var} {args : List MVar} {v : MVar},
     assoc x ps args = some v → v ∈ args
@@ -1357,7 +1358,7 @@ theorem Query.ren_bodyRen (q : Query) {args : List MVar} {n : Nat}
       simp [MVar.Below] at this
 
 theorem Correct.mono {d d' : Nat} (h : d ≤ d') {r : BRes} {R : MEnv → Nat → Nat → Prop}
-    (hC : Correct t σ d r R) : Correct t σ d' r R :=
+    (hC : Correct t δ d r R) : Correct t δ d' r R :=
   fun M hM fuel hf => hC M hM fuel (Nat.le_trans h hf)
 
 theorem QProg.WF.declared : ∀ {Δ : QProg}, QProg.WF Δ → ∀ q ∈ Δ, q.Declared
@@ -1369,17 +1370,17 @@ theorem QProg.WF.declared : ∀ {Δ : QProg}, QProg.WF Δ → ∀ q ∈ Δ, q.De
 
 /-- Invocations resolved in `Δ` are correct, for fuel at least `Δ.length`. -/
 theorem buildOK : ∀ (Δ : QProg), (∀ q ∈ Δ, q.Declared) →
-    BuilderOK t σ (QProg.build Δ) (QProg.interp t σ Δ) Δ.length
+    BuilderOK t δ (QProg.build Δ) (QProg.interp t δ Δ) Δ.length
   | [], _ => by
       intro Q args n cs _
       refine ⟨Built.plain closed_empty (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
         (by intro s l s' h; simp [QComp.empty] at h; simp [h.2.1, MLbl.vars]), ?_⟩
       intro M _ fuel _ ξ i j _
-      show QComp.empty.Acc t σ _ ξ i j ↔ _
+      show QComp.empty.Acc t δ _ ξ i j ↔ _
       rw [acc_empty]; simp [QProg.interp]
   | q :: Δ, hd => by
       have ih := buildOK Δ (fun q' h => hd q' (List.mem_cons_of_mem _ h))
-      have hpat := patOK ih (QProg.interp_ok Δ t σ) (QProg.interp_lowerStart Δ t σ)
+      have hpat := patOK ih (QProg.interp_ok Δ t δ) (QProg.interp_lowerStart Δ t δ)
       intro Q args n cs hargs
       by_cases hQ : Q = q.name
       · subst hQ
@@ -1388,7 +1389,7 @@ theorem buildOK : ∀ (Δ : QProg), (∀ q ∈ Δ, q.Declared) →
               QBody.build (QProg.build Δ) (q.ren args n) q.body (n + 1) cs := by
             simp [QProg.build, hlen]
           rw [hb]
-          obtain ⟨hBB, hBC⟩ := bodyOK hpat (QProg.interp_ok Δ t σ) (q.ren_bodyRen hargs) cs
+          obtain ⟨hBB, hBC⟩ := bodyOK hpat (QProg.interp_ok Δ t δ) (q.ren_bodyRen hargs) cs
           refine ⟨⟨by have := hBB.le; omega, hBB.pre, hBB.closed, fun s v hv => ?_, hBB.reads,
             hBB.mono, hBB.comps⟩, ?_⟩
           · rcases hBB.scope s v hv with h | h
@@ -1411,7 +1412,7 @@ theorem buildOK : ∀ (Δ : QProg), (∀ q ∈ Δ, q.Declared) →
           refine ⟨Built.plain closed_empty (fun _ => rfl) (fun _ => rfl) (fun _ => rfl)
             (by intro s l s' h; simp [QComp.empty] at h; simp [h.2.1, MLbl.vars]), ?_⟩
           intro M _ fuel _ ξ i j _
-          show QComp.empty.Acc t σ _ ξ i j ↔ _
+          show QComp.empty.Acc t δ _ ξ i j ↔ _
           rw [acc_empty]
           simp [QProg.interp_head, hlen]
       · have hb : QProg.build (q :: Δ) Q args n cs = QProg.build Δ Q args n cs := by
@@ -1420,15 +1421,15 @@ theorem buildOK : ∀ (Δ : QProg), (∀ q ∈ Δ, q.Declared) →
         obtain ⟨hB, hC⟩ := ih Q args n cs hargs
         refine ⟨hB, fun M hM fuel hf ξ i j hj => ?_⟩
         rw [(hC.mono (by simp)) M hM fuel hf ξ i j hj]
-        simp only [QProg.interp_tail q Δ t σ hQ]
+        simp only [QProg.interp_tail q Δ t δ hQ]
 
 /-- **Semantic equivalence.** For a well-formed program `q :: Δ`, an
-    execution record satisfies the query model of `q` applied to `l⃗` iff it
-    matches `q` applied to `l⃗`. -/
+    execution record satisfies the query model of `q` applied to `ls` iff it
+    matches `q` applied to `ls`. -/
 theorem Query.toQModel_correct {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ)) (e : Exec)
     {ls : List Loc} (hlen : ls.length = q.params.length) :
     (q.toQModel Δ).Sat e ls ↔ Exec.Matches (q :: Δ) e q.name ls := by
-  have hpat := patOK (t := e.trc.toList) (σ := e.obs)
+  have hpat := patOK (t := e.trc.toList) (δ := e.obs)
     (buildOK Δ (QProg.WF.declared hwf.2.2)) (QProg.interp_ok Δ _ _) (QProg.interp_lowerStart Δ _ _)
   have hren : BodyRen q.body MVar.src 0 :=
     ⟨fun _ => trivial, fun _ _ _ _ h => MVar.src.inj h,
@@ -1448,7 +1449,8 @@ theorem Query.toQModel_correct {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ
 theorem Query.toQModel_wf {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ)) :
     (q.toQModel Δ).main.Closed ∧ (q.toQModel Δ).main.Mono ∧
       ∀ c ∈ (q.toQModel Δ).comps, c.Closed ∧ c.Mono := by
-  have hpat := patOK (t := []) (σ := ⟨fun _ => none, fun _ _ => False, fun _ => False, fun _ => False⟩)
+  have hpat := patOK (t := [])
+    (δ := ⟨fun _ => none, fun _ _ => False, fun _ => False, fun _ => False⟩)
     (buildOK Δ (QProg.WF.declared hwf.2.2)) (QProg.interp_ok Δ _ _) (QProg.interp_lowerStart Δ _ _)
   have hren : BodyRen q.body MVar.src 0 :=
     ⟨fun _ => trivial, fun _ _ _ _ h => MVar.src.inj h,

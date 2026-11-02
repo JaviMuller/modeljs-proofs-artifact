@@ -22,7 +22,7 @@ standard three (`propext`, `Classical.choice`, `Quot.sound`).
 object literals, static and dynamic property lookup and update, first-order
 functions called through variables (with recursion and `return` anywhere),
 `if`, `while`, and two taint statements (`setTaint`, `setSink`). Its concrete
-semantics is a big-step judgement `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓ ⟨h', ρ', δ', t, o⟩` that
+semantics is a big-step judgement `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩` that
 produces a heap, store, taint register, trace of heap/call actions, and
 outcome. It is parametric in the literal-to-location injection, the
 allocator and the binary operators (`Concrete`, constrained by
@@ -59,7 +59,7 @@ abstract actions, so a walk through the labeled automaton has a trace.
   make about the analysis's parameters (`ConcreteSpec`, `AbstractSpec`,
   `CrossSpec`) are jointly satisfiable.
 
-**The query language.** Queries such as `Query Q(x⃗) { ∃y⃗: F when I except F' }`
+**The query language.** Queries such as `Query Q(xs) { ∃ ys: F when I except F' }`
 describe patterns over execution records, i.e. traces together with taint
 observations.
 

@@ -38,18 +38,19 @@ open Abstract
 /-! ## The order on configurations is a preorder with a least element -/
 
 theorem AConf.le_refl (c : AConf) : c ⊑ c :=
-  ⟨⟨fun _ _ _ h => h, fun _ _ h => h⟩, fun _ _ h => h, fun _ _ h => h, fun _ h => h,
+  ⟨fun _ _ _ h => h, fun _ _ h => h, fun _ _ h => h, fun _ _ h => h, fun _ h => h,
     fun _ h => h⟩
 
 theorem AConf.le_trans {c₁ c₂ c₃ : AConf} (h₁ : c₁ ⊑ c₂) (h₂ : c₂ ⊑ c₃) : c₁ ⊑ c₃ :=
-  ⟨⟨fun l p a h => h₂.1.1 l p a (h₁.1.1 l p a h), fun l v h => h₂.1.2 l v (h₁.1.2 l v h)⟩,
+  ⟨fun l p a h => h₂.1 l p a (h₁.1 l p a h),
     fun x a h => h₂.2.1 x a (h₁.2.1 x a h),
-    fun l a h => h₂.2.2.1 l a (h₁.2.2.1 l a h),
-    fun a h => h₂.2.2.2.1 a (h₁.2.2.2.1 a h),
-    fun a h => h₂.2.2.2.2 a (h₁.2.2.2.2 a h)⟩
+    fun l v h => h₂.2.2.1 l v (h₁.2.2.1 l v h),
+    fun l a h => h₂.2.2.2.1 l a (h₁.2.2.2.1 l a h),
+    fun a h => h₂.2.2.2.2.1 a (h₁.2.2.2.2.1 a h),
+    fun a h => h₂.2.2.2.2.2 a (h₁.2.2.2.2.2 a h)⟩
 
 theorem AConf.bot_le (c : AConf) : AConf.bot ⊑ c :=
-  ⟨⟨fun _ _ _ h => h.elim, fun _ _ h => h.elim⟩, fun _ _ h => h.elim, fun _ _ h => h.elim,
+  ⟨fun _ _ _ h => h.elim, fun _ _ h => h.elim, fun _ _ h => h.elim, fun _ _ h => h.elim,
     fun _ h => h.elim, fun _ h => h.elim⟩
 
 /-! ## Monotonicity of the abstract operations -/
@@ -58,8 +59,8 @@ theorem VSet.mem_join {V₁ V₂ : VSet} {v : Val} :
     (VSet.join V₁ V₂).Mem v ↔ V₁.Mem v ∨ V₂.Mem v := by
   cases V₁ <;> cases V₂ <;> simp [VSet.join, VSet.Mem]
 
-theorem aevalE_mono [Abstract] {ρ ρ' : ASto} (hρ : ρ ⊑ ρ') (e : Expr) :
-    aevalE ρ e ⊆ aevalE ρ' e := by
+theorem aevalE_mono [Abstract] {ρₐ ρₐ' : ASto} (hρ : ρₐ ⊑ ρₐ') (e : Expr) :
+    ⟦e⟧ρₐ ⊆ ⟦e⟧ρₐ' := by
   cases e with
   | val v => exact fun _ h => h
   | var x => exact hρ x
@@ -70,13 +71,13 @@ def ListLe : List ALocSet → List ALocSet → Prop
   | L :: Ls, L' :: Ls' => L ⊆ L' ∧ ListLe Ls Ls'
   | _,       _         => False
 
-theorem aevalEs_mono [Abstract] {ρ ρ' : ASto} (hρ : ρ ⊑ ρ') :
-    ∀ es : List Expr, ListLe (aevalEs ρ es) (aevalEs ρ' es)
+theorem aevalEs_mono [Abstract] {ρₐ ρₐ' : ASto} (hρ : ρₐ ⊑ ρₐ') :
+    ∀ es : List Expr, ListLe ⟦es⟧ρₐ ⟦es⟧ρₐ'
   | []      => trivial
   | e :: es => ⟨aevalE_mono hρ e, aevalEs_mono hρ es⟩
 
-theorem ASto.upd_mono {ρ ρ' : ASto} (hρ : ρ ⊑ ρ') (x : Var) {L L' : ALocSet} (hL : L ⊆ L') :
-    ρ.upd x L ⊑ ρ'.upd x L' := by
+theorem ASto.upd_mono {ρₐ ρₐ' : ASto} (hρ : ρₐ ⊑ ρₐ') (x : Var) {L L' : ALocSet} (hL : L ⊆ L') :
+    ρₐ.upd x L ⊑ ρₐ'.upd x L' := by
   intro y
   by_cases e : y = x
   · simp only [ASto.upd, e, if_pos]; exact hL
@@ -91,77 +92,77 @@ theorem ASto.ofParams_mono :
   | _ :: _,  [],      _ :: _,   h => h.elim
   | _ :: _,  _ :: _,  [],       h => h.elim
 
-theorem AHeap.valOf_mono {h h' : AHeap} (hh : h ⊑ h') {L L' : ALocSet} (hL : L ⊆ L') :
-    h.valOf L ⊑ h'.valOf L' := by
+theorem AReg.valOf_mono {δₐ δₐ' : AReg} (hδ : δₐ ⊑ δₐ') {L L' : ALocSet} (hL : L ⊆ L') :
+    δₐ.valOf L ⊑ δₐ'.valOf L' := by
   rintro v ⟨l, hl, hv⟩
-  exact ⟨l, hL l hl, hh.2 l v hv⟩
+  exact ⟨l, hL l hl, hδ.1 l v hv⟩
 
-theorem AHeap.objOf_mono {h h' : AHeap} (hh : h ⊑ h') {L L' : ALocSet} (hL : L ⊆ L')
-    (p : PropName) : h.objOf L p ⊆ h'.objOf L' p := by
+theorem AHeap.objOf_mono {hₐ hₐ' : AHeap} (hh : hₐ ⊑ hₐ') {L L' : ALocSet} (hL : L ⊆ L')
+    (p : PropName) : hₐ.objOf L p ⊆ hₐ'.objOf L' p := by
   rintro a ⟨l, hl, ha⟩
-  exact ⟨l, hL l hl, hh.1 l p a ha⟩
+  exact ⟨l, hL l hl, hh l p a ha⟩
 
 theorem VSet.HasKey.mono {V V' : VSet} {q : PropName} (h : V.HasKey q) (hV : V ⊑ V') :
     V'.HasKey q :=
   let ⟨v, hv, hk⟩ := h; ⟨v, hV v hv, hk⟩
 
-theorem AHeap.objOfV_mono {h h' : AHeap} (hh : h ⊑ h') {L L' : ALocSet} (hL : L ⊆ L')
-    {V V' : VSet} (hV : V ⊑ V') : h.objOfV L V ⊆ h'.objOfV L' V' := by
+theorem AHeap.objOfV_mono {hₐ hₐ' : AHeap} (hh : hₐ ⊑ hₐ') {L L' : ALocSet} (hL : L ⊆ L')
+    {V V' : VSet} (hV : V ⊑ V') : hₐ.objOfV L V ⊆ hₐ'.objOfV L' V' := by
   rintro a ⟨l, p, hl, hp, ha⟩
-  exact ⟨l, p, hL l hl, hp.mono hV, hh.1 l p a ha⟩
+  exact ⟨l, p, hL l hl, hp.mono hV, hh l p a ha⟩
 
-theorem AReg.depOf_mono {δ δ' : AReg} (hδ : δ ⊑ δ') {L L' : ALocSet} (hL : L ⊆ L') :
-    δ.depOf L ⊆ δ'.depOf L' := by
+theorem AReg.depOf_mono {δₐ δₐ' : AReg} (hδ : δₐ ⊑ δₐ') {L L' : ALocSet} (hL : L ⊆ L') :
+    δₐ.depOf L ⊆ δₐ'.depOf L' := by
   rintro a ⟨l, hl, ha⟩
-  exact ⟨l, hL l hl, hδ.1 l a ha⟩
+  exact ⟨l, hL l hl, hδ.2.1 l a ha⟩
 
-theorem AHeap.weakSetVal_mono {h h' : AHeap} (hh : h ⊑ h') (l : ALoc) {V V' : VSet}
-    (hV : V ⊑ V') : h.weakSetVal l V ⊑ h'.weakSetVal l V' := by
-  refine ⟨hh.1, fun a v hv => ?_⟩
-  by_cases e : a = l
-  · simp only [AHeap.weakSetVal, e, if_pos] at hv ⊢
+theorem AReg.weakSetVal_mono {δₐ δₐ' : AReg} (hδ : δₐ ⊑ δₐ') (lₐ : ALoc) {V V' : VSet}
+    (hV : V ⊑ V') : δₐ.weakSetVal lₐ V ⊑ δₐ'.weakSetVal lₐ V' := by
+  refine ⟨fun a v hv => ?_, hδ.2⟩
+  by_cases e : a = lₐ
+  · simp only [AReg.weakSetVal, e, if_pos] at hv ⊢
     rcases VSet.mem_join.1 hv with hv | hv
     · exact VSet.mem_join.2 (Or.inl (hV v hv))
-    · exact VSet.mem_join.2 (Or.inr (hh.2 _ v hv))
-  · simp only [AHeap.weakSetVal, e, if_neg, not_false_eq_true] at hv ⊢
-    exact hh.2 a v hv
+    · exact VSet.mem_join.2 (Or.inr (hδ.1 _ v hv))
+  · simp only [AReg.weakSetVal, e, if_neg, not_false_eq_true] at hv ⊢
+    exact hδ.1 a v hv
 
-theorem AHeap.weakSetObj_mono {h h' : AHeap} (hh : h ⊑ h') {L L' : ALocSet} (hL : L ⊆ L')
+theorem AHeap.weakSetObj_mono {hₐ hₐ' : AHeap} (hh : hₐ ⊑ hₐ') {L L' : ALocSet} (hL : L ⊆ L')
     (p : PropName) {L₂ L₂' : ALocSet} (hL₂ : L₂ ⊆ L₂') :
-    h.weakSetObj L p L₂ ⊑ h'.weakSetObj L' p L₂' := by
-  refine ⟨fun a q b hab => ?_, hh.2⟩
+    hₐ.weakSetObj L p L₂ ⊑ hₐ'.weakSetObj L' p L₂' := by
+  intro a q b hab
   rcases hab with hab | ⟨ha, hq, hb⟩
-  · exact Or.inl (hh.1 a q b hab)
+  · exact Or.inl (hh a q b hab)
   · exact Or.inr ⟨hL a ha, hq, hL₂ b hb⟩
 
-theorem AHeap.weakSetObjV_mono {h h' : AHeap} (hh : h ⊑ h') {L L' : ALocSet} (hL : L ⊆ L')
+theorem AHeap.weakSetObjV_mono {hₐ hₐ' : AHeap} (hh : hₐ ⊑ hₐ') {L L' : ALocSet} (hL : L ⊆ L')
     {V V' : VSet} (hV : V ⊑ V') {L₂ L₂' : ALocSet} (hL₂ : L₂ ⊆ L₂') :
-    h.weakSetObjV L V L₂ ⊑ h'.weakSetObjV L' V' L₂' := by
-  refine ⟨fun a q b hab => ?_, hh.2⟩
+    hₐ.weakSetObjV L V L₂ ⊑ hₐ'.weakSetObjV L' V' L₂' := by
+  intro a q b hab
   rcases hab with hab | ⟨ha, hq, hb⟩
-  · exact Or.inl (hh.1 a q b hab)
+  · exact Or.inl (hh a q b hab)
   · exact Or.inr ⟨hL a ha, hq.mono hV, hL₂ b hb⟩
 
-theorem AHeap.weakSetObjs_mono (l : ALoc) :
-    ∀ (ps : List PropName) {h h' : AHeap} {Ls Ls' : List ALocSet}, h ⊑ h' → ListLe Ls Ls' →
-      h.weakSetObjs l (ps.zip Ls) ⊑ h'.weakSetObjs l (ps.zip Ls')
+theorem AHeap.weakSetObjs_mono (lₐ : ALoc) :
+    ∀ (ps : List PropName) {hₐ hₐ' : AHeap} {Ls Ls' : List ALocSet}, hₐ ⊑ hₐ' → ListLe Ls Ls' →
+      hₐ.weakSetObjs lₐ (ps.zip Ls) ⊑ hₐ'.weakSetObjs lₐ (ps.zip Ls')
   | [],      _, _, _,      _,       hh, _ => hh
   | _ :: _,  _, _, [],     [],      hh, _ => hh
   | p :: ps, _, _, _ :: _, _ :: _,  hh, hL =>
-      AHeap.weakSetObjs_mono l ps (AHeap.weakSetObj_mono hh (fun _ h => h) p hL.1) hL.2
+      AHeap.weakSetObjs_mono lₐ ps (AHeap.weakSetObj_mono hh (fun _ h => h) p hL.1) hL.2
   | _ :: _,  _, _, [],     _ :: _,  _,  hL => hL.elim
   | _ :: _,  _, _, _ :: _, [],      _,  hL => hL.elim
 
-theorem AReg.weakSetDep_mono {δ δ' : AReg} (hδ : δ ⊑ δ') (l : ALoc) {d d' : ALocSet}
-    (hd : d ⊆ d') : δ.weakSetDep l d ⊑ δ'.weakSetDep l d' := by
-  refine ⟨fun a b hab => ?_, hδ.2.1, hδ.2.2⟩
-  by_cases e : a = l
+theorem AReg.weakSetDep_mono {δₐ δₐ' : AReg} (hδ : δₐ ⊑ δₐ') (lₐ : ALoc) {d d' : ALocSet}
+    (hd : d ⊆ d') : δₐ.weakSetDep lₐ d ⊑ δₐ'.weakSetDep lₐ d' := by
+  refine ⟨hδ.1, fun a b hab => ?_, hδ.2.2⟩
+  by_cases e : a = lₐ
   · simp only [AReg.weakSetDep, e, if_pos] at hab ⊢
     rcases hab with hab | hab
     · exact Or.inl (hd b hab)
-    · exact Or.inr (hδ.1 _ b hab)
+    · exact Or.inr (hδ.2.1 _ b hab)
   · simp only [AReg.weakSetDep, e, if_neg, not_false_eq_true] at hab ⊢
-    exact hδ.1 a b hab
+    exact hδ.2.1 a b hab
 
 theorem ALocSet.union_mono {A A' B B' : ALocSet} (hA : A ⊆ A') (hB : B ⊆ B') :
     A ∪ B ⊆ A' ∪ B' := by
@@ -171,7 +172,7 @@ theorem ALocSet.union_mono {A A' B B' : ALocSet} (hA : A ⊆ A') (hB : B ⊆ B')
 
 theorem AConf.Calls_mono [Abstract] {Γ : Env} {e : Expr} {n : Nat} {f : Fid} {c c' : AConf}
     (hc : c ⊑ c') (h : c.Calls Γ e n f) : c'.Calls Γ e n f :=
-  ⟨AHeap.valOf_mono hc.1 (aevalE_mono hc.2.1 e) _ h.1, h.2.1, h.2.2⟩
+  ⟨AReg.valOf_mono hc.2.2 (aevalE_mono hc.2.1 e) _ h.1, h.2.1, h.2.2⟩
 
 /-! ## Monotonicity of the per-statement effects -/
 
@@ -184,33 +185,32 @@ theorem AConf.doAssign_mono [Abstract] (x : Var) (e : Expr) : AMono (AConf.doAss
 theorem AConf.doBinOp_mono [Abstract] (aspec : AbstractSpec) (x : Var) (κ : Idx) (op : BinOp)
     (e₁ e₂ : Expr) : AMono (AConf.doBinOp x κ op e₁ e₂) := by
   intro c c' h
-  have hl : allocA c.heap κ = allocA c'.heap κ := aspec.allocA_site _ _ κ
+  have hl : allocA c.heap c.reg κ = allocA c'.heap c'.reg κ := aspec.allocA_site _ _ _ _ κ
   have hL₁ := aevalE_mono h.2.1 e₁
   have hL₂ := aevalE_mono h.2.1 e₂
   simp only [AConf.doBinOp, hl]
-  refine ⟨AHeap.weakSetVal_mono h.1 _ (aspec.opSemA_mono _ _ _ _ _
-      (AHeap.valOf_mono h.1 hL₁) (AHeap.valOf_mono h.1 hL₂)),
-    ASto.upd_mono h.2.1 x (fun _ h => h), AReg.weakSetDep_mono h.2.2 _ ?_⟩
+  refine ⟨h.1, ASto.upd_mono h.2.1 x (fun _ h => h),
+    AReg.weakSetDep_mono (AReg.weakSetVal_mono h.2.2 _ (aspec.opSemA_mono _ _ _ _ _
+      (AReg.valOf_mono h.2.2 hL₁) (AReg.valOf_mono h.2.2 hL₂))) _ ?_⟩
   exact ALocSet.union_mono (ALocSet.union_mono (ALocSet.union_mono
     (AReg.depOf_mono h.2.2 hL₁) (AReg.depOf_mono h.2.2 hL₂)) hL₁) hL₂
 
 theorem AConf.doObjLit_mono [Abstract] (aspec : AbstractSpec) (x : Var) (κ : Idx)
     (fs : List (PropName × Expr)) : AMono (AConf.doObjLit x κ fs) := by
   intro c c' h
-  have hl : allocA c.heap κ = allocA c'.heap κ := aspec.allocA_site _ _ κ
+  have hl : allocA c.heap c.reg κ = allocA c'.heap c'.reg κ := aspec.allocA_site _ _ _ _ κ
   simp only [AConf.doObjLit, hl]
-  exact ⟨AHeap.weakSetVal_mono (AHeap.weakSetObjs_mono _ _
-      (AHeap.weakSetObj_mono h.1 (fun _ h => h) _ (fun _ h => h)) (aevalEs_mono h.2.1 _))
-      _ (fun _ h => h),
-    ASto.upd_mono h.2.1 x (fun _ h => h), h.2.2⟩
+  exact ⟨AHeap.weakSetObjs_mono _ _
+      (AHeap.weakSetObj_mono h.1 (fun _ h => h) _ (fun _ h => h)) (aevalEs_mono h.2.1 _),
+    ASto.upd_mono h.2.1 x (fun _ h => h), AReg.weakSetVal_mono h.2.2 _ (fun _ h => h)⟩
 
 theorem AConf.doSetTaint_mono [Abstract] (e : Expr) : AMono (AConf.doSetTaint e) :=
-  fun _ _ h => ⟨h.1, h.2.1, h.2.2.1, ALocSet.union_mono (aevalE_mono h.2.1 e) h.2.2.2.1,
-    h.2.2.2.2⟩
+  fun _ _ h => ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1,
+    ALocSet.union_mono (aevalE_mono h.2.1 e) h.2.2.2.2.1, h.2.2.2.2.2⟩
 
 theorem AConf.doSetSink_mono [Abstract] (e : Expr) : AMono (AConf.doSetSink e) :=
-  fun _ _ h => ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1,
-    ALocSet.union_mono (aevalE_mono h.2.1 e) h.2.2.2.2⟩
+  fun _ _ h => ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1, h.2.2.2.2.1,
+    ALocSet.union_mono (aevalE_mono h.2.1 e) h.2.2.2.2.2⟩
 
 theorem AConf.doLookupS_mono [Abstract] (x : Var) (e : Expr) (p : PropName) :
     AMono (AConf.doLookupS x e p) :=
@@ -222,8 +222,8 @@ theorem AConf.doLookupD_mono [Abstract] (x : Var) (e₁ e₂ : Expr) :
     AMono (AConf.doLookupD x e₁ e₂) :=
   fun _ _ h => ⟨h.1, ASto.upd_mono h.2.1 x
     (ALocSet.union_mono (ALocSet.union_mono (AHeap.objOfV_mono h.1 (aevalE_mono h.2.1 e₁)
-      (AHeap.valOf_mono h.1 (aevalE_mono h.2.1 e₂)))
-      (AHeap.objOfV_mono h.1 (fun _ h => h) (AHeap.valOf_mono h.1 (aevalE_mono h.2.1 e₂))))
+      (AReg.valOf_mono h.2.2 (aevalE_mono h.2.1 e₂)))
+      (AHeap.objOfV_mono h.1 (fun _ h => h) (AReg.valOf_mono h.2.2 (aevalE_mono h.2.1 e₂))))
       (fun _ h => h)), h.2.2⟩
 
 theorem AConf.doUpdateS_mono [Abstract] (e₁ : Expr) (p : PropName) (e₂ : Expr) :
@@ -233,7 +233,7 @@ theorem AConf.doUpdateS_mono [Abstract] (e₁ : Expr) (p : PropName) (e₂ : Exp
 
 theorem AConf.doUpdateD_mono [Abstract] (e₁ e₂ e₃ : Expr) : AMono (AConf.doUpdateD e₁ e₂ e₃) :=
   fun _ _ h => ⟨AHeap.weakSetObjV_mono h.1 (aevalE_mono h.2.1 e₁)
-    (AHeap.valOf_mono h.1 (aevalE_mono h.2.1 e₂)) (aevalE_mono h.2.1 e₃), h.2.1, h.2.2⟩
+    (AReg.valOf_mono h.2.2 (aevalE_mono h.2.1 e₂)) (aevalE_mono h.2.1 e₃), h.2.1, h.2.2⟩
 
 theorem AMono.pendingClosed [Abstract] (aspec : AbstractSpec) : PendingClosed AMono where
   id := fun _ _ h => h
@@ -325,47 +325,48 @@ theorem AGraph.lmono [Abstract] (aspec : AbstractSpec) {Γ : Env} {s₀ : Stmt} 
 
 /-- The greatest lower bound of a set of configurations. -/
 def AConf.inf (P : AConf → Prop) : AConf where
-  heap := { obj := fun a p b => ∀ c, P c → c.heap.obj a p b
-            val := fun a => .vals (fun v => ∀ c, P c → (c.heap.val a).Mem v) }
+  heap := { obj := fun a p b => ∀ c, P c → c.heap.obj a p b }
   sto  := fun x a => ∀ c, P c → c.sto x a
-  reg  := { dep := fun a b => ∀ c, P c → c.reg.dep a b
+  reg  := { val := fun a => .vals (fun v => ∀ c, P c → (c.reg.val a).Mem v)
+            dep := fun a b => ∀ c, P c → c.reg.dep a b
             ac  := fun a => ∀ c, P c → c.reg.ac a
             sk  := fun a => ∀ c, P c → c.reg.sk a }
 
 theorem AConf.inf_le {P : AConf → Prop} {c : AConf} (hc : P c) : AConf.inf P ⊑ c :=
-  ⟨⟨fun _ _ _ h => h c hc, fun _ _ h => h c hc⟩, fun _ _ h => h c hc, fun _ _ h => h c hc,
+  ⟨fun _ _ _ h => h c hc, fun _ _ h => h c hc, fun _ _ h => h c hc, fun _ _ h => h c hc,
     fun _ h => h c hc, fun _ h => h c hc⟩
 
 theorem AConf.le_inf {P : AConf → Prop} {d : AConf} (h : ∀ c, P c → d ⊑ c) :
     d ⊑ AConf.inf P :=
-  ⟨⟨fun a p b hd c hc => (h c hc).1.1 a p b hd, fun a v hd c hc => (h c hc).1.2 a v hd⟩,
+  ⟨fun a p b hd c hc => (h c hc).1 a p b hd,
     fun x a hd c hc => (h c hc).2.1 x a hd,
-    fun a b hd c hc => (h c hc).2.2.1 a b hd,
-    fun a hd c hc => (h c hc).2.2.2.1 a hd,
-    fun a hd c hc => (h c hc).2.2.2.2 a hd⟩
+    fun a v hd c hc => (h c hc).2.2.1 a v hd,
+    fun a b hd c hc => (h c hc).2.2.2.1 a b hd,
+    fun a hd c hc => (h c hc).2.2.2.2.1 a hd,
+    fun a hd c hc => (h c hc).2.2.2.2.2 a hd⟩
 
 /-- The least upper bound of a set of configurations. -/
 def AConf.sup (P : AConf → Prop) : AConf where
-  heap := { obj := fun a p b => ∃ c, P c ∧ c.heap.obj a p b
-            val := fun a => .vals (fun v => ∃ c, P c ∧ (c.heap.val a).Mem v) }
+  heap := { obj := fun a p b => ∃ c, P c ∧ c.heap.obj a p b }
   sto  := fun x a => ∃ c, P c ∧ c.sto x a
-  reg  := { dep := fun a b => ∃ c, P c ∧ c.reg.dep a b
+  reg  := { val := fun a => .vals (fun v => ∃ c, P c ∧ (c.reg.val a).Mem v)
+            dep := fun a b => ∃ c, P c ∧ c.reg.dep a b
             ac  := fun a => ∃ c, P c ∧ c.reg.ac a
             sk  := fun a => ∃ c, P c ∧ c.reg.sk a }
 
 theorem AConf.le_sup {P : AConf → Prop} {c : AConf} (hc : P c) : c ⊑ AConf.sup P :=
-  ⟨⟨fun _ _ _ h => ⟨c, hc, h⟩, fun _ _ h => ⟨c, hc, h⟩⟩, fun _ _ h => ⟨c, hc, h⟩,
+  ⟨fun _ _ _ h => ⟨c, hc, h⟩, fun _ _ h => ⟨c, hc, h⟩, fun _ _ h => ⟨c, hc, h⟩,
     fun _ _ h => ⟨c, hc, h⟩, fun _ h => ⟨c, hc, h⟩, fun _ h => ⟨c, hc, h⟩⟩
 
 theorem AConf.sup_le {P : AConf → Prop} {d : AConf} (h : ∀ c, P c → c ⊑ d) :
     AConf.sup P ⊑ d := by
-  refine ⟨⟨?_, ?_⟩, ?_, ?_, ?_, ?_⟩
-  · rintro a p b ⟨c, hc, hb⟩; exact (h c hc).1.1 a p b hb
-  · rintro a v ⟨c, hc, hv⟩; exact (h c hc).1.2 a v hv
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rintro a p b ⟨c, hc, hb⟩; exact (h c hc).1 a p b hb
   · rintro x a ⟨c, hc, ha⟩; exact (h c hc).2.1 x a ha
-  · rintro a b ⟨c, hc, hb⟩; exact (h c hc).2.2.1 a b hb
-  · rintro a ⟨c, hc, ha⟩; exact (h c hc).2.2.2.1 a ha
-  · rintro a ⟨c, hc, ha⟩; exact (h c hc).2.2.2.2 a ha
+  · rintro a v ⟨c, hc, hv⟩; exact (h c hc).2.2.1 a v hv
+  · rintro a b ⟨c, hc, hb⟩; exact (h c hc).2.2.2.1 a b hb
+  · rintro a ⟨c, hc, ha⟩; exact (h c hc).2.2.2.2.1 a ha
+  · rintro a ⟨c, hc, ha⟩; exact (h c hc).2.2.2.2.2 a ha
 
 /-! ## The least analysis result -/
 
@@ -479,20 +480,22 @@ theorem Labeling.kleene_stable [Abstract] (aspec : AbstractSpec) {Γ : Env} {s�
 
 /-- `c` with every value that would break `AConf.FidReserved` removed. -/
 def AConf.restrictFid [Abstract] (c : AConf) : AConf where
-  heap :=
-    { obj := c.heap.obj
-      val := fun a =>
-        .vals (fun v => (c.heap.val a).Mem v ∧ ∀ f, a = litLocA (.fid f) → v = .fid f) }
+  heap := c.heap
   sto := c.sto
-  reg := c.reg
+  reg :=
+    { val := fun a =>
+        .vals (fun v => (c.reg.val a).Mem v ∧ ∀ f, a = litLocA (.fid f) → v = .fid f)
+      dep := c.reg.dep
+      ac  := c.reg.ac
+      sk  := c.reg.sk }
 
 theorem AConf.restrictFid_le [Abstract] (c : AConf) : c.restrictFid ⊑ c :=
-  ⟨⟨fun _ _ _ h => h, fun _ _ h => h.1⟩, fun _ _ h => h, fun _ _ h => h, fun _ h => h,
+  ⟨fun _ _ _ h => h, fun _ _ h => h, fun _ _ h => h.1, fun _ _ h => h, fun _ h => h,
     fun _ h => h⟩
 
 theorem AConf.le_restrictFid [Abstract] {c d : AConf} (h : c ⊑ d) (hc : c.FidReserved) :
     c ⊑ d.restrictFid :=
-  ⟨⟨h.1.1, fun a v hv => ⟨h.1.2 a v hv, fun f ha => hc f v (ha ▸ hv)⟩⟩, h.2.1, h.2.2⟩
+  ⟨h.1, h.2.1, fun a v hv => ⟨h.2.2.1 a v hv, fun f ha => hc f v (ha ▸ hv)⟩, h.2.2.2⟩
 
 theorem AConf.restrictFid_fidReserved [Abstract] (c : AConf) : c.restrictFid.FidReserved :=
   fun f _ hv => hv.2 f rfl
@@ -512,7 +515,7 @@ theorem Labeling.least_fidReserved [Abstract] (aspec : AbstractSpec) (Γ : Env) 
         (he.fidReserved aspec hL'res)
     · exact AConf.le_restrictFid hleast.2 (AConf.FidReserved.init aspec Γ s₀)
   intro f v hv
-  exact (hL'res st) f v ((Labeling.least_le hres st).1.2 _ v hv)
+  exact (hL'res st) f v ((Labeling.least_le hres st).2.2.1 _ v hv)
 
 /-! ## Reserved analysis results
 

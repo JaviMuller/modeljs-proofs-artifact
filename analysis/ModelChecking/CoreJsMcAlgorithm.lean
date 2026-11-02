@@ -210,11 +210,11 @@ end search
 section correct
 
 variable {P : FinTSys A} {c : QComp} {dom : ADom A V Φ} {tr : Tracker A V} {𝔄 : Abs A V Φ}
-  {φ : Φ} {good : List (QAct MVar) → Prop}
+  {δₐ : Φ} {good : List (QAct MVar) → Prop}
 
 /-- Every reachable search state is reached along a walk, read by `c` under
     every assignment it still allows, and its tracker summarises the walk. -/
-theorem reach_sound (hdom : dom.Spec 𝔄 φ good)
+theorem reach_sound (hdom : dom.Spec 𝔄 δₐ good)
     (hgood : ∀ s as s', (s, .act as, s') ∈ c.edges → good as) {st : MSt P dom tr}
     (h : Reach (mcSucc P c dom tr) (mcInit P c dom tr) st) :
     ∃ T, P.toTSys.Walk P.init T st.1 ∧
@@ -237,20 +237,20 @@ theorem reach_sound (hdom : dom.Spec 𝔄 φ good)
 /-- Conversely, a walk read by `c` under `ξ`, ending in a state whose
     invariants `ξ` may satisfy, is followed by the search keeping `ξ`, the
     tracker summarising the whole walk. -/
-theorem reach_complete (hdom : dom.Spec 𝔄 φ good)
+theorem reach_complete (hdom : dom.Spec 𝔄 δₐ good)
     (hgood : ∀ s as s', (s, .act as, s') ∈ c.edges → good as) (hm : c.Mono) (ξ : MVar → V) :
     ∀ {p : P.toTSys.St} {T : List A} {p' : P.toTSys.St}, P.toTSys.Walk p T p' →
       ∀ {q q' : QSt} {d : dom.D} {T₀ : List A},
         Reach (mcSucc P c dom tr) (mcInit P c dom tr) (p, q, d, tr.run T₀) →
         dom.mem d ξ → LRun c.edges (𝔄.Fires ξ) q T q' →
-        (∀ J ∈ c.inv q', 𝔄.inv φ ξ true J = true) →
+        (∀ J ∈ c.inv q', 𝔄.inv δₐ ξ true J = true) →
         ∃ d', Reach (mcSucc P c dom tr) (mcInit P c dom tr) (p', q', d', tr.run (T₀ ++ T)) ∧
           dom.mem d' ξ := by
   -- `ε`-steps of the component, the program staying put.
   have epsOnly : ∀ {p : P.St} {q q' : QSt} {d : dom.D} {τ : tr.T} {w : List A},
       Reach (mcSucc P c dom tr) (mcInit P c dom tr) (p, q, d, τ) → dom.mem d ξ →
       LRun c.edges (𝔄.Fires ξ) q w q' → w = [] →
-      (∀ J ∈ c.inv q', 𝔄.inv φ ξ true J = true) →
+      (∀ J ∈ c.inv q', 𝔄.inv δₐ ξ true J = true) →
       ∃ d', Reach (mcSucc P c dom tr) (mcInit P c dom tr) (p, q', d', τ) ∧ dom.mem d' ξ := by
     intro p q q' d τ w hr hd hrun hw hinv
     induction hrun generalizing d with
@@ -264,7 +264,7 @@ theorem reach_complete (hdom : dom.Spec 𝔄 φ good)
       {T : List A},
       Reach (mcSucc P c dom tr) (mcInit P c dom tr) (p, q, d, τ) → dom.mem d ξ →
       (some a, p₁) ∈ P.succ p → LRun c.edges (𝔄.Fires ξ) q w q' → w = a :: T →
-      (∀ J ∈ c.inv q', 𝔄.inv φ ξ true J = true) →
+      (∀ J ∈ c.inv q', 𝔄.inv δₐ ξ true J = true) →
       ∃ q₁ d₁, Reach (mcSucc P c dom tr) (mcInit P c dom tr) (p₁, q₁, d₁, tr.step τ a) ∧
         dom.mem d₁ ξ ∧ LRun c.edges (𝔄.Fires ξ) q₁ T q' := by
     intro p p₁ a q q' d τ w T hr hd hp hrun hw hinv
@@ -296,18 +296,19 @@ theorem reach_complete (hdom : dom.Spec 𝔄 φ good)
     simpa using ih hr₁ hd₁ hrun₁ hinv
 
 /-- The `except` check passes iff no component of `exc q` must accept. -/
-theorem excOk_iff {M : QModel} (htr : tr.Spec 𝔄 φ M) {q : QSt} {T : List A} {ξ : MVar → V} :
-    excOk M.main tr q (tr.run T) ξ = true ↔ ∀ k ∈ M.main.exc q, ¬ M.AExcl 𝔄 φ T k ξ := by
+theorem excOk_iff {M : QModel} (htr : tr.Spec 𝔄 δₐ M) {q : QSt} {T : List A} {ξ : MVar → V} :
+    excOk M.main tr q (tr.run T) ξ = true ↔ ∀ k ∈ M.main.exc q, ¬ M.AExcl 𝔄 δₐ T k ξ := by
   simp only [excOk, List.all_eq_true, Bool.not_eq_true', ← htr.excl]
   exact forall₂_congr fun _ _ => by simp
 
 /-- Every witness is an accepting walk and assignment. -/
-theorem mem_witnesses {M : QModel} (hdom : dom.Spec 𝔄 φ good) (htr : tr.Spec 𝔄 φ M)
+theorem mem_witnesses {M : QModel} (hdom : dom.Spec 𝔄 δₐ good) (htr : tr.Spec 𝔄 δₐ M)
     (hgood : ∀ s as s', (s, .act as, s') ∈ M.main.edges → good as) (hc : M.main.Closed) (hD hT)
     {s : P.St} {f : QSt} {ξ : MVar → V} (h : (s, f, ξ) ∈ witnesses P M.main dom tr hc hD hT) :
     ∃ T, P.toTSys.Walk P.init T s ∧ P.final s = true ∧ f ∈ M.main.finals ∧
       LRun M.main.edges (𝔄.Fires ξ) M.main.start T f ∧
-      (∀ J ∈ M.main.inv f, 𝔄.inv φ ξ true J = true) ∧ ∀ k ∈ M.main.exc f, ¬ M.AExcl 𝔄 φ T k ξ := by
+      (∀ J ∈ M.main.inv f, 𝔄.inv δₐ ξ true J = true) ∧
+        ∀ k ∈ M.main.exc f, ¬ M.AExcl 𝔄 δₐ T k ξ := by
   simp only [witnesses, List.mem_filterMap] at h
   obtain ⟨⟨p, q, d, τ⟩, hst, hw⟩ := h
   split at hw
@@ -324,10 +325,10 @@ theorem mem_witnesses {M : QModel} (hdom : dom.Spec 𝔄 φ good) (htr : tr.Spec
 
 /-- **Exactness.** The search finds a witness iff the abstract semantics
     holds. -/
-theorem witnesses_ne_nil_iff {M : QModel} (hdom : dom.Spec 𝔄 φ good) (htr : tr.Spec 𝔄 φ M)
+theorem witnesses_ne_nil_iff {M : QModel} (hdom : dom.Spec 𝔄 δₐ good) (htr : tr.Spec 𝔄 δₐ M)
     (hgood : ∀ s as s', (s, .act as, s') ∈ M.main.edges → good as) (hc : M.main.Closed)
     (hm : M.main.Mono) (hD hT) :
-    witnesses P M.main dom tr hc hD hT ≠ [] ↔ M.ASat P.toTSys 𝔄 φ := by
+    witnesses P M.main dom tr hc hD hT ≠ [] ↔ M.ASat P.toTSys 𝔄 δₐ := by
   constructor
   · intro h
     obtain ⟨⟨s, f, ξ⟩, hx⟩ := List.exists_mem_of_ne_nil _ h
@@ -352,9 +353,9 @@ theorem witnesses_ne_nil_iff {M : QModel} (hdom : dom.Spec 𝔄 φ good) (htr : 
 /-- **Completeness of model checking.** For a well-formed query program, every
     record covered by the abstraction and matching the query yields a witness. -/
 theorem model_check_complete (h𝔄 : 𝔄.Sound) {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ))
-    (hdom : dom.Spec 𝔄 φ good) (htr : tr.Spec 𝔄 φ (q.toQModel Δ))
+    (hdom : dom.Spec 𝔄 δₐ good) (htr : tr.Spec 𝔄 δₐ (q.toQModel Δ))
     (hgood : ∀ s as s', (s, .act as, s') ∈ (q.toQModel Δ).main.edges → good as) (hD hT)
-    {R : Exec → Prop} (hcov : Covers P.toTSys 𝔄 φ R) {e : Exec} (he : R e) {ls : List Loc}
+    {R : Exec → Prop} (hcov : Covers P.toTSys 𝔄 δₐ R) {e : Exec} (he : R e) {ls : List Loc}
     (hlen : ls.length = q.params.length) (hmatch : Exec.Matches (q :: Δ) e q.name ls) :
     witnesses P (q.toQModel Δ).main dom tr (Query.toQModel_wf hwf).1 hD hT ≠ [] :=
   (witnesses_ne_nil_iff hdom htr hgood _ (Query.toQModel_wf hwf).2.1 hD hT).2
@@ -368,16 +369,16 @@ end correct
     the model's labels, and trackers enumerating the `except` components'
     variables. -/
 theorem model_check_complete_enum [DecidableEq V] [Inhabited V] {P : FinTSys A}
-    {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) (S : 𝔄.Sep) {φ : Φ} {vals : List V}
+    {𝔄 : Abs A V Φ} (h𝔄 : 𝔄.Sound) (S : 𝔄.Sep) {δₐ : Φ} {vals : List V}
     (hvals : ∀ v, v ∈ vals) {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ))
-    {R : Exec → Prop} (hcov : Covers P.toTSys 𝔄 φ R) {e : Exec} (he : R e) {ls : List Loc}
+    {R : Exec → Prop} (hcov : Covers P.toTSys 𝔄 δₐ R) {e : Exec} (he : R e) {ls : List Loc}
     (hlen : ls.length = q.params.length) (hmatch : Exec.Matches (q :: Δ) e q.name ls) :
-    witnesses P (q.toQModel Δ).main (nonrel vals (q.toQModel Δ).main.labelVars 𝔄 φ S)
-      (enumTracker 𝔄 φ (q.toQModel Δ) vals (q.toQModel Δ).compVars)
-      (Query.toQModel_wf hwf).1 (nonrel_spec vals _ 𝔄 φ S h𝔄 hvals).finite
+    witnesses P (q.toQModel Δ).main (nonrel vals (q.toQModel Δ).main.labelVars 𝔄 δₐ S)
+      (enumTracker 𝔄 δₐ (q.toQModel Δ) vals (q.toQModel Δ).compVars)
+      (Query.toQModel_wf hwf).1 (nonrel_spec vals _ 𝔄 δₐ S h𝔄 hvals).finite
       (enumTracker_spec h𝔄 hvals (fun c hc => ((Query.toQModel_wf hwf).2.2 c hc).1)
         QModel.compVars_labels QModel.compVars_inv).finite ≠ [] :=
-  model_check_complete h𝔄 hwf (nonrel_spec vals _ 𝔄 φ S h𝔄 hvals)
+  model_check_complete h𝔄 hwf (nonrel_spec vals _ 𝔄 δₐ S h𝔄 hvals)
     (enumTracker_spec h𝔄 hvals (fun c hc => ((Query.toQModel_wf hwf).2.2 c hc).1)
       QModel.compVars_labels QModel.compVars_inv)
     (QComp.labelVars_good _) _ _ hcov he hlen hmatch

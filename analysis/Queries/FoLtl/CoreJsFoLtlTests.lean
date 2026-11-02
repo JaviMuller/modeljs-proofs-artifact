@@ -29,7 +29,7 @@ theorem link_eTaint : Runs pTaint fun r =>
     ∀ l, (Exec.ofRes r).obs.sk l ↔ eTaint.obs.sk l := by
   run refine ⟨rfl, fun l => ?_⟩
       have h204 : Concrete.litLoc (Val.fid "sink") = 204 := rfl
-      simp +decide [Exec.ofRes, Obs.ofRun, eTaint, Reg.empty, Reg.setDep, h204]
+      simp +decide [Exec.ofRes, Obs.ofRun, eTaint, Reg.init, Reg.setDep, Reg.setVal, h204]
 
 def ξt : Var → Loc := fun v => if v = "f" then 204 else if v = "x" then 1100 else 0
 

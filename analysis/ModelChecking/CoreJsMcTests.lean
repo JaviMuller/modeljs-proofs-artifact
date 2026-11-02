@@ -60,15 +60,15 @@ def tsep : QAct MVar → TAct → Option (List (MVar × (TV → Bool)))
   | .retn xf x,  .ret f L   => some [(xf, fun v => v == some f), (x, inL L)]
   | _,           _          => none
 
-def tmay (φ : TFacts) (ξ : MVar → TV) : Pred MVar → Bool
+def tmay (δₐ : TFacts) (ξ : MVar → TV) : Pred MVar → Bool
   | .ac x      => match ξ x with
-    | some l => φ.ac.contains l || φ.ac.any fun l' => φ.dep.contains (l, l')
+    | some l => δₐ.ac.contains l || δₐ.ac.any fun l' => δₐ.dep.contains (l, l')
     | none   => false
   | .dep x y   => match ξ x, ξ y with
-    | some a, some b => φ.dep.contains (a, b)
+    | some a, some b => δₐ.dep.contains (a, b)
     | _,      _      => false
   | .sk x      => match ξ x with
-    | some l => φ.sk.contains l
+    | some l => δₐ.sk.contains l
     | none   => false
   | .sv _ _    => true
   | .hv _ _    => true
@@ -130,17 +130,17 @@ def prog : FinTSys TAct where
 
 def vals : List TV := [none, some 0, some 1, some 2, some 3]
 
-/-- Model checking `q`, invoking queries of `Δ`, against `P` with facts `φ`. -/
-def checkIn (P : FinTSys TAct) (q : Query) (Δ : QProg) (hwf : QProg.WF (q :: Δ)) (φ : TFacts) :
+/-- Model checking `q`, invoking queries of `Δ`, against `P` with facts `δₐ`. -/
+def checkIn (P : FinTSys TAct) (q : Query) (Δ : QProg) (hwf : QProg.WF (q :: Δ)) (δₐ : TFacts) :
     List (P.St × QSt × (MVar → TV)) :=
-  witnesses P (q.toQModel Δ).main (nonrel vals (q.toQModel Δ).main.labelVars tAbs φ tSep)
-    (enumTracker tAbs φ (q.toQModel Δ) vals (q.toQModel Δ).compVars)
-    (Query.toQModel_wf hwf).1 (nonrel_finite vals _ tAbs φ tSep)
+  witnesses P (q.toQModel Δ).main (nonrel vals (q.toQModel Δ).main.labelVars tAbs δₐ tSep)
+    (enumTracker tAbs δₐ (q.toQModel Δ) vals (q.toQModel Δ).compVars)
+    (Query.toQModel_wf hwf).1 (nonrel_finite vals _ tAbs δₐ tSep)
     enumTracker_finite
 
-/-- Model checking `q` (without invocations) against `prog` with facts `φ`. -/
-def check (q : Query) (hwf : QProg.WF [q]) (φ : TFacts) : List (Nat × QSt × (MVar → TV)) :=
-  checkIn prog q [] hwf φ
+/-- Model checking `q` (without invocations) against `prog` with facts `δₐ`. -/
+def check (q : Query) (hwf : QProg.WF [q]) (δₐ : TFacts) : List (Nat × QSt × (MVar → TV)) :=
+  checkIn prog q [] hwf δₐ
 
 /-! ## The reported issue: `z` occurs only in the invariant -/
 
@@ -155,20 +155,20 @@ theorem qIssue_wf : QProg.WF [qIssue] :=
   ⟨⟨⟨by decide, by decide⟩, by simp [Query.CallsOK, QBody.calls, qIssue, Pat.calls]⟩, rfl, trivial⟩
 
 /-- `1` and `2` both depend on the tainted `3`. -/
-def φGood : TFacts := { dep := [(1, 3), (2, 3)], ac := [3], sk := [] }
+def δₐGood : TFacts := { dep := [(1, 3), (2, 3)], ac := [3], sk := [] }
 /-- Nothing is tainted. -/
-def φNoTaint : TFacts := { dep := [(1, 3), (2, 3)], ac := [], sk := [] }
+def δₐNoTaint : TFacts := { dep := [(1, 3), (2, 3)], ac := [], sk := [] }
 /-- `2` depends on nothing. -/
-def φNoDep : TFacts := { dep := [(1, 3)], ac := [3], sk := [] }
+def δₐNoDep : TFacts := { dep := [(1, 3)], ac := [3], sk := [] }
 
 -- A witness, with `z` bound to the tainted location both arguments depend on.
-#guard (check qIssue qIssue_wf φGood).any fun w =>
+#guard (check qIssue qIssue_wf δₐGood).any fun w =>
   w.2.2 (.src "f") == some 0 && w.2.2 (.src "x") == some 1 && w.2.2 (.src "y") == some 2 &&
     w.2.2 (.src "z") == some 3
 -- No tainted location: `z` has no possible value, no witness.
-#guard (check qIssue qIssue_wf φNoTaint).isEmpty
+#guard (check qIssue qIssue_wf δₐNoTaint).isEmpty
 -- `y` depends on nothing: no `z` satisfies `dep(y, z)`, no witness.
-#guard (check qIssue qIssue_wf φNoDep).isEmpty
+#guard (check qIssue qIssue_wf δₐNoDep).isEmpty
 
 /-! ## `∃z. ac(z)`, with `z` in no action -/
 
@@ -179,8 +179,8 @@ def qSomeTaint : Query :=
 theorem qSomeTaint_wf : QProg.WF [qSomeTaint] :=
   ⟨⟨⟨by decide, by decide⟩, by simp [Query.CallsOK, QBody.calls, qSomeTaint, Pat.calls]⟩, rfl, trivial⟩
 
-#guard !(check qSomeTaint qSomeTaint_wf φGood).isEmpty
-#guard (check qSomeTaint qSomeTaint_wf φNoTaint).isEmpty
+#guard !(check qSomeTaint qSomeTaint_wf δₐGood).isEmpty
+#guard (check qSomeTaint qSomeTaint_wf δₐNoTaint).isEmpty
 
 /-! ## `except`, checked along the walk by the trackers
 
@@ -243,15 +243,15 @@ def progLoop : FinTSys TAct where
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
     rcases hs with rfl | rfl <;> simp at he <;> rcases he with rfl | rfl <;> decide⟩
 
-def φNone : TFacts := { dep := [], ac := [], sk := [] }
+def δₐNone : TFacts := { dep := [], ac := [], sk := [] }
 
 -- Without the `except`, `R` matches the program.
-#guard !(checkIn progMust qRpos [] qRpos_wf φNone).isEmpty
+#guard !(checkIn progMust qRpos [] qRpos_wf δₐNone).isEmpty
 -- The call certainly happened: the `except` excludes every walk.
-#guard (checkIn progMust qR [qC] qR_wf φNone).isEmpty
+#guard (checkIn progMust qR [qC] qR_wf δₐNone).isEmpty
 -- The call only may have happened (to `1` or `3`): no exclusion.
-#guard !(checkIn progMay qR [qC] qR_wf φNone).isEmpty
+#guard !(checkIn progMay qR [qC] qR_wf δₐNone).isEmpty
 -- The walk skipping the loop is a witness, with `f = 0`.
-#guard (checkIn progLoop qR [qC] qR_wf φNone).any fun w => w.2.2 (.src "f") == some 0
+#guard (checkIn progLoop qR [qC] qR_wf δₐNone).any fun w => w.2.2 (.src "f") == some 0
 
 end CoreJS.McTests

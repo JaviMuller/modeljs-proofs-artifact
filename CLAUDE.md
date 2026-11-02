@@ -105,15 +105,26 @@ sit on top of the concrete semantics, and meet only in `CoreJsMcInstance`.
    `Act`, `Out`), the `Concrete` typeclass (`litLoc`, `allocC`, `opSem`),
    `ConcreteSpec` (what a sensible concrete instance looks like: injective
    literal locations, fresh allocation, no allocation at literal locations, no
-   operator producing a function), `Heap.WF`, the big-step judgement
-   `BigStep`, and `BigStepN`, a derivation-height-indexed copy needed because
+   operator producing a function), `Reg.WF`, the big-step judgement
+   `BigStep`, written as in the paper, `Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c ⟨h', ρ', δ', t, o⟩`
+   (scoped notation; `Γ ⊢ ⟨c, s⟩ ⇓c r` when the configuration is one term
+   `c : Conf`; keep new statements in this notation), and `BigStepN`
+   (`Γ ⊢ ⟨h, ρ, δ, s⟩ ⇓c[n] r`), a derivation-height-indexed copy needed because
    `BigStep` lives in `Prop` and has no recursor to induct on height, while
    the automaton soundness proof's `while` case needs the induction
    hypothesis several derivation levels down (`BigStep.toN`/
    `BigStepN.toBigStep` transport between the two; if you add a concrete
    rule, add the matching `BigStepN` constructor and extend `mono`/
-   `mono_le`/`toN`/`toBigStep`). An object's location holds the object's
-   reference value `.loc l` (object references are values: `sv` compares
+   `mono_le`/`toN`/`toBigStep`). The heap holds only object properties
+   (`Heap = ⟨obj⟩`); the value stored at each location lives in the taint
+   register, `Reg = ⟨val, dep, ac, sk⟩`, which thus has exactly the fields
+   of an observation `Obs`. The *memory* of a configuration is the pair
+   `⟨h, δ⟩`: the allocator sees both (`allocC h δ κ`), and `Heap.Free`/
+   `Heap.Finite`/`Heap.Defined` take both (`h.Finite δ`). The abstract side
+   mirrors this (`AHeap = ⟨obj⟩`, `AReg.val`, `AReg.valOf`,
+   `allocA h δ κ`, the `val` clause in `Reg.Alpha`). An object's location
+   holds the object's reference value `.loc l` (object references are
+   values: `sv` compares
    them, operators accept them; and an empty object's location is in use, so
    it is never allocated again). Prototypes are modelled to depth
    one: `Object.prototype` is the literal location of the marker value
@@ -124,29 +135,32 @@ sit on top of the concrete semantics, and meet only in `CoreJsMcInstance`.
    keys are converted to property names as in JS (`Val.toKey`: `a[undefined]`
    is `a["undefined"]`); an object reference or function as a key may denote
    *any* property (`Val.KeyOf`, as `model-js`'s `Dynamic`; abstractly
-   `VSet.HasKey`). Also here: heap facts preserved along runs
+   `VSet.HasKey`). Also here: memory facts preserved along runs
    (`Heap.Finite`/`BigStep.finite`, `Heap.Defined` and its per-update lemmas,
-   `Heap.FidCanon`/`BigStep.fidCanon`: function values live only at their
-   literal locations), and the minimal initial configuration (`Reg.empty`,
-   `Heap.init Γ fs s`/`Conf.init Γ fs s`: the literals of `s` and of the
-   bodies of the functions `fs` — normally all of `Γ`'s, listed so the heap
-   stays computable — plus `undefined`; `Heap.init_WF`, `Heap.init_finite`).
-   - **`ConcreteSpec.allocC_fresh` only applies to finite heaps.** Demanding
-     freshness of *every* heap made the spec unsatisfiable (a heap defined at
-     every location has no free one), so anything assuming it was vacuous.
-     Proofs using freshness therefore need `Heap.Finite` of the current heap;
-     `BigStep.finite` propagates it along a run.
+   `Reg.FidCanon`/`BigStep.fidCanon`: function values live only at their
+   literal locations), and the minimal initial configuration
+   (`Conf.init Γ fs s = ⟨Heap.empty, Sto.empty, Reg.init Γ fs s⟩`;
+   `Reg.init` holds the literals of `s` and of the bodies of the functions
+   `fs` — normally all of `Γ`'s, listed so the register stays computable —
+   plus `undefined`, and no taint; `Reg.init_WF`, `Reg.init_finite`).
+   - **`ConcreteSpec.allocC_fresh` only applies to finite memories.**
+     Demanding freshness of *every* memory made the spec unsatisfiable (one
+     defined at every location has no free one), so anything assuming it was
+     vacuous. Proofs using freshness therefore need `Heap.Finite` of the
+     current memory; `BigStep.finite` propagates it along a run.
    - **Execution records** `Exec = ⟨trc, obs⟩`, `Obs = ⟨val, dep, ac, sk⟩`,
      `Trc.toList`, `Obs.ofRun`, `Obs.WF` also live here, not in
      `CoreJsQuerySemantics.lean`, even though the query language is their
-     first consumer: they are built entirely from `Trc`/`Heap`/`Reg` (no
+     first consumer: they are built entirely from `Trc`/`Reg` (no
      dependency on the query syntax), and both `CoreJsQuerySemantics.lean`
      and `CoreJsFoLtl.lean` need them independently. The same goes for the
-     record of a concrete run, `Exec.ofRes`, and its well-formedness:
+     record of a concrete run, `Exec.ofRes` (its observation is
+     `Obs.ofRun` of the final register: field by field, except that `ac` is
+     closed under reverse dependency), and its well-formedness:
      `Reg.DepInv` (transitive `dep`, every dependency target holds a value),
      `BigStep.depInv`, and `BigStep.obs_wf` / `obs_wf_empty` / `obs_wf_init`
      (a run yields a well-formed observation; needs `ConcreteSpec` and a
-     finite starting heap), at the end of the file.
+     finite starting memory), at the end of the file.
 
 ### The automaton-based analysis
 
@@ -182,6 +196,28 @@ sit on top of the concrete semantics, and meet only in `CoreJsMcInstance`.
    and the initial abstraction `AlphaFn.lits`. Spec structures are organised
    by meaning: a property of the concrete instance alone goes in
    `ConcreteSpec` even if only the analysis uses it.
+   - **Naming follows the paper.** Concrete `h`, `ρ`, `δ`, `t`, `l`; their
+     abstract counterparts (written with a hat in the paper) are `hₐ`,
+     `ρₐ`, `δₐ`, `tₐ`, `lₐ` — Lean identifiers cannot carry a combining hat
+     (`ĥ` alone exists precomposed, so it is not used either, for
+     uniformity). `cₐ` is an abstract configuration, `aₐ` an abstract
+     action; the same names are used in `CoreJsAutomatonSemantics.lean`/
+     `CoreJsAutomatonTotality.lean` binders and for the model checker's
+     facts. Keep `δ'` for the *final* register, as in the paper's rules.
+   - **Paper notation for the relations and evaluation.** `x ∼α xₐ` for every
+     abstraction relation (`AlphaFn.MapsInto`, `Heap`/`Sto`/`Reg`/`AConf`/
+     `Act`/`Trc.Alpha`, `LocsAlpha`, `ActsAlpha`), and `⟦e⟧ρ`/`⟦e⟧ρₐ` for
+     `evalE`/`aevalE` and `⟦es⟧ρ`/`⟦es⟧ρₐ` for `evalEs`/`aevalEs` (scoped).
+     Both notations are overloaded, so the types must be known where they
+     are used: type the binders of statements using them
+     (`{h : Heap} {hₐ : AHeap}`, not `{h hₐ}`; the `BigStep`/`BigStepN`
+     rules type their expression binders, `{e₁ e₂ : Expr}`, `{es : List Expr}`,
+     splitting binder groups in place so the positional `@rule …` patterns
+     in proofs keep their order). A recursive definition cannot use its own
+     notation (declared after it): `LocsAlpha`/`ActsAlpha`/`evalEs`/
+     `aevalEs` call themselves by name. Inside
+     `CoreJS`, core's bare `⟦x⟧` (`Quotient.mk`) is shadowed; nothing here
+     uses quotients.
 6. **`CoreJsAutomatonTotality.lean`** — monotonicity of every edge
    contribution in the labeling (`AGraph.lmono`), arbitrary meets/joins of
    configurations, the least analysis result `Labeling.least` (the meet of
@@ -198,7 +234,7 @@ sit on top of the concrete semantics, and meet only in `CoreJsMcInstance`.
    `AnalysisResult`), `sound_least` (against the least one), and
    `SpecModel.satisfiable` (the specs are jointly satisfiable, so none of
    this is vacuous). `step_sound` threads, besides `α`-relatedness: `hsub`
-   (the current statement's edges are graph edges), heap finiteness,
+   (the current statement's edges are graph edges), memory finiteness,
    `AllocSafe`, and `FidCanon`.
 
 The concrete and abstract judgements are kept in lockstep: each abstract edge
@@ -210,28 +246,30 @@ the end of `CoreJsAutomatonSemantics.lean`.
 
 ### The query language
 
-8. **`CoreJsQuerySyntax.lean`** — `Query Q(x⃗) { ∃y⃗: F₁ when I except F₂ }`:
+8. **`CoreJsQuerySyntax.lean`** — `Query Q(xs) { ∃ ys: F₁ when I except F₂ }`:
    `Pred`, `Inv`, `QAct` (generic in the variable type, default `Var`, with
    renaming `map`s: the query model instantiates them with its own
    variables), `Pat`, `QBody` (fields `locals`/`pattern`/`when`/`except`),
-   `Query`, and the well-formedness predicates `Query.WF`/`QProg.WF` (all variables declared in `x⃗ ∪ y⃗`,
+   `Query`, and the well-formedness predicates `Query.WF`/`QProg.WF` (all variables declared in `xs ∪ ys`,
    arities match, no duplicates, callees only *later* in the program list).
    The semantics does *not* assume either. There is no range restriction:
    a local occurring in no action (`∃y. hv(y, 3)`) ranges over all locations.
 9. **`CoreJsQuerySemantics.lean`** — the satisfaction relations in interval
-   form `t, σ, ξ ⊨ F : i ⇝ j` (`Pat.Sat`/`QBody.Sat`), over execution
+   form `t, δ, ξ ⊨ F : i ⇝ j` (`Pat.Sat`/`QBody.Sat`), over execution
    records `Exec`/`Obs` (defined in `CoreJsSemantics.lean` — see its entry
-   above for why). Statements and rules are written in the paper's notation,
-   as scoped Lean notation (table in the file header): `Θ ⬝ t ⬝ σ ⬝ ξ ⊨ F : i ⇝ j`
+   above for why; an observation is named `δ`, as the paper's record
+   `(t, δ)`). Statements and rules are written in the paper's notation,
+   as scoped Lean notation (table in the file header): `Θ ⬝ t ⬝ δ ⬝ ξ ⊨ F : i ⇝ j`
    (`Pat.Sat`, `QBody.Sat`; `Δ ⬝ …` for `QProg.Sat`, the paper's
-   `Δ, t, σ, ξ ⊨ F : i ⇝ j`) and `σ ⬝ ξ ⊨ I` (`Inv.Sat`/`Pred.Sat`). Keep new
+   `t, δ, ξ ⊨ F : i ⇝ j`) and `δ ⬝ ξ ⊨ I` (`Inv.Sat`/`Pred.Sat`). Keep new
    statements in this notation.
-   - The one systematic change from the paper: `⬝` everywhere for the paper's
+   - Two systematic changes from the paper: `⬝` everywhere for the paper's
      `,` (a term followed by `,` — or `;`, `·` — breaks tuples, `⟨…, …⟩` and
-     tactic blocks). The paper has no `⊢`: the program is the first
-     argument of the list, and `Θ` (its interpretation) takes its place.
+     tactic blocks), and the queries invocations refer to, implicit in the
+     paper, are an explicit first argument: the program `Δ`, or `Θ` (its
+     interpretation) in its place.
    - One notation stands for several relations; the types of `Θ`/`Δ` and
-     `F`/`P` pick one, so binders must be typed (`{Θ t σ ξ F i j}` is
+     `F`/`P` pick one, so binders must be typed (`{Θ t δ ξ F i j}` is
      ambiguous; use the `variable`s of the file's sections).
    - The notations are declared *before* the inductive/recursive definitions
      they name (`set_option hygiene false in`) so the defining rules use
@@ -244,18 +282,19 @@ the end of `CoreJsAutomatonSemantics.lean`.
    - `F₁ & F₂ : i ⇝ j` needs both sides matched from `i`, `j = max j₁ j₂`; one
      action may serve both sides (`a & a ≡ a`).
    - `except F'` is checked over the **whole trace** (`F'` matched from `0`, for
-     every end point `k`), for nested queries as well as the top-level one, so a
+     every end point `k ≤ |t|`, as in the paper's Fig. 6; the bound is
+     redundant, `Pat.not_sat_zero_iff`), for nested queries as well as the top-level one, so a
      guard does not depend on where its query starts. It only constrains the
      query body it belongs to: under `Q ‖ F`, a failing `except` inside `Q`
      just rules out that alternative. Position independence is what the FO-LTL
      translation relies on.
-   - `dep(x₁,x₂)` is plain membership `ξ x₂ ∈ σ.dep (ξ x₁)` — no closure in the
+   - `dep(x₁,x₂)` is plain membership `ξ x₂ ∈ δ.dep (ξ x₁)` — no closure in the
      semantics; transitivity of `dep` and reverse-closure of `ac` are the
      `Obs.WF` predicate. `sv` requires both values *defined* and equal.
    - `Exec.Matches` matches from boundary `0`; `Exec.Matches.of_interp`
      (via `Pat.Sat.lower_start`: starting earlier never forces finishing later)
      shows this loses no generality.
-   - Invocation `Q(z⃗)` runs `Q`'s body under `[xᵢ ↦ ξ(zᵢ)]` (valuation
+   - Invocation `Q(zs)` runs `Q`'s body under `[xᵢ ↦ ξ(zᵢ)]` (valuation
      passing, equivalent to capture-free substitution; locals of `Q` are private).
    - Queries live in a **list** (`QProg`) and invocation is resolved by
      structural recursion (`QProg.interp`); `Pat.Sat` takes an interpretation
@@ -306,7 +345,7 @@ the end of `CoreJsAutomatonSemantics.lean`.
       translate queries' `except` (checked over the whole trace) without rewriting into
       any normal form. `atStart φ` then behaves like a state atom itself
       (`sat_atStart_indep`).
-    - Action atoms are predicates of the state; state atoms read only `σ` and hold at
+    - Action atoms are predicates of the state; state atoms read only `δ` and hold at
       every boundary or none (`G p ≡ p ≡ F p`, `sat_G_state`).
     - "Multiple actions cannot happen at the same time": `Model.Excl`,
       `Exec.toModel_excl`, and the finite first-order axiomatisation `Ltl.excl v shapes`
@@ -344,8 +383,8 @@ the end of `CoreJsAutomatonSemantics.lean`.
       `Query.trStr` renders the result (`Ltl.toStr` in `CoreJsFoLtl.lean`, fresh tags as
       `#k`); the `computed` section `#guard`s the formulas for example queries — update
       those strings deliberately if the translation changes.
-    - A query body `∃y⃗: F when I except F'` translates to
-      `∃y⃗: I ∧ atStart(¬ tr(F',⊤)) ∧ tr(F,K)`, written *in place* at the invocation — this
+    - A query body `∃ ys: F when I except F'` translates to
+      `∃ ys: I ∧ atStart(¬ tr(F',⊤)) ∧ tr(F,K)`, written *in place* at the invocation — this
       is exactly why `except` has whole-trace semantics and why `Ltl.atStart` exists:
       both are needed together to make the `&` rule
       (`tr(F₁&F₂,K) = tr(F₁,K) ∧ tr(F₂,K)`) exact without hoisting into any normal form.
@@ -448,8 +487,9 @@ trackers) are done.
     `QComp.Mono`. Trackers are deterministic in the labels
     (`reach_sound`: `τ = tr.run T`), which is why progress loses nothing.
 22. **`CoreJsMcInstance.lean`** — the program automaton labeled by an analysis
-    result as `autTSys`/`autAbs` (values `Option ALoc`, facts `topFacts` = join
-    of the top-level final configurations, `must`/`mustA`/`inhab` never
+    result as `autTSys`/`autAbs` (values `Option ALoc`, facts an abstract
+    register `δₐ`: `topFacts` = join of the registers of the top-level final
+    configurations, `must`/`mustA`/`inhab` never
     true, so `except`s never exclude there), `aut_covers` (from `sound_top`),
     `aut_asat`, `Covers.of_walks` (to move to a finite presentation).
     Must-matching on function identity would need `α` to map only
@@ -473,6 +513,18 @@ trackers) are done.
     that can be skipped keeps its witness).
 
 ## Lean gotchas hit in this repository
+
+- **No combining characters, in code or comments.** The artifact is browsed
+  on anonymous.4open.science, whose code view uses JetBrains Mono from
+  Google Fonts; every math symbol comes from the browser's fallback font.
+  Standalone symbols (`⟨ ⟦ ⊢ ⇓ ∼ ⬝ ₐ 𝔄 …`) render, but a combining mark
+  (the paper's vector arrow U+20D7 or hat U+0302 over a letter) makes Chrome
+  on Windows draw it *and its neighbours* as boxes (the list evaluation
+  written with an arrow over `e` showed as box-e-box-box-ρ). Write sequences
+  in the plural, as the
+  code names them (`xs`, `ys`, `ls`, `es`), and the paper's hatted objects by
+  their Lean names (`ρₐ`, `ALoc`, `opSemA`). Check with
+  `grep -rnP '\p{M}' analysis` (must be empty).
 
 - **`omega` cannot reason about `=`/`≠` on `Loc`** (an `abbrev` for `Nat`); it
   handles `≤`/`<`. Convert with explicit `Nat` lemmas (`Nat.ne_of_gt`,

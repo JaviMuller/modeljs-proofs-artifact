@@ -4,7 +4,7 @@
   Standard first-order linear temporal logic (FO-LTL) over *finite* traces —
   with both future (`X`, `U`) and past (`Y`, `S`) operators, formulas freely
   interleaving them (no restriction to any normal form) — together with the
-  materialisation of an execution record `⟨t, σ⟩` (`Exec`/`Obs`, defined in
+  materialisation of an execution record `⟨t, δ⟩` (`Exec`/`Obs`, defined in
   `CoreJsSemantics.lean` since this file needs nothing else from the query
   language) as a model of it.
 
@@ -48,7 +48,7 @@
   * **Action atoms** are predicates of the state: `lookup(x₁,x₂,x₃)` holds at
     `p` iff the action at `p` is the lookup of the locations the variables
     denote.  **State atoms** (`sk`, `ac`, `dep`, `sv`, `hv`, `=`) read only the
-    static part `σ` of the model, so they hold at every boundary or at none:
+    static part `δ` of the model, so they hold at every boundary or at none:
     `G p ≡ p ≡ F p` (`sat_G_state`).
   * Multiple actions cannot happen at the same time: `Model.Excl`, and its
     first-order axiomatisation over a finite set of action shapes
@@ -242,7 +242,7 @@ in the ordinary sense — a domain of individuals `Loc`, and interpretations for
 the sentinel, which action symbols hold there). -/
 
 /-- A finite FO-LTL model: the actions that hold in each of the `n` states, and
-    the static part `σ` interpreting the state predicates. -/
+    the static part `δ` interpreting the state predicates. -/
 structure Model where
   states : List (Act → Prop)
   obs    : Obs

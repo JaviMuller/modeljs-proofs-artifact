@@ -45,7 +45,7 @@ namespace CoreJS
 /-! ## Finitely many abstract values -/
 
 /-- An abstract location of `locs`, or `•` (`none`). -/
-abbrev FV (locs : List ALoc) := {v : Option ALoc // ∀ al, v = some al → al ∈ locs}
+abbrev FV (locs : List ALoc) := {v : Option ALoc // ∀ lₐ, v = some lₐ → lₐ ∈ locs}
 
 /-- `•`. -/
 def FV.none (locs : List ALoc) : FV locs := ⟨Option.none, fun _ h => by cases h⟩
@@ -53,8 +53,8 @@ def FV.none (locs : List ALoc) : FV locs := ⟨Option.none, fun _ h => by cases 
 instance (locs : List ALoc) : Inhabited (FV locs) := ⟨FV.none locs⟩
 
 /-- The collapse: a location of `locs` stays itself, any other becomes `•`. -/
-def FV.cl (locs : List ALoc) (al : ALoc) : FV locs :=
-  if h : al ∈ locs then ⟨some al, fun _ e => Option.some.inj e ▸ h⟩ else FV.none locs
+def FV.cl (locs : List ALoc) (lₐ : ALoc) : FV locs :=
+  if h : lₐ ∈ locs then ⟨some lₐ, fun _ e => Option.some.inj e ▸ h⟩ else FV.none locs
 
 /-- Every value. -/
 def FV.all (locs : List ALoc) : List (FV locs) :=
@@ -62,7 +62,8 @@ def FV.all (locs : List ALoc) : List (FV locs) :=
 
 theorem FV.mem_all (locs : List ALoc) : ∀ v : FV locs, v ∈ FV.all locs
   | ⟨Option.none, _⟩ => List.mem_cons_self ..
-  | ⟨some al, h⟩ => List.mem_cons_of_mem _ (List.mem_map.2 ⟨⟨al, h al rfl⟩, List.mem_attach .., rfl⟩)
+  | ⟨some lₐ, h⟩ =>
+      List.mem_cons_of_mem _ (List.mem_map.2 ⟨⟨lₐ, h lₐ rfl⟩, List.mem_attach .., rfl⟩)
 
 /-! ## Location-list actions and finite facts -/
 
@@ -95,12 +96,12 @@ def FActAlpha (α : Loc → V) : Act → FAct V → Prop
   | _,                _                => False
 
 /-- A concrete observation abstracted by finite facts, under `α`. -/
-def FFactsAlpha (α : Loc → V) (σ : Obs) (φ : FFacts V) : Prop :=
-  (∀ l₁ l₂, σ.dep l₁ l₂ → φ.dep (α l₁) (α l₂) = true) ∧
-  (∀ l, σ.ac l → φ.ac (α l) = true) ∧
-  (∀ l, σ.sk l → φ.sk (α l) = true) ∧
-  (∀ l v, σ.val l = some v → φ.hv (α l) v = true) ∧
-  (∀ l₁ l₂ v, σ.val l₁ = some v → σ.val l₂ = some v → φ.sv (α l₁) (α l₂) = true)
+def FFactsAlpha (α : Loc → V) (δ : Obs) (δₐ : FFacts V) : Prop :=
+  (∀ l₁ l₂, δ.dep l₁ l₂ → δₐ.dep (α l₁) (α l₂) = true) ∧
+  (∀ l, δ.ac l → δₐ.ac (α l) = true) ∧
+  (∀ l, δ.sk l → δₐ.sk (α l) = true) ∧
+  (∀ l v, δ.val l = some v → δₐ.hv (α l) v = true) ∧
+  (∀ l₁ l₂ v, δ.val l₁ = some v → δ.val l₂ = some v → δₐ.sv (α l₁) (α l₂) = true)
 
 /-! ### Matching, as constraints on single variables -/
 
@@ -161,12 +162,12 @@ def FMatch (ξ : MVar → V) (b : QAct MVar) (B : FAct V) : Bool :=
   | some cs => cs.all fun c => c.2 (ξ c.1)
 
 /-- Predicates read off the tables. -/
-def FMay (φ : FFacts V) (ξ : MVar → V) : Pred MVar → Bool
-  | .sk x      => φ.sk (ξ x)
-  | .ac x      => φ.ac (ξ x)
-  | .dep x₁ x₂ => φ.dep (ξ x₁) (ξ x₂)
-  | .sv x₁ x₂  => φ.sv (ξ x₁) (ξ x₂)
-  | .hv x c    => φ.hv (ξ x) c
+def FMay (δₐ : FFacts V) (ξ : MVar → V) : Pred MVar → Bool
+  | .sk x      => δₐ.sk (ξ x)
+  | .ac x      => δₐ.ac (ξ x)
+  | .dep x₁ x₂ => δₐ.dep (ξ x₁) (ξ x₂)
+  | .sv x₁ x₂  => δₐ.sv (ξ x₁) (ξ x₂)
+  | .hv x c    => δₐ.hv (ξ x) c
 
 /-- The abstraction by location-list actions and finite facts.  Nothing is
     certain: `must`, `mustA` and `inhab` are never true. -/
@@ -193,9 +194,9 @@ theorem listAbs_sound : (listAbs : Abs (FAct V) V (FFacts V)).Sound where
       simp only [Function.comp, hB.1, decide_true, Bool.true_and, List.all_eq_true]
       exact h
     · simp [fsep, hB.1, hB.2]
-  may α σ φ ξ p hf hp := by
+  may α δ δₐ ξ p hf hp := by
     obtain ⟨hdep, hac, hsk, hhv, hsv⟩ := hf
-    show FMay φ (α ∘ ξ) p = true
+    show FMay δₐ (α ∘ ξ) p = true
     cases p with
     | sk x => exact hsk _ hp
     | ac x => exact hac _ hp
@@ -203,8 +204,8 @@ theorem listAbs_sound : (listAbs : Abs (FAct V) V (FFacts V)).Sound where
     | sv x₁ x₂ => obtain ⟨v, h₁, h₂⟩ := hp; exact hsv _ _ v h₁ h₂
     | hv x c => exact hhv _ _ hp
   must _ _ _ _ _ _ h := by simp [listAbs] at h
-  may_congr φ ξ ξ' p h := by
-    show FMay φ ξ p = FMay φ ξ' p
+  may_congr δₐ ξ ξ' p h := by
+    show FMay δₐ ξ p = FMay δₐ ξ' p
     cases p <;> simp only [Pred.vars, List.mem_cons, List.not_mem_nil, or_false,
       forall_eq_or_imp, forall_eq] at h <;> simp only [FMay, h]
   must_congr _ _ _ _ _ := rfl
@@ -246,7 +247,7 @@ section over
 variable {V : Type} (col : ALoc → V)
 
 /-- The collapsed elements of a location set all lie in the list. -/
-def SetOver (L : ALocSet) (M : List V) : Prop := ∀ al, L al → col al ∈ M
+def SetOver (L : ALocSet) (M : List V) : Prop := ∀ lₐ, L lₐ → col lₐ ∈ M
 
 /-- The location-list action contains the automaton's action, collapsed by
     `col`. -/
@@ -259,31 +260,31 @@ def FAct.Over : AAct → FAct V → Prop
 
 /-- The finite facts contain the abstract configuration's, collapsed by
     `col`. -/
-def FFacts.Over (φf : FFacts V) (φ : AConf) : Prop :=
-  (∀ a₁ a₂, φ.reg.dep a₁ a₂ → φf.dep (col a₁) (col a₂) = true) ∧
-  (∀ al, (φ.reg.ac al ∨ ∃ al', φ.reg.ac al' ∧ φ.reg.dep al al') → φf.ac (col al) = true) ∧
-  (∀ al, φ.reg.sk al → φf.sk (col al) = true) ∧
-  (∀ al v, (φ.heap.val al).Mem v → φf.hv (col al) v = true) ∧
-  (∀ a₁ a₂ v, (φ.heap.val a₁).Mem v → (φ.heap.val a₂).Mem v → φf.sv (col a₁) (col a₂) = true)
+def FFacts.Over (δₐf : FFacts V) (δₐ : AReg) : Prop :=
+  (∀ a₁ a₂, δₐ.dep a₁ a₂ → δₐf.dep (col a₁) (col a₂) = true) ∧
+  (∀ lₐ, (δₐ.ac lₐ ∨ ∃ lₐ', δₐ.ac lₐ' ∧ δₐ.dep lₐ lₐ') → δₐf.ac (col lₐ) = true) ∧
+  (∀ lₐ, δₐ.sk lₐ → δₐf.sk (col lₐ) = true) ∧
+  (∀ lₐ v, (δₐ.val lₐ).Mem v → δₐf.hv (col lₐ) v = true) ∧
+  (∀ a₁ a₂ v, (δₐ.val a₁).Mem v → (δₐ.val a₂).Mem v → δₐf.sv (col a₁) (col a₂) = true)
 
 /-- `α` collapsed: `d` where `α` maps nothing. -/
 def colAlpha (d : V) (α : AlphaFn) : Loc → V := fun l => (α l).elim d col
 
 variable {col}
 
-theorem colAlpha_some {d : V} {α : AlphaFn} {l : Loc} {al : ALoc} (h : α l = some al) :
-    colAlpha col d α l = col al := by
+theorem colAlpha_some {d : V} {α : AlphaFn} {l : Loc} {lₐ : ALoc} (h : α l = some lₐ) :
+    colAlpha col d α l = col lₐ := by
   simp [colAlpha, h]
 
 theorem pointwise_over {d : V} {α : AlphaFn} :
-    ∀ {ls : List Loc} {Ls : List ALocSet} {Ms : List (List V)}, LocsAlpha α ls Ls →
+    ∀ {ls : List Loc} {Ls : List ALocSet} {Ms : List (List V)}, ls ∼α Ls →
       Pointwise (SetOver col) Ls Ms → Pointwise (fun l M => colAlpha col d α l ∈ M) ls Ms
   | [], [], [], _, _ => trivial
-  | _ :: _, _ :: _, _ :: _, ⟨⟨al, hal, hL⟩, h⟩, ⟨hM, h'⟩ =>
-      ⟨show colAlpha col d α _ ∈ _ by rw [colAlpha_some hal]; exact hM al hL, pointwise_over h h'⟩
+  | _ :: _, _ :: _, _ :: _, ⟨⟨lₐ, hlₐ, hL⟩, h⟩, ⟨hM, h'⟩ =>
+      ⟨show colAlpha col d α _ ∈ _ by rw [colAlpha_some hlₐ]; exact hM lₐ hL, pointwise_over h h'⟩
 
 theorem act_over {d : V} {α : AlphaFn} :
-    ∀ {c : Act} {A : AAct} {F : FAct V}, Act.Alpha α c A → FAct.Over col A F →
+    ∀ {c : Act} {A : AAct} {F : FAct V}, c ∼α A → FAct.Over col A F →
       FActAlpha (colAlpha col d α) c F
   | .lookup _ _ _, .lookup _ _ _, .lookup _ _ _, ⟨⟨a₁, h₁, m₁⟩, ⟨a₂, h₂, m₂⟩, ⟨a₃, h₃, m₃⟩⟩,
       ⟨o₁, o₂, o₃⟩ =>
@@ -293,8 +294,8 @@ theorem act_over {d : V} {α : AlphaFn} :
     ⟨(by rw [colAlpha_some h₁]; exact o₁ _ m₁), (by rw [colAlpha_some h₂]; exact o₂ _ m₂), (by rw [colAlpha_some h₃]; exact o₃ _ m₃)⟩
   | .call _ _, .call _ _, .call _ _, ⟨hf, hs⟩, ⟨of, os⟩ =>
     ⟨(colAlpha_some hf).trans of, pointwise_over hs os⟩
-  | .ret _ _, .ret _ _, .ret _ _, ⟨hf, ⟨al, hal, hL⟩⟩, ⟨of, os⟩ =>
-    ⟨(colAlpha_some hf).trans of, (by rw [colAlpha_some hal]; exact os _ hL)⟩
+  | .ret _ _, .ret _ _, .ret _ _, ⟨hf, ⟨lₐ, hlₐ, hL⟩⟩, ⟨of, os⟩ =>
+    ⟨(colAlpha_some hf).trans of, (by rw [colAlpha_some hlₐ]; exact os _ hL)⟩
   | .lookup .., .lookup .., .update .., _, h => h.elim
   | .lookup .., .lookup .., .call .., _, h => h.elim
   | .lookup .., .lookup .., .ret .., _, h => h.elim
@@ -308,20 +309,21 @@ theorem act_over {d : V} {α : AlphaFn} :
   | .ret .., .ret .., .update .., _, h => h.elim
   | .ret .., .ret .., .call .., _, h => h.elim
 
-theorem facts_over {d : V} {α : AlphaFn} {σ : Obs} {φ : AConf} {φf : FFacts V}
-    (h : FactsAlpha α σ φ) (ho : FFacts.Over col φf φ) : FFactsAlpha (colAlpha col d α) σ φf := by
+theorem facts_over {d : V} {α : AlphaFn} {δ : Obs} {δₐ : AReg} {δₐf : FFacts V}
+    (h : FactsAlpha α δ δₐ) (ho : FFacts.Over col δₐf δₐ) :
+    FFactsAlpha (colAlpha col d α) δ δₐf := by
   obtain ⟨hval, hdep, hac, hsk⟩ := h
   obtain ⟨odep, oac, osk, ohv, osv⟩ := ho
   refine ⟨fun l₁ l₂ hd => ?_, fun l hl => ?_, fun l hl => ?_, fun l v hv => ?_,
     fun l₁ l₂ v h₁ h₂ => ?_⟩
   · obtain ⟨a₁, a₂, h₁, h₂, hd'⟩ := hdep l₁ l₂ hd
     rw [colAlpha_some h₁, colAlpha_some h₂]; exact odep _ _ hd'
-  · obtain ⟨al, hal, h'⟩ := hac l hl
-    rw [colAlpha_some hal]; exact oac _ h'
-  · obtain ⟨al, hal, h'⟩ := hsk l hl
-    rw [colAlpha_some hal]; exact osk _ h'
-  · obtain ⟨al, hal, h'⟩ := hval l v hv
-    rw [colAlpha_some hal]; exact ohv _ _ h'
+  · obtain ⟨lₐ, hlₐ, h'⟩ := hac l hl
+    rw [colAlpha_some hlₐ]; exact oac _ h'
+  · obtain ⟨lₐ, hlₐ, h'⟩ := hsk l hl
+    rw [colAlpha_some hlₐ]; exact osk _ h'
+  · obtain ⟨lₐ, hlₐ, h'⟩ := hval l v hv
+    rw [colAlpha_some hlₐ]; exact ohv _ _ h'
   · obtain ⟨a₁, ha₁, m₁⟩ := hval l₁ v h₁
     obtain ⟨a₂, ha₂, m₂⟩ := hval l₂ v h₂
     rw [colAlpha_some ha₁, colAlpha_some ha₂]; exact osv _ _ _ m₁ m₂
@@ -335,18 +337,18 @@ theorem Pointwise.trans {α β γ : Type} {R₁ : α → β → Prop} {R₂ : β
 
 /-- **Coverage moves to a finite form**: a finite trace system with a
     complete walk, with containing labels, for each complete walk of `S`, and
-    finite facts containing `φ`. -/
-theorem Covers.of_finite [DecidableEq V] {S : TSys AAct} {P : FinTSys (FAct V)} {d : V} {φ : AConf}
-    {φf : FFacts V} {R : Exec → Prop}
+    finite facts containing `δₐ`. -/
+theorem Covers.of_finite [DecidableEq V] {S : TSys AAct} {P : FinTSys (FAct V)} {d : V} {δₐ : AReg}
+    {δₐf : FFacts V} {R : Exec → Prop}
     (hw : ∀ T s, S.Walk S.init T s → S.final s →
       ∃ Tf s', P.toTSys.Walk P.init Tf s' ∧ P.final s' = true ∧ Pointwise (FAct.Over col) T Tf)
-    (hφ : FFacts.Over col φf φ) (h : Covers S autAbs φ R) : Covers P.toTSys listAbs φf R := by
+    (hδₐ : FFacts.Over col δₐf δₐ) (h : Covers S autAbs δₐ R) : Covers P.toTSys listAbs δₐf R := by
   intro e he
   obtain ⟨T, s, α, hwalk, hs, hpw, hf⟩ := h e he
   obtain ⟨Tf, s', hw', hs', ho⟩ := hw T s hwalk hs
   exact ⟨Tf, s', colAlpha col d α, hw', hs',
     Pointwise.trans (R₁ := Act.Alpha α) (R₂ := FAct.Over col) (R₃ := FActAlpha (colAlpha col d α)) (fun _ _ _ h₁ h₂ => act_over h₁ h₂) hpw ho,
-    facts_over hf hφ⟩
+    facts_over hf hδₐ⟩
 
 end over
 
@@ -363,11 +365,11 @@ variable [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) (locs : List ALoc)
     final configurations. -/
 structure FinForm where
   P     : FinTSys (FAct (FV locs))
-  φ     : FFacts (FV locs)
+  δₐ     : FFacts (FV locs)
   walks : ∀ T s, (autTSys Γ s₀ L).Walk (autTSys Γ s₀ L).init T s → (autTSys Γ s₀ L).final s →
     ∃ Tf s', P.toTSys.Walk P.init Tf s' ∧ P.final s' = true ∧
       Pointwise (FAct.Over (FV.cl locs)) T Tf
-  facts : FFacts.Over (FV.cl locs) φ (topFacts Γ s₀ L)
+  facts : FFacts.Over (FV.cl locs) δₐ (topFacts Γ s₀ L)
 
 variable {Γ s₀ L locs}
 
@@ -376,8 +378,8 @@ variable {Γ s₀ L locs}
 def FinForm.check (F : FinForm Γ s₀ L locs) (q : Query) (Δ : QProg) (hwf : QProg.WF (q :: Δ)) :
     List (F.P.St × QSt × (MVar → FV locs)) :=
   witnesses F.P (q.toQModel Δ).main
-    (nonrel (FV.all locs) (q.toQModel Δ).main.labelVars listAbs F.φ listSep)
-    (enumTracker listAbs F.φ (q.toQModel Δ) (FV.all locs) (q.toQModel Δ).compVars)
+    (nonrel (FV.all locs) (q.toQModel Δ).main.labelVars listAbs F.δₐ listSep)
+    (enumTracker listAbs F.δₐ (q.toQModel Δ) (FV.all locs) (q.toQModel Δ).compVars)
     (Query.toQModel_wf hwf).1 (nonrel_finite _ _ _ _ _) enumTracker_finite
 
 /-- **Model checking the program is complete.** For any analysis result and
@@ -387,7 +389,7 @@ def FinForm.check (F : FinForm Γ s₀ L locs) (q : Query) (Δ : QProg) (hwf : Q
 theorem FinForm.check_complete [Concrete] (cspec : ConcreteSpec) (xspec : CrossSpec)
     (hres : AnalysisResult Γ s₀ L) (F : FinForm Γ s₀ L locs) {Δ : QProg} {q : Query}
     (hwf : QProg.WF (q :: Δ)) {fs : List Fid} {r : Res}
-    (hrun : BigStep Γ (Conf.init Γ fs s₀) s₀ r) {ls : List Loc}
+    (hrun : Γ ⊢ ⟨Conf.init Γ fs s₀, s₀⟩ ⇓c r) {ls : List Loc}
     (hlen : ls.length = q.params.length) (hm : Exec.Matches (q :: Δ) (Exec.ofRes r) q.name ls) :
     F.check q Δ hwf ≠ [] :=
   model_check_complete_enum listAbs_sound listSep (FV.mem_all locs) hwf
@@ -523,7 +525,7 @@ variable (Γ s₀ L locs ns)
 def FinForm.univ (hns : ∀ f params body, Γ f = some (params, body) → params.length ∈ ns) :
     FinForm Γ s₀ L locs where
   P     := univTSys locs ns
-  φ     := univFacts locs
+  δₐ     := univFacts locs
   walks T _ hw _ := ⟨T.map (univAct locs), (), (univ_walk hns hw).1, rfl, (univ_walk hns hw).2⟩
   facts := ⟨fun _ _ _ => rfl, fun _ _ => rfl, fun _ _ => rfl, fun _ _ _ => rfl, fun _ _ _ _ _ => rfl⟩
 
@@ -536,7 +538,7 @@ theorem check_complete_univ [Concrete] (cspec : ConcreteSpec) (xspec : CrossSpec
     (hres : AnalysisResult Γ s₀ L)
     (hns : ∀ f params body, Γ f = some (params, body) → params.length ∈ ns)
     {Δ : QProg} {q : Query} (hwf : QProg.WF (q :: Δ)) {fs : List Fid} {r : Res}
-    (hrun : BigStep Γ (Conf.init Γ fs s₀) s₀ r) {ls : List Loc}
+    (hrun : Γ ⊢ ⟨Conf.init Γ fs s₀, s₀⟩ ⇓c r) {ls : List Loc}
     (hlen : ls.length = q.params.length) (hm : Exec.Matches (q :: Δ) (Exec.ofRes r) q.name ls) :
     (FinForm.univ (Γ := Γ) (s₀ := s₀) (L := L) (locs := locs) (ns := ns) hns).check q Δ hwf ≠ [] :=
   FinForm.check_complete cspec xspec hres _ hwf hrun hlen hm

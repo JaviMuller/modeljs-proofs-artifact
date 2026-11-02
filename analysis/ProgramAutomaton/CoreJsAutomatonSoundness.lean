@@ -28,11 +28,12 @@
   constructor around the substatement's edges, and recursing into a callee
   starts afresh from `AGraph.body`.
 
-  Besides `α`-relatedness, three facts about the current heap are carried
-  along the run: it is finite (so allocation returns a fresh location), `α`
-  is allocation-safe for it (so `α` can be extended at that location), and
-  function values sit only at their literal locations (so a call's callee
-  location is the one the abstract `call`/`ret` labels name).
+  Besides `α`-relatedness, three facts about the current memory (heap and
+  register values) are carried along the run: it is finite (so allocation
+  returns a fresh location), `α` is allocation-safe for it (so `α` can be
+  extended at that location), and function values sit only at their literal
+  locations (so a call's callee location is the one the abstract
+  `call`/`ret` labels name).
 -/
 
 import ProgramAutomaton.CoreJsAutomatonRelation
@@ -43,15 +44,15 @@ namespace CoreJS
 /-! ## Small helper facts -/
 
 theorem evalEs_length [Concrete] :
-    ∀ {ρ : Sto} {es : List Expr} {ls : List Loc}, evalEs ρ es = some ls →
+    ∀ {ρ : Sto} {es : List Expr} {ls : List Loc}, ⟦es⟧ρ = some ls →
       ls.length = es.length
   | _, [], _, he => by simp only [evalEs, Option.some.injEq] at he; subst he; rfl
   | ρ, e :: es, ls, he => by
       rw [evalEs] at he
-      cases hE : evalE ρ e with
+      cases hE : ⟦e⟧ρ with
       | none => rw [hE] at he; simp at he
       | some l =>
-          cases hEs : evalEs ρ es with
+          cases hEs : ⟦es⟧ρ with
           | none => rw [hE, hEs] at he; simp at he
           | some ls' =>
               rw [hE, hEs] at he
@@ -60,7 +61,7 @@ theorem evalEs_length [Concrete] :
               simp only [List.length_cons, evalEs_length hEs]
 
 theorem aevalEs_length [Abstract] : ∀ (ρ : ASto) (es : List Expr),
-    (aevalEs ρ es).length = es.length
+    (⟦es⟧ρ).length = es.length
   | _, []      => rfl
   | ρ, e :: es => by simp [aevalEs, aevalEs_length ρ es]
 
@@ -68,15 +69,15 @@ theorem aevalEs_length [Abstract] : ∀ (ρ : ASto) (es : List Expr),
     callee's freshly built store relates to the abstract store built the same way, given the
     argument lists are related componentwise. -/
 theorem sto_ofParams_alpha {α : AlphaFn} :
-    ∀ {ls : List Loc} {Ls : List ALocSet}, LocsAlpha α ls Ls →
-      ∀ params : List Var, Sto.Alpha α (Sto.ofParams params ls) (ASto.ofParams params Ls)
+    ∀ {ls : List Loc} {Ls : List ALocSet}, ls ∼α Ls →
+      ∀ params : List Var, Sto.ofParams params ls ∼α ASto.ofParams params Ls
   | [], [], _, params => by
       cases params <;> (intro y l hy; exact absurd hy (by simp [Sto.ofParams, Sto.empty]))
   | l :: ls, L :: Ls, h, params => by
       cases params with
       | nil => intro y l' hy; exact absurd hy (by simp [Sto.ofParams, Sto.empty])
       | cons x xs =>
-          show Sto.Alpha α ((Sto.ofParams xs ls).upd x l) ((ASto.ofParams xs Ls).upd x L)
+          show (Sto.ofParams xs ls).upd x l ∼α (ASto.ofParams xs Ls).upd x L
           exact sto_upd_alpha (sto_ofParams_alpha h.2 xs) h.1
   | [], _ :: _, h, _ => h.elim
   | _ :: _, [], h, _ => h.elim
@@ -92,30 +93,31 @@ attribute [local instance] Classical.propDecidable
     `(cs, entry, pending)`, that started `α`-related to `pending (L entry)` and
     ended in `r`: either `s` continued, to one of its exits `x`, or it
     returned, at one of its `ret`s `rst`. Either way `α` extends to an `α'`,
-    still allocation-safe for the final heap, relating the final configuration
+    still allocation-safe for the final memory, relating the final configuration
     to that state's label, and a walk from `start` reaches that state with a
     trace `α'`-related to the run's. -/
 def SoundRun [Concrete] [Abstract] (Γ : Env) (s₀ : Stmt) (L : Labeling) (cs : CallString)
     (entry : AState) (pending : AConf → AConf) (s : Stmt) (start : AState) (α : AlphaFn)
     (r : Res) : Prop :=
   (∃ x xpending, AExit Γ cs entry pending s x xpending ∧ r.out = .cont ∧
-     ∃ α', α' ≥α α ∧ α'.AllocSafe r.heap ∧
-       AConf.Alpha α' ⟨r.heap, r.sto, r.reg⟩ (xpending (L x)) ∧
-       ∃ acts, AWalk Γ s₀ L start x acts ∧ Trc.Alpha α' r.trc acts) ∨
+     ∃ α', α' ≥α α ∧ α'.AllocSafe r.heap r.reg ∧
+       ⟨r.heap, r.sto, r.reg⟩ ∼α' xpending (L x) ∧
+       ∃ tₐ, AWalk Γ s₀ L start x tₐ ∧ r.trc ∼α' tₐ) ∨
   (∃ rst rpending e l, ARet Γ cs entry pending s rst rpending e ∧ r.out = .ret l ∧
-     ∃ α', α' ≥α α ∧ α'.AllocSafe r.heap ∧
-       AConf.Alpha α' ⟨r.heap, r.sto, r.reg⟩ (rpending (L rst)) ∧
-       α'.MapsInto l (aevalE (rpending (L rst)).sto e) ∧
-       ∃ acts, AWalk Γ s₀ L start rst acts ∧ Trc.Alpha α' r.trc acts)
+     ∃ α', α' ≥α α ∧ α'.AllocSafe r.heap r.reg ∧
+       ⟨r.heap, r.sto, r.reg⟩ ∼α' rpending (L rst) ∧
+       l ∼α' ⟦e⟧(rpending (L rst)).sto ∧
+       ∃ tₐ, AWalk Γ s₀ L start rst tₐ ∧ r.trc ∼α' tₐ)
 
 theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSpec)
     {Γ : Env} {s₀ : Stmt} {L : Labeling} (hvalid : Labeling.Valid Γ s₀ L) :
     ∀ (n : Nat) {cs : CallString} {entry : AState} {pending : AConf → AConf}
       {s : Stmt} {c : Conf} {r : Res} {α : AlphaFn},
-      CallString.WF cs → α.Lits → α.AllocSafe c.heap → c.heap.Finite → c.heap.FidCanon →
+      CallString.WF cs → α.Lits → α.AllocSafe c.heap c.reg → c.heap.Finite c.reg →
+        c.reg.FidCanon →
       (∀ a b C ℓ, AEdge Γ cs entry pending s a b C ℓ → AGraph Γ s₀ a b C ℓ) →
-      BigStepN Γ n c s r →
-      AConf.Alpha α c (pending (L entry)) →
+      Γ ⊢ ⟨c, s⟩ ⇓c[n] r →
+      c ∼α pending (L entry) →
       SoundRun Γ s₀ L cs entry pending s entry α r := by
   intro n
   induction n using Nat.strongRecOn with
@@ -139,28 +141,28 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         refine Or.inl ⟨entry, AConf.doSetTaint e ∘ pending, .setTaint, rfl, α, .refl α, hsafe, ?_,
           [], .nil, trivial⟩
         have hval := eval_alpha hlit hα.2.1 he
-        refine ⟨hα.1, hα.2.1, hα.2.2.1, ?_, hα.2.2.2.2⟩
+        refine ⟨hα.1, hα.2.1, hα.2.2.1, hα.2.2.2.1, ?_, hα.2.2.2.2.2⟩
         intro y hy
         rcases hy with hy | hy
         · subst hy; exact hval.subset (fun _ h => Or.inl h)
-        · exact (hα.2.2.2.1 y hy).subset (fun _ h => Or.inr h)
+        · exact (hα.2.2.2.2.1 y hy).subset (fun _ h => Or.inr h)
     | @setSink _ h ρ δ δ' e l he hδ' =>
         subst hδ'
         refine Or.inl ⟨entry, AConf.doSetSink e ∘ pending, .setSink, rfl, α, .refl α, hsafe, ?_,
           [], .nil, trivial⟩
         have hval := eval_alpha hlit hα.2.1 he
-        refine ⟨hα.1, hα.2.1, hα.2.2.1, hα.2.2.2.1, ?_⟩
+        refine ⟨hα.1, hα.2.1, hα.2.2.1, hα.2.2.2.1, hα.2.2.2.2.1, ?_⟩
         intro y hy
         rcases hy with hy | hy
         · subst hy; exact hval.subset (fun _ h => Or.inl h)
-        · exact (hα.2.2.2.2 y hy).subset (fun _ h => Or.inr h)
+        · exact (hα.2.2.2.2.2 y hy).subset (fun _ h => Or.inr h)
     | @lookupS _ h ρ ρ' δ x κ e p l₁ l₂ he hobj hρ' =>
         subst hρ'
         have hval := eval_alpha hlit hα.2.1 he
         have hmaps : α.MapsInto l₂
-            ((pending (L entry)).heap.lookupS (aevalE (pending (L entry)).sto e) p) :=
+            ((pending (L entry)).heap.lookupS (⟦e⟧(pending (L entry)).sto) p) :=
           (hα.1.objOf hval hobj).subset (fun _ h => Or.inl (Or.inl h))
-        have hcα : AConf.Alpha α ⟨h, ρ.upd x l₂, δ⟩ (AConf.doLookupS x e p (pending (L entry))) :=
+        have hcα : ⟨h, ρ.upd x l₂, δ⟩ ∼α AConf.doLookupS x e p (pending (L entry)) :=
           ⟨hα.1, sto_upd_alpha hα.2.1 hmaps, hα.2.2⟩
         exact Or.inl ⟨.action cs κ, id, .lookupS, rfl, α, .refl α, hsafe, hcα.le (hle .lookupS),
           _, AWalk.single (hsub _ _ _ _ .lookupS) rfl,
@@ -170,10 +172,10 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         subst hρ'
         have hval := eval_alpha hlit hα.2.1 he
         have hmaps : α.MapsInto l₂
-            ((pending (L entry)).heap.lookupS (aevalE (pending (L entry)).sto e) p) :=
+            ((pending (L entry)).heap.lookupS (⟦e⟧(pending (L entry)).sto) p) :=
           (hα.1.objOf (L := {Abstract.litLocA .proto}) ⟨_, hlit .proto, rfl⟩ hobj).subset
             (fun _ h => Or.inl (Or.inr h))
-        have hcα : AConf.Alpha α ⟨h, ρ.upd x l₂, δ⟩ (AConf.doLookupS x e p (pending (L entry))) :=
+        have hcα : ⟨h, ρ.upd x l₂, δ⟩ ∼α AConf.doLookupS x e p (pending (L entry)) :=
           ⟨hα.1, sto_upd_alpha hα.2.1 hmaps, hα.2.2⟩
         exact Or.inl ⟨.action cs κ, id, .lookupS, rfl, α, .refl α, hsafe, hcα.le (hle .lookupS),
           _, AWalk.single (hsub _ _ _ _ .lookupS) rfl,
@@ -183,9 +185,10 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         subst hρ'
         have hval := eval_alpha hlit hα.2.1 he
         have hmaps : α.MapsInto (Concrete.litLoc .undef)
-            ((pending (L entry)).heap.lookupS (aevalE (pending (L entry)).sto e) p) :=
+            ((pending (L entry)).heap.lookupS (⟦e⟧(pending (L entry)).sto) p) :=
           ⟨_, hlit .undef, Or.inr rfl⟩
-        have hcα : AConf.Alpha α ⟨h, ρ.upd x (Concrete.litLoc .undef), δ⟩ (AConf.doLookupS x e p (pending (L entry))) :=
+        have hcα : ⟨h, ρ.upd x (Concrete.litLoc .undef), δ⟩ ∼α
+            AConf.doLookupS x e p (pending (L entry)) :=
           ⟨hα.1, sto_upd_alpha hα.2.1 hmaps, hα.2.2⟩
         exact Or.inl ⟨.action cs κ, id, .lookupS, rfl, α, .refl α, hsafe, hcα.le (hle .lookupS),
           _, AWalk.single (hsub _ _ _ _ .lookupS) rfl,
@@ -195,11 +198,11 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         have hval1 := eval_alpha hlit hα.2.1 he1
         have hval2 := eval_alpha hlit hα.2.1 he2
         have hmaps : α.MapsInto l₃
-            ((pending (L entry)).heap.lookupD (aevalE (pending (L entry)).sto e₁)
-              ((pending (L entry)).heap.valOf (aevalE (pending (L entry)).sto e₂))) :=
-          (hα.1.objOfV hval1 ⟨v, hα.1.valOf hval2 hstr, hkey⟩ hobj).subset
+            ((pending (L entry)).heap.lookupD (⟦e₁⟧(pending (L entry)).sto)
+              ((pending (L entry)).reg.valOf (⟦e₂⟧(pending (L entry)).sto))) :=
+          (hα.1.objOfV hval1 ⟨v, hα.2.2.valOf hval2 hstr, hkey⟩ hobj).subset
             (fun _ h => Or.inl (Or.inl h))
-        have hcα : AConf.Alpha α ⟨h, ρ.upd x l₃, δ⟩ (AConf.doLookupD x e₁ e₂ (pending (L entry))) :=
+        have hcα : ⟨h, ρ.upd x l₃, δ⟩ ∼α AConf.doLookupD x e₁ e₂ (pending (L entry)) :=
           ⟨hα.1, sto_upd_alpha hα.2.1 hmaps, hα.2.2⟩
         exact Or.inl ⟨.action cs κ, id, .lookupD, rfl, α, .refl α, hsafe, hcα.le (hle .lookupD),
           _, AWalk.single (hsub _ _ _ _ .lookupD) rfl, ⟨⟨hmaps, hval1, hval2⟩, trivial⟩⟩
@@ -208,12 +211,12 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         have hval1 := eval_alpha hlit hα.2.1 he1
         have hval2 := eval_alpha hlit hα.2.1 he2
         have hmaps : α.MapsInto l₃
-            ((pending (L entry)).heap.lookupD (aevalE (pending (L entry)).sto e₁)
-              ((pending (L entry)).heap.valOf (aevalE (pending (L entry)).sto e₂))) :=
+            ((pending (L entry)).heap.lookupD (⟦e₁⟧(pending (L entry)).sto)
+              ((pending (L entry)).reg.valOf (⟦e₂⟧(pending (L entry)).sto))) :=
           (hα.1.objOfV (L := {Abstract.litLocA .proto}) ⟨_, hlit .proto, rfl⟩
-              ⟨v, hα.1.valOf hval2 hstr, hkey⟩ hobj).subset
+              ⟨v, hα.2.2.valOf hval2 hstr, hkey⟩ hobj).subset
             (fun _ h => Or.inl (Or.inr h))
-        have hcα : AConf.Alpha α ⟨h, ρ.upd x l₃, δ⟩ (AConf.doLookupD x e₁ e₂ (pending (L entry))) :=
+        have hcα : ⟨h, ρ.upd x l₃, δ⟩ ∼α AConf.doLookupD x e₁ e₂ (pending (L entry)) :=
           ⟨hα.1, sto_upd_alpha hα.2.1 hmaps, hα.2.2⟩
         exact Or.inl ⟨.action cs κ, id, .lookupD, rfl, α, .refl α, hsafe, hcα.le (hle .lookupD),
           _, AWalk.single (hsub _ _ _ _ .lookupD) rfl, ⟨⟨hmaps, hval1, hval2⟩, trivial⟩⟩
@@ -222,10 +225,11 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         have hval1 := eval_alpha hlit hα.2.1 he1
         have hval2 := eval_alpha hlit hα.2.1 he2
         have hmaps : α.MapsInto (Concrete.litLoc .undef)
-            ((pending (L entry)).heap.lookupD (aevalE (pending (L entry)).sto e₁)
-              ((pending (L entry)).heap.valOf (aevalE (pending (L entry)).sto e₂))) :=
+            ((pending (L entry)).heap.lookupD (⟦e₁⟧(pending (L entry)).sto)
+              ((pending (L entry)).reg.valOf (⟦e₂⟧(pending (L entry)).sto))) :=
           ⟨_, hlit .undef, Or.inr rfl⟩
-        have hcα : AConf.Alpha α ⟨h, ρ.upd x (Concrete.litLoc .undef), δ⟩ (AConf.doLookupD x e₁ e₂ (pending (L entry))) :=
+        have hcα : ⟨h, ρ.upd x (Concrete.litLoc .undef), δ⟩ ∼α
+            AConf.doLookupD x e₁ e₂ (pending (L entry)) :=
           ⟨hα.1, sto_upd_alpha hα.2.1 hmaps, hα.2.2⟩
         exact Or.inl ⟨.action cs κ, id, .lookupD, rfl, α, .refl α, hsafe, hcα.le (hle .lookupD),
           _, AWalk.single (hsub _ _ _ _ .lookupD) rfl, ⟨⟨hmaps, hval1, hval2⟩, trivial⟩⟩
@@ -245,45 +249,47 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         have hval1 := eval_alpha hlit hα.2.1 he1
         have hval2 := eval_alpha hlit hα.2.1 he2
         have hval3 := eval_alpha hlit hα.2.1 he3
-        have hVmem : VSet.HasKey _ p := ⟨v, hα.1.valOf hval2 hstr, hkey⟩
+        have hVmem : VSet.HasKey _ p := ⟨v, hα.2.2.valOf hval2 hstr, hkey⟩
         have hcα : AConf.Alpha α ⟨h.setObj l1 p l3, ρ, δ⟩
             (AConf.doUpdateD e1 e2 e3 (pending (L entry))) :=
           ⟨hα.1.setObjV hval1 hVmem hval3, hα.2.1, hα.2.2⟩
         exact Or.inl ⟨.action cs κ, id, .updateD, rfl, α, .refl α,
           hsafe.mono_heap (fun _ hd => hd.setObj _ _ _), hcα.le (hle .updateD),
           _, AWalk.single (hsub _ _ _ _ .updateD) rfl, ⟨⟨hval1, hval2, hval3⟩, trivial⟩⟩
-    | @binOp _ h h' ρ ρ' δ δ' x κ op e₁ e₂ l₁ l₂ v₁ v₂ l v d he1 he2 hv1 hv2 hl hv hh' hρ'
-        hd hδ' =>
-        subst hl hv hh' hρ' hd hδ'
+    | @binOp _ h ρ ρ' δ δ' x κ op e₁ e₂ l₁ l₂ v₁ v₂ l v d he1 he2 hv1 hv2 hl hv hρ' hd hδ' =>
+        subst hl hv hρ' hd hδ'
         -- `α` is extended at the fresh location, to the abstract location the
         -- abstract `binOp` writes at.
-        obtain ⟨α', hext, hαl, hsafe'⟩ := hsafe.extend cspec xspec hfin κ (pending (L entry)).heap
+        obtain ⟨α', hext, hαl, hsafe'⟩ :=
+          hsafe.extend cspec hfin κ (pending (L entry)).heap (pending (L entry)).reg
         have hval1 := eval_alpha hlit hα.2.1 he1
         have hval2 := eval_alpha hlit hα.2.1 he2
-        have hV := xspec.opSem_sound op v₁ v₂ _ _ (hα.1.valOf hval1 hv1) (hα.1.valOf hval2 hv2)
+        have hV := xspec.opSem_sound op v₁ v₂ _ _ (hα.2.2.valOf hval1 hv1) (hα.2.2.valOf hval2 hv2)
         refine Or.inl ⟨entry, AConf.doBinOp x κ op e₁ e₂ ∘ pending, .binOp, rfl, α', hext,
-          hsafe' _ (fun _ hd => hd.setVal _ _) (Heap.setVal_defined_self _ _ _),
+          hsafe' _ _ (fun _ hd => (hd.setVal _ _).congr rfl)
+            ((Heap.defined_setVal_self _ _ _ _).congr rfl),
           ⟨?_, ?_, ?_⟩, [], .nil, trivial⟩
-        · exact (hα.1.mono hext).setVal hαl hV
+        · exact hα.1.mono hext
         · exact sto_upd_alpha (hα.2.1.mono hext) ⟨_, hαl, rfl⟩
-        · exact (hα.2.2.mono hext).binOp hαl (hval1.mono hext) (hval2.mono hext)
+        · exact ((hα.2.2.mono hext).setVal hαl hV).binOp hαl (hval1.mono hext) (hval2.mono hext)
     | @objLit _ h h' ρ ρ' δ δ' x κ fs ls l hes hl hh' hρ' hδ' =>
         subst hl hh' hρ' hδ'
-        obtain ⟨α', hext, hαl, hsafe'⟩ := hsafe.extend cspec xspec hfin κ (pending (L entry)).heap
+        obtain ⟨α', hext, hαl, hsafe'⟩ :=
+          hsafe.extend cspec hfin κ (pending (L entry)).heap (pending (L entry)).reg
         have hargs := (evals_alpha hlit hα.2.1 _ hes).mono hext
         refine Or.inl ⟨entry, AConf.doObjLit x κ fs ∘ pending, .objLit, rfl, α', hext,
-          hsafe' _ (fun _ hd => (hd.setObjs _ _).setVal _ _)
-            (Heap.setVal_defined_self _ _ _), ⟨?_, ?_, ?_⟩, [], .nil, trivial⟩
+          hsafe' _ _ (fun _ hd => ((hd.setObjs _ _).setVal _ _).congr rfl)
+            ((Heap.defined_setVal_self _ _ _ _).congr rfl), ⟨?_, ?_, ?_⟩, [], .nil, trivial⟩
         · -- the object's `__proto__`, then its own fields
-          -- and the object's own reference value at its location
-          exact (Heap.Alpha.setObjs hαl (fs.map Prod.fst)
+          exact Heap.Alpha.setObjs hαl (fs.map Prod.fst)
             (Heap.Alpha.setObj (p := "__proto__")
-              (L1 := {Abstract.allocA (pending (L entry)).heap κ})
+              (L1 := {Abstract.allocA (pending (L entry)).heap (pending (L entry)).reg κ})
               (L2 := {Abstract.litLocA .proto}) (hα.1.mono hext) ⟨_, hαl, rfl⟩
-              ⟨_, hlit.mono hext .proto, rfl⟩) hargs).setVal (V := VSet.refs) hαl
-              ⟨Concrete.allocC h κ, rfl⟩
+              ⟨_, hlit.mono hext .proto, rfl⟩) hargs
         · exact sto_upd_alpha (hα.2.1.mono hext) ⟨_, hαl, rfl⟩
-        · exact (hα.2.2.mono hext).setDep_empty
+        · -- the object's own reference value at its location
+          exact ((hα.2.2.mono hext).setVal (V := VSet.refs) hαl
+            ⟨Concrete.allocC h δ κ, rfl⟩).setDep_empty
     | @ret _ h ρ δ e l he =>
         exact Or.inr ⟨entry, pending, e, l, .ret, rfl, α, .refl α, hsafe, hα,
           eval_alpha hlit hα.2.1 he, [], .nil, trivial⟩
@@ -298,40 +304,40 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         have hfid' := BigStep.fidCanon cspec.opSem_fid Hstep1.toBigStep hfid
         rcases IH nred (Nat.lt_succ_self _) hcs hlit hsafe hfin hfid
             (fun a b C ℓ he => hsub a b C ℓ (.seqLeft he)) Hstep1 hα with
-          ⟨x, xpending, hAExit1, _, α1, hext1, hsafe1, hα1, acts1, w1, tr1⟩
+          ⟨x, xpending, hAExit1, _, α1, hext1, hsafe1, hα1, tₐ₁, w1, tr1⟩
           | ⟨_, _, _, _, _, hout, _⟩
         · rcases IH nred (Nat.lt_succ_self _) hcs (hlit.mono hext1) hsafe1 hfin' hfid'
               (fun a b C ℓ he => hsub a b C ℓ (.seqRight hAExit1 he)) Hstep2 hα1 with
-            ⟨y, ypending, hAExit2, hout2, α2, hext2, hsafe2, hα2, acts2, w2, tr2⟩
-            | ⟨rst, rpending, e', l, hARet2, hout2, α2, hext2, hsafe2, hα2, hmaps, acts2, w2, tr2⟩
+            ⟨y, ypending, hAExit2, hout2, α2, hext2, hsafe2, hα2, tₐ₂, w2, tr2⟩
+            | ⟨rst, rpending, e', l, hARet2, hout2, α2, hext2, hsafe2, hα2, hmaps, tₐ₂, w2, tr2⟩
           · exact Or.inl ⟨y, ypending, .seq hAExit1 hAExit2, hout2, α2, hext1.trans hext2,
-              hsafe2, hα2, acts1 ++ acts2, w1.append w2, (tr1.mono hext2).seq tr2⟩
+              hsafe2, hα2, tₐ₁ ++ tₐ₂, w1.append w2, (tr1.mono hext2).seq tr2⟩
           · exact Or.inr ⟨rst, rpending, e', l, .seqRight hAExit1 hARet2, hout2, α2,
-              hext1.trans hext2, hsafe2, hα2, hmaps, acts1 ++ acts2, w1.append w2,
+              hext1.trans hext2, hsafe2, hα2, hmaps, tₐ₁ ++ tₐ₂, w1.append w2,
               (tr1.mono hext2).seq tr2⟩
         · exact absurd hout (by simp)
     | @ifTrue nred _ ρ δ κ e s1 s2 l r' he hval Hstep1 =>
         rcases IH nred (Nat.lt_succ_self _) hcs hlit hsafe hfin hfid
             (fun a b C ℓ he => hsub a b C ℓ (.ifThenBody he)) Hstep1 (hα.le (hle .ifThen)) with
-          ⟨x, xpending, hAExit1, hout, α', hext, hsafe', hαres, acts, w, tr⟩
-          | ⟨rst, rpending, e', l', hARet1, hout, α', hext, hsafe', hαres, hmaps, acts, w, tr⟩
+          ⟨x, xpending, hAExit1, hout, α', hext, hsafe', hαres, tₐ, w, tr⟩
+          | ⟨rst, rpending, e', l', hARet1, hout, α', hext, hsafe', hαres, hmaps, tₐ, w, tr⟩
         · exact Or.inl ⟨.ifEnd cs κ, id, .ifElse, hout, α', hext, hsafe',
-            hαres.le (hle (.ifThenJoin hAExit1)), acts,
+            hαres.le (hle (.ifThenJoin hAExit1)), tₐ,
             (AWalk.step (hsub _ _ _ _ .ifThen) rfl w).snoc_eps
               (hsub _ _ _ _ (.ifThenJoin hAExit1)) rfl, tr⟩
         · exact Or.inr ⟨rst, rpending, e', l', .ifThen hARet1, hout, α', hext, hsafe', hαres,
-            hmaps, acts, AWalk.step (hsub _ _ _ _ .ifThen) rfl w, tr⟩
+            hmaps, tₐ, AWalk.step (hsub _ _ _ _ .ifThen) rfl w, tr⟩
     | @ifFalse nred _ ρ δ κ e s1 s2 l r' he hval Hstep2 =>
         rcases IH nred (Nat.lt_succ_self _) hcs hlit hsafe hfin hfid
             (fun a b C ℓ he => hsub a b C ℓ (.ifElseBBody he)) Hstep2 (hα.le (hle .ifElseB)) with
-          ⟨x, xpending, hAExit2, hout, α', hext, hsafe', hαres, acts, w, tr⟩
-          | ⟨rst, rpending, e', l', hARet2, hout, α', hext, hsafe', hαres, hmaps, acts, w, tr⟩
+          ⟨x, xpending, hAExit2, hout, α', hext, hsafe', hαres, tₐ, w, tr⟩
+          | ⟨rst, rpending, e', l', hARet2, hout, α', hext, hsafe', hαres, hmaps, tₐ, w, tr⟩
         · exact Or.inl ⟨.ifEnd cs κ, id, .ifElse, hout, α', hext, hsafe',
-            hαres.le (hle (.ifElseBJoin hAExit2)), acts,
+            hαres.le (hle (.ifElseBJoin hAExit2)), tₐ,
             (AWalk.step (hsub _ _ _ _ .ifElseB) rfl w).snoc_eps
               (hsub _ _ _ _ (.ifElseBJoin hAExit2)) rfl, tr⟩
         · exact Or.inr ⟨rst, rpending, e', l', .ifElseB hARet2, hout, α', hext, hsafe', hαres,
-            hmaps, acts, AWalk.step (hsub _ _ _ _ .ifElseB) rfl w, tr⟩
+            hmaps, tₐ, AWalk.step (hsub _ _ _ _ .ifElseB) rfl w, tr⟩
     | @whileDo nred h ρ δ κ e s r' Hstep =>
         -- A nested induction over the iterations, taking as a parameter the
         -- position `pos` the current iteration's guard is checked from and
@@ -344,9 +350,9 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
               (fun L => posPending (L pos)) (fun _ => some .epsilon) →
             AEdge Γ cs entry pending (.whileDo κ e s) pos (.whileOut cs κ)
               (fun L => posPending (L pos)) (fun _ => some .epsilon) →
-            BigStepN Γ m c' (.ifElse κ e (.seq s (.whileDo κ e s)) .skip) r'' →
-            αc.Lits → αc.AllocSafe c'.heap → c'.heap.Finite → c'.heap.FidCanon →
-            AConf.Alpha αc c' (posPending (L pos)) →
+            Γ ⊢ ⟨c', .ifElse κ e (.seq s (.whileDo κ e s)) .skip⟩ ⇓c[m] r'' →
+            αc.Lits → αc.AllocSafe c'.heap c'.reg → c'.heap.Finite c'.reg → c'.reg.FidCanon →
+            c' ∼αc posPending (L pos) →
             SoundRun Γ s₀ L cs entry pending (.whileDo κ e s) pos αc r'' by
           exact hloop nred (Nat.le_refl nred) AEdge.whileHeaderIn AEdge.whileHeaderOut Hstep
             hlit hsafe hfin hfid hα
@@ -364,20 +370,20 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
               exact Or.inl ⟨.whileOut cs κ, id, .whileDo, rfl, αc, .refl αc, hsafe,
                 hα'.le (hle hedgeOut), [], AWalk.single (hsub _ _ _ _ hedgeOut) rfl, trivial⟩
           | @ifTrue mm h1 ρ1 δ1 _ _ _ _ _ _ _ hval Hbody =>
-              have hαIn : AConf.Alpha αc ⟨h1, ρ1, δ1⟩ (L (.whileIn cs κ)) :=
+              have hαIn : ⟨h1, ρ1, δ1⟩ ∼αc L (.whileIn cs κ) :=
                 hα'.le (hle hedgeIn)
               cases Hbody with
               | @seqRet m1 _ _ _ _ _ _ _ _ _ _ Hs1 =>
                   rcases IH m1 (by omega) hcs hlit hsafe hfin hfid hsubBody Hs1 hαIn with
                       ⟨_, _, _, hcont, _⟩
                     | ⟨rst, rpending, e'', l, hARet_s, hout, α1, hext1, hsafe1, hα1, hmaps1,
-                        acts, w, tr⟩
+                        tₐ, w, tr⟩
                   · exact absurd hcont (by simp)
                   · exact Or.inr ⟨rst, rpending, e'', l, .whileDo hARet_s, hout, α1, hext1,
-                      hsafe1, hα1, hmaps1, acts, AWalk.step (hsub _ _ _ _ hedgeIn) rfl w, tr⟩
+                      hsafe1, hα1, hmaps1, tₐ, AWalk.step (hsub _ _ _ _ hedgeIn) rfl w, tr⟩
               | @seqCont m1 _ _ _ _ _ _ _ _ _ _ _ _ _ _ Hs1 Hs2 =>
                   rcases IH m1 (by omega) hcs hlit hsafe hfin hfid hsubBody Hs1 hαIn with
-                      ⟨x, xpending, hAExit_s, hcont, α1, hext1, hsafe1, hα1, acts1, w1, tr1⟩
+                      ⟨x, xpending, hAExit_s, hcont, α1, hext1, hsafe1, hα1, tₐ₁, w1, tr1⟩
                     | ⟨_, _, _, _, _, hout, _⟩
                   · cases Hs2 with
                     | @whileDo m2 _ _ _ _ _ _ _ Hstep2 =>
@@ -385,15 +391,15 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
                             (αc := α1) (.whileBackIn hAExit_s) (.whileBackOut hAExit_s) Hstep2
                             (hlit.mono hext1) hsafe1 (BigStep.finite Hs1.toBigStep hfin)
                             (BigStep.fidCanon cspec.opSem_fid Hs1.toBigStep hfid) hα1 with
-                            ⟨y, ypending, hAExit_y, hout2, α2, hext2, hsafe2, hα2, acts2, w2, tr2⟩
+                            ⟨y, ypending, hAExit_y, hout2, α2, hext2, hsafe2, hα2, tₐ₂, w2, tr2⟩
                           | ⟨rst, rpending, e'', l, hARet_y, hout2, α2, hext2, hsafe2, hα2, hmaps2,
-                              acts2, w2, tr2⟩
+                              tₐ₂, w2, tr2⟩
                         · exact Or.inl ⟨y, ypending, hAExit_y, hout2, α2, hext1.trans hext2,
-                            hsafe2, hα2, acts1 ++ acts2,
+                            hsafe2, hα2, tₐ₁ ++ tₐ₂,
                             AWalk.step (hsub _ _ _ _ hedgeIn) rfl (w1.append w2),
                             (tr1.mono hext2).seq tr2⟩
                         · exact Or.inr ⟨rst, rpending, e'', l, hARet_y, hout2, α2,
-                            hext1.trans hext2, hsafe2, hα2, hmaps2, acts1 ++ acts2,
+                            hext1.trans hext2, hsafe2, hα2, hmaps2, tₐ₁ ++ tₐ₂,
                             AWalk.step (hsub _ _ _ _ hedgeIn) rfl (w1.append w2),
                             (tr1.mono hext2).seq tr2⟩
                   · exact absurd hout (by simp)
@@ -402,7 +408,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         subst hρ'
         -- (1) the call resolves to `f`: build the candidate check from `hα`.
         have hval_e := eval_alpha hlit hα.2.1 he
-        have hVmem := hα.1.valOf hval_e hlf
+        have hVmem := hα.2.2.valOf hval_e hlf
         have hargs := evals_alpha hlit hα.2.1 es hes
         have harity' : params.length = es.length := harity.trans (evalEs_length hes)
         have hΓparams : Γ.params f = params := by simp [Env.params, hΓf]
@@ -415,7 +421,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         simp only [hcand, if_pos] at hedge_entry
         have hcα0 : AConf.Alpha α ⟨h, Sto.ofParams params ls, δ⟩
             { heap := (pending (L entry)).heap
-              sto := ASto.ofParams params (aevalEs (pending (L entry)).sto es)
+              sto := ASto.ofParams params (⟦es⟧(pending (L entry)).sto)
               reg := (pending (L entry)).reg } :=
           ⟨hα.1, sto_ofParams_alpha hargs params, hα.2.2⟩
         -- (3) descend into the callee body, whose edges are the graph's by
@@ -426,7 +432,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
             (fun a b C ℓ he => .body hΓf hcsf (targetCallString_ends cs κ f)
               (hsub _ _ _ _ hEntry) he) Hstep (hcα0.le hedge_entry) with
             ⟨_, _, _, hcont, _⟩
-          | ⟨rst, rpending, e', l', hARet, hout, α', hext, hsafe', hαres, hmaps, acts, w, tr⟩
+          | ⟨rst, rpending, e', l', hARet, hout, α', hext, hsafe', hαres, hmaps, tₐ, w, tr⟩
         · exact absurd hcont (by simp)
         · -- (4) combine the `ret`-to-`cont` edge and the pass-through edge
           -- componentwise: heap/register from the callee (which started from
@@ -445,14 +451,14 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
           refine Or.inl ⟨.cont cs κ, id, .call, rfl, α', hext, hsafe', ⟨?_, ?_, ?_⟩, _,
             AWalk.step (hsub _ _ _ _ hEntry) (hℓ _ _ hcand)
               (w.append (AWalk.single (hsub _ _ _ _ hRet) (hℓ _ _ hcand))),
-            ActsAlpha.append (as₁ := [_]) ⟨⟨hlf', hargs.mono hext⟩, trivial⟩
+            ActsAlpha.append (t₁ := [_]) ⟨⟨hlf', hargs.mono hext⟩, trivial⟩
               (ActsAlpha.append tr ⟨⟨hlf', hmaps⟩, trivial⟩)⟩
           · exact hαres.1.le hedge_ret.1
           · intro y ly hy
             by_cases hxy : y = x
             · have hlyl : ly = l := by rw [hxy] at hy; simpa [Sto.upd] using hy.symm
               rw [hxy, hlyl]
-              have hxineq : (aevalE (rpending (L rst)).sto e') ⊆ (L (.cont cs κ)).sto x := by
+              have hxineq : (⟦e'⟧(rpending (L rst)).sto) ⊆ (L (.cont cs κ)).sto x := by
                 simpa [ASto.upd] using hedge_ret.2.1 x
               exact hmaps.subset hxineq
             · have hy' : ρ y = some ly := by simpa [Sto.upd, hxy] using hy
@@ -466,7 +472,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         harity Hstep hρ' =>
         subst hρ'
         have hval_e := eval_alpha hlit hα.2.1 he
-        have hVmem := hα.1.valOf hval_e hlf
+        have hVmem := hα.2.2.valOf hval_e hlf
         have hargs := evals_alpha hlit hα.2.1 es hes
         have harity' : params.length = es.length := harity.trans (evalEs_length hes)
         have hΓparams : Γ.params f = params := by simp [Env.params, hΓf]
@@ -478,7 +484,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
         simp only [hcand, if_pos] at hedge_entry
         have hcα0 : AConf.Alpha α ⟨h, Sto.ofParams params ls, δ⟩
             { heap := (pending (L entry)).heap
-              sto := ASto.ofParams params (aevalEs (pending (L entry)).sto es)
+              sto := ASto.ofParams params (⟦es⟧(pending (L entry)).sto)
               reg := (pending (L entry)).reg } :=
           ⟨hα.1, sto_ofParams_alpha hargs params, hα.2.2⟩
         have hcsf : CallString.WF (targetCallString cs κ f) := targetCallString_wf hcs κ f
@@ -486,7 +492,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
             hsafe hfin hfid
             (fun a b C ℓ he => .body hΓf hcsf (targetCallString_ends cs κ f)
               (hsub _ _ _ _ hEntry) he) Hstep (hcα0.le hedge_entry) with
-            ⟨y, ypending, hAExit, hout, α', hext, hsafe', hαres, acts, w, tr⟩
+            ⟨y, ypending, hAExit, hout, α', hext, hsafe', hαres, tₐ, w, tr⟩
           | ⟨_, _, _, _, _, hout, _⟩
         · have hRet := AEdge.callImplicitRet (x := x) (κ := κ) (e := e) (es := es) (cs := cs)
             (entry := entry) (pending := pending) hΓf harity' hAExit
@@ -501,7 +507,7 @@ theorem step_sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSp
           refine Or.inl ⟨.cont cs κ, id, .call, rfl, α', hext, hsafe', ⟨?_, ?_, ?_⟩, _,
             AWalk.step (hsub _ _ _ _ hEntry) (hℓ _ _ hcand)
               (w.append (AWalk.single (hsub _ _ _ _ hRet) (hℓ _ _ hcand))),
-            ActsAlpha.append (as₁ := [_]) ⟨⟨hlf', hargs.mono hext⟩, trivial⟩
+            ActsAlpha.append (t₁ := [_]) ⟨⟨hlf', hargs.mono hext⟩, trivial⟩
               (ActsAlpha.append tr ⟨⟨hlf', hundef⟩, trivial⟩)⟩
           · exact hαres.1.le hedge_ret.1
           · intro z lz hz
@@ -526,10 +532,10 @@ theorem sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSpec)
     {Γ : Env} {s₀ : Stmt} {L : Labeling} (hvalid : Labeling.Valid Γ s₀ L)
     {cs : CallString} {entry : AState} {pending : AConf → AConf} {s : Stmt}
     {c : Conf} {r : Res} {α : AlphaFn}
-    (hcs : CallString.WF cs) (hlit : α.Lits) (hsafe : α.AllocSafe c.heap)
-    (hfin : c.heap.Finite) (hfid : c.heap.FidCanon)
+    (hcs : CallString.WF cs) (hlit : α.Lits) (hsafe : α.AllocSafe c.heap c.reg)
+    (hfin : c.heap.Finite c.reg) (hfid : c.reg.FidCanon)
     (hsub : ∀ a b C ℓ, AEdge Γ cs entry pending s a b C ℓ → AGraph Γ s₀ a b C ℓ)
-    (H : BigStep Γ c s r) (hα : AConf.Alpha α c (pending (L entry))) :
+    (H : Γ ⊢ ⟨c, s⟩ ⇓c r) (hα : c ∼α pending (L entry)) :
     SoundRun Γ s₀ L cs entry pending s entry α r := by
   obtain ⟨n, HN⟩ := H.toN
   exact step_sound cspec xspec hvalid n hcs hlit hsafe hfin hfid hsub HN hα
@@ -544,15 +550,15 @@ theorem sound [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSpec)
     unavailable external dependency) has no rule, so a run making one has no
     derivation and lies outside this theorem.
 
-    `fs` lists the functions whose literals the initial heap sets up
+    `fs` lists the functions whose literals the initial register sets up
     (normally all of `Γ`'s); the analysis covers every function of `Γ`
     (`AConf.init Γ s₀`), so the theorem holds whatever `fs` is. -/
 theorem sound_top [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSpec)
     {Γ : Env} {fs : List Fid} {s₀ : Stmt} {L : Labeling} (hres : AnalysisResult Γ s₀ L)
-    {r : Res} (H : BigStep Γ (Conf.init Γ fs s₀) s₀ r) :
+    {r : Res} (H : Γ ⊢ ⟨Conf.init Γ fs s₀, s₀⟩ ⇓c r) :
     SoundRun Γ s₀ L [] (.entry []) id s₀ (.entry []) AlphaFn.lits r :=
   sound cspec xspec hres.1 CallString.WF.nil (AlphaFn.lits_lits cspec)
-    (AlphaFn.lits_allocSafe _) (Heap.init_finite Γ fs s₀) (Heap.init_fidCanon Γ fs s₀)
+    (AlphaFn.lits_allocSafe _ _) (Reg.init_finite Γ fs s₀) (Reg.init_fidCanon Γ fs s₀)
     (fun _ _ _ _ he => .top he) H ((AConf.Alpha.init cspec Γ fs s₀).le hres.2)
 
 /-- The headline result: every run of a program from its initial
@@ -561,7 +567,7 @@ theorem sound_top [Concrete] [Abstract] (cspec : ConcreteSpec) (xspec : CrossSpe
     always exists. -/
 theorem sound_least [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : AbstractSpec)
     (xspec : CrossSpec) {Γ : Env} {fs : List Fid} {s₀ : Stmt} {r : Res}
-    (H : BigStep Γ (Conf.init Γ fs s₀) s₀ r) :
+    (H : Γ ⊢ ⟨Conf.init Γ fs s₀, s₀⟩ ⇓c r) :
     SoundRun Γ s₀ (Labeling.least Γ s₀) [] (.entry []) id s₀ (.entry []) AlphaFn.lits r :=
   sound_top cspec xspec (Labeling.least_result aspec Γ s₀) H
 
@@ -571,8 +577,8 @@ theorem sound_least [Concrete] [Abstract] (cspec : ConcreteSpec) (aspec : Abstra
 pair of instances, so the theorems above do not hold vacuously. The witness is
 deliberately crude: literals at even locations (through an injective
 encoding of values), allocation at the first odd location past a finite
-heap's support, a single abstract location for every allocation site, every
-function at its own even abstract location, and `⊕̂` always `⊤`. -/
+memory's support, a single abstract location for every allocation site, every
+function at its own even abstract location, and `opSemA` always `⊤`. -/
 
 namespace SpecModel
 
@@ -636,32 +642,32 @@ private theorem encVal_inj : ∀ {v w : Val}, encVal v = encVal w → v = w := b
 
 @[reducible] private noncomputable def concrete : Concrete where
   litLoc v := 2 * encVal v
-  allocC h _ := by
+  allocC h δ _ := by
     classical
-    exact if hf : h.Finite then 2 * Classical.choose hf + 1 else 1
+    exact if hf : h.Finite δ then 2 * Classical.choose hf + 1 else 1
   opSem _ _ _ := .undef
 
 @[reducible] private def abstract : Abstract where
   litLocA
     | .fid f => 2 * encStr f + 2
     | _      => (1 : Nat)
-  allocA _ _ := (0 : Nat)
+  allocA _ _ _ := (0 : Nat)
   opSemA _ _ _ := .top
 
 attribute [local instance] concrete abstract
 
-private theorem allocC_eq {h : Heap} (hf : h.Finite) (κ : Idx) :
-    Concrete.allocC h κ = 2 * Classical.choose hf + 1 := by
-  show (if hf : h.Finite then _ else _) = _
+private theorem allocC_eq {h : Heap} {δ : Reg} (hf : h.Finite δ) (κ : Idx) :
+    Concrete.allocC h δ κ = 2 * Classical.choose hf + 1 := by
+  show (if hf : h.Finite δ then _ else _) = _
   rw [dif_pos hf]
 
 private theorem cspec : ConcreteSpec where
   litLoc_inj v w h := encVal_inj (Nat.eq_of_mul_eq_mul_left (by decide) h)
-  allocC_fresh h κ hf := by
+  allocC_fresh h δ κ hf := by
     rw [allocC_eq hf]
     exact Classical.choose_spec hf _
       (Nat.le_succ_of_le (Nat.le_mul_of_pos_left _ (by decide)))
-  allocC_lit h κ v hf := by
+  allocC_lit h δ κ v hf := by
     rw [allocC_eq hf]
     intro heq
     have : (2 * Classical.choose hf + 1 : Nat) = 2 * encVal v := heq
@@ -670,14 +676,14 @@ private theorem cspec : ConcreteSpec where
 
 private theorem aspec : AbstractSpec where
   opSemA_mono _ _ _ _ _ _ _ _ hv := hv
-  allocA_site _ _ _ := rfl
+  allocA_site _ _ _ _ _ := rfl
   litLocA_fid f v h := by
     cases v
     case fid g =>
       have h' : (2 * encStr f + 2 : Nat) = 2 * encStr g + 2 := h
       exact congrArg Val.fid (encStr_inj (by omega))
     all_goals (have h' : (2 * encStr f + 2 : Nat) = 1 := h; omega)
-  allocA_fid _ _ f h := by
+  allocA_fid _ _ _ f h := by
     have h' : (0 : Nat) = 2 * encStr f + 2 := h
     omega
 

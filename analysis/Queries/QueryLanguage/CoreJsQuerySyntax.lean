@@ -4,13 +4,18 @@
   The query language used to describe (vulnerable) behaviours of executions:
 
   ```
-  query ::= Query Q(x⃗) { P }
-      P ::= ⟨exists y⃗:⟩ F₁ ⟨when I⟩ ⟨except F₂⟩
+  query ::= Query Q(xs) { P }
+      P ::= ⟨exists ys:⟩ F₁ ⟨when I⟩ ⟨except F₂⟩
       F ::= ε | a | Q(x₁, ..., xₙ) | F ; F | F ‖ F | F & F
       a ::= x₁ := x₂[x₃] | x₁[x₂] := x₃ | Call(x_f, [x₁, ..., xₙ]) | Retn(x_f, x)
       I ::= p | ¬I | I ∨ I | I ∧ I | true | false
       p ::= sk(x) | ac(x) | dep(x₁, x₂) | sv(x₁, x₂) | hv(x, c)
   ```
+
+  Sequences are written in the plural, as the Lean code names them: `xs` is
+  the paper's vector `x₁, ..., xₙ` of parameters, `ys` the locals, `zs` the
+  arguments of an invocation, `ls` a list of locations, `es` a list of
+  expressions.
 
   This file is syntax only: the satisfaction relation over execution records
   lives in `CoreJsQuerySemantics.lean`.  Besides the AST it defines the
@@ -83,13 +88,13 @@ inductive Pat where
   | both  (F₁ F₂ : Pat)
   deriving DecidableEq, Repr
 
-/-- Query bodies `P ::= ⟨exists y⃗:⟩ F₁ ⟨when I⟩ ⟨except F₂⟩`.
+/-- Query bodies `P ::= ⟨exists ys:⟩ F₁ ⟨when I⟩ ⟨except F₂⟩`.
 
     The omitted clauses default to no local variables
     (`locals = []`), `true` (`when = .tt`) and no excluded pattern
     (`except = none`). -/
 structure QBody where
-  /-- `y⃗`, the local (existentially bound) variables. -/
+  /-- `ys`, the local (existentially bound) variables. -/
   locals  : List Var := []
   /-- `F₁`, the vulnerable behaviour. -/
   pattern : Pat
@@ -99,7 +104,7 @@ structure QBody where
   except  : Option Pat := none
   deriving DecidableEq, Repr
 
-/-- Queries `Query Q(x⃗) { P }`. -/
+/-- Queries `Query Q(xs) { P }`. -/
 structure Query where
   name   : QName
   params : List Var
@@ -174,7 +179,7 @@ def Pat.vars : Pat → List Var
   | .alt F₁ F₂  => F₁.vars ++ F₂.vars
   | .both F₁ F₂ => F₁.vars ++ F₂.vars
 
-/-- The invocations `(Q, z⃗)` occurring in an action pattern. -/
+/-- The invocations `(Q, zs)` occurring in an action pattern. -/
 def Pat.calls : Pat → List (QName × List Var)
   | .eps        => []
   | .act _      => []
@@ -197,7 +202,7 @@ def QBody.calls (P : QBody) : List (QName × List Var) :=
 The satisfaction relation is defined for *every* query, well-formed or not;
 these predicates single out the queries that make sense to write. -/
 
-/-- Every variable used by the query is declared in `x⃗ ∪ y⃗`, and the two
+/-- Every variable used by the query is declared in `xs ∪ ys`, and the two
     binder lists are together duplicate-free. -/
 def Query.Declared (q : Query) : Prop :=
   (q.params ++ q.body.locals).Nodup ∧

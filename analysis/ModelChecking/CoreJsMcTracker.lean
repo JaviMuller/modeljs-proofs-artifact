@@ -57,8 +57,8 @@ theorem Tracker.run_snoc (tr : Tracker A V) (T : List A) (a : A) :
   simp [Tracker.run]
 
 /-- The specification of a tracker for the model `M`. -/
-structure Tracker.Spec (tr : Tracker A V) (𝔄 : Abs A V Φ) (φ : Φ) (M : QModel) : Prop where
-  excl   : ∀ T k ξ, tr.excl (tr.run T) k ξ = true ↔ M.AExcl 𝔄 φ T k ξ
+structure Tracker.Spec (tr : Tracker A V) (𝔄 : Abs A V Φ) (δₐ : Φ) (M : QModel) : Prop where
+  excl   : ∀ T k ξ, tr.excl (tr.run T) k ξ = true ↔ M.AExcl 𝔄 δₐ T k ξ
   reads  : ∀ τ k (ξ₁ ξ₂ : MVar → V), (∀ x ∈ tr.reads, ξ₁ x = ξ₂ x) →
     tr.excl τ k ξ₁ = tr.excl τ k ξ₂
   /-- Finitely many trackers are reachable from `init`. -/
@@ -243,7 +243,7 @@ theorem QComp.labelVars_good (c : QComp) :
 
 section enum
 
-variable (𝔄 : Abs A V Φ) (φ : Φ) (M : QModel) (vals : List V) (xs : List MVar)
+variable (𝔄 : Abs A V Φ) (δₐ : Φ) (M : QModel) (vals : List V) (xs : List MVar)
 
 /-- All entries: a component, one of its states, values for `xs`. -/
 def tUniv : List (Nat × QSt × List V) :=
@@ -302,11 +302,11 @@ def mergeV (S : List MVar) (vs : List V) (ξ : MVar → V) : MVar → V :=
 def ExclAt (c : QComp) (k : Nat) (ξ : MVar → V) (e : Nat × QSt × List V) : Prop :=
   e.1 = k ∧ e.2.1 ∈ c.finals ∧ c.exc e.2.1 = [] ∧
   (∀ p ∈ xs.zip e.2.2, p.1 ∈ c.scope e.2.1 ∨ p.2 = ξ p.1) ∧
-  (∀ J ∈ c.inv e.2.1, 𝔄.inv φ (mergeV xs (c.scope e.2.1) e.2.2 ξ) false J = true) ∧
+  (∀ J ∈ c.inv e.2.1, 𝔄.inv δₐ (mergeV xs (c.scope e.2.1) e.2.2 ξ) false J = true) ∧
   ∀ x ∈ c.scope e.2.1, x ∈ (c.inv e.2.1).flatMap Inv.vars →
-    𝔄.inhab φ (mergeV xs (c.scope e.2.1) e.2.2 ξ x) = true
+    𝔄.inhab δₐ (mergeV xs (c.scope e.2.1) e.2.2 ξ x) = true
 
-instance (c : QComp) (k : Nat) (ξ : MVar → V) : DecidablePred (ExclAt 𝔄 φ xs c k ξ) :=
+instance (c : QComp) (k : Nat) (ξ : MVar → V) : DecidablePred (ExclAt 𝔄 δₐ xs c k ξ) :=
   fun e => by unfold ExclAt; infer_instance
 
 /-- The entries reached from no label. -/
@@ -325,7 +325,7 @@ def enumStep (τ : List (Nat × QSt × List V)) (B : A) : List (Nat × QSt × Li
 /-- Some entry makes component `k` must-accept under `ξ`. -/
 def enumExcl (τ : List (Nat × QSt × List V)) (k : Nat) (ξ : MVar → V) : Bool :=
   match M.comps[k]? with
-  | some c => decide (M.depth ≠ 0 ∧ ∃ e ∈ τ, ExclAt 𝔄 φ xs c k ξ e)
+  | some c => decide (M.depth ≠ 0 ∧ ∃ e ∈ τ, ExclAt 𝔄 δₐ xs c k ξ e)
   | none   => false
 
 /-- The enumerating tracker: entries `(k, q, vs)`, component `k` at `q` under
@@ -335,7 +335,7 @@ def enumTracker : Tracker A V where
   deq   := inferInstance
   init  := enumInit M vals xs
   step  := enumStep 𝔄 M vals xs
-  excl  := enumExcl 𝔄 φ M xs
+  excl  := enumExcl 𝔄 δₐ M xs
   reads := xs
 
 /-- `τ` holds exactly the entries reached by reading `T`. -/
@@ -343,7 +343,7 @@ def TRep (τ : List (Nat × QSt × List V)) (T : List A) : Prop :=
   ∀ e, e ∈ τ ↔ e ∈ tUniv M vals xs ∧ ∃ c, M.comps[e.1]? = some c ∧
     LRun c.edges (𝔄.MustFires (tAsg xs e.2.2)) c.start T e.2.1
 
-variable {𝔄 φ M vals xs}
+variable {𝔄 δₐ M vals xs}
 
 omit [DecidableEq V] in
 theorem enumInit_rep : TRep 𝔄 M vals xs (enumInit M vals xs) [] := by
@@ -379,7 +379,7 @@ theorem enumStep_rep (hc : ∀ c ∈ M.comps, c.Closed) {τ : List (Nat × QSt �
         ⟨c, hk, h₁.mem_states hcc hcc.start, hvs⟩, c, hk, h₁⟩, ⟨rfl, rfl⟩, h₂⟩
 
 theorem enumTracker_rep (hc : ∀ c ∈ M.comps, c.Closed) (T : List A) :
-    TRep 𝔄 M vals xs ((enumTracker 𝔄 φ M vals xs).run T) T := by
+    TRep 𝔄 M vals xs ((enumTracker 𝔄 δₐ M vals xs).run T) T := by
   have : ∀ (T T₀ : List A) τ, TRep 𝔄 M vals xs τ T₀ →
       TRep 𝔄 M vals xs (T.foldl (enumStep 𝔄 M vals xs) τ) (T₀ ++ T) := by
     intro T
@@ -392,9 +392,9 @@ theorem enumTracker_rep (hc : ∀ c ∈ M.comps, c.Closed) (T : List A) :
   exact this T [] _ enumInit_rep
 
 /-- Finitely many trackers are reachable: each is a filter of `tUniv`. -/
-theorem enumTracker_finite : ∃ UT : List (enumTracker 𝔄 φ M vals xs).T,
-    (enumTracker 𝔄 φ M vals xs).init ∈ UT ∧
-      ∀ τ ∈ UT, ∀ B, (enumTracker 𝔄 φ M vals xs).step τ B ∈ UT :=
+theorem enumTracker_finite : ∃ UT : List (enumTracker 𝔄 δₐ M vals xs).T,
+    (enumTracker 𝔄 δₐ M vals xs).init ∈ UT ∧
+      ∀ τ ∈ UT, ∀ B, (enumTracker 𝔄 δₐ M vals xs).step τ B ∈ UT :=
   ⟨subs (tUniv M vals xs), mem_subs List.filter_sublist, fun _ _ _ => mem_subs List.filter_sublist⟩
 
 /-- The variables of the `except` components' labels, and of the invariants of
@@ -422,15 +422,15 @@ theorem enumTracker_spec (h𝔄 : 𝔄.Sound) (hvals : ∀ v, v ∈ vals)
     (hxl : ∀ c ∈ M.comps, ∀ s as s', (s, .act as, s') ∈ c.edges → ∀ b ∈ as, ∀ x ∈ b.vars,
       x ∈ xs)
     (hxi : ∀ c ∈ M.comps, ∀ f ∈ c.finals, ∀ J ∈ c.inv f, ∀ x ∈ J.vars, x ∈ xs) :
-    (enumTracker 𝔄 φ M vals xs).Spec 𝔄 φ M where
+    (enumTracker 𝔄 δₐ M vals xs).Spec 𝔄 δₐ M where
   excl T k ξ := by
-    show enumExcl 𝔄 φ M xs ((enumTracker 𝔄 φ M vals xs).run T) k ξ = true ↔ _
+    show enumExcl 𝔄 δₐ M xs ((enumTracker 𝔄 δₐ M vals xs).run T) k ξ = true ↔ _
     unfold enumExcl
     cases hk : M.comps[k]? with
     | none => simp [QModel.AExcl, hk]
     | some c =>
       have hcm := List.mem_of_getElem? hk
-      have hrep := enumTracker_rep (𝔄 := 𝔄) (φ := φ) (vals := vals) (xs := xs) hc T
+      have hrep := enumTracker_rep (𝔄 := 𝔄) (δₐ := δₐ) (vals := vals) (xs := xs) hc T
       simp only [decide_eq_true_eq, QModel.AExcl, hk, Option.some.injEq, exists_eq_left']
       refine and_congr_right fun _ => ?_
       constructor
@@ -469,13 +469,14 @@ theorem enumTracker_spec (h𝔄 : 𝔄.Sound) (hvals : ∀ v, v ∈ vals)
         · by_cases hs : p.1 ∈ c.scope f
           · exact Or.inl hs
           · exact Or.inr ((eq_of_mem_zip_map hp).trans (hout _ hs))
-        · rw [Abs.inv_congr h𝔄 φ false J (ξ' := ξ') fun x hx => hmerge x (hxi c hcm f hf J hJ x hx)]
+        · rw [Abs.inv_congr h𝔄 δₐ false J (ξ' := ξ')
+            fun x hx => hmerge x (hxi c hcm f hf J hJ x hx)]
           exact hinv J hJ
         · obtain ⟨J, hJ, hxJ⟩ := List.mem_flatMap.1 hx
           rw [hmerge x (hxi c hcm f hf J hJ x hxJ)]
           exact hinh x hs hx
   reads τ k ξ₁ ξ₂ hξ := by
-    show enumExcl 𝔄 φ M xs τ k ξ₁ = enumExcl 𝔄 φ M xs τ k ξ₂
+    show enumExcl 𝔄 δₐ M xs τ k ξ₁ = enumExcl 𝔄 δₐ M xs τ k ξ₂
     unfold enumExcl
     cases hk : M.comps[k]? with
     | none => rfl
@@ -483,7 +484,7 @@ theorem enumTracker_spec (h𝔄 : 𝔄.Sound) (hvals : ∀ v, v ∈ vals)
       have hcm := List.mem_of_getElem? hk
       -- One direction, for any two assignments agreeing on `xs`.
       have dir : ∀ ξ₁ ξ₂ : MVar → V, (∀ x ∈ xs, ξ₁ x = ξ₂ x) → ∀ e,
-          ExclAt 𝔄 φ xs c k ξ₁ e → ExclAt 𝔄 φ xs c k ξ₂ e := by
+          ExclAt 𝔄 δₐ xs c k ξ₁ e → ExclAt 𝔄 δₐ xs c k ξ₂ e := by
         rintro ξ₁ ξ₂ hξ ⟨k', f, vs⟩ ⟨rfl, hf, hexc, hagree, hinv, hinh⟩
         have hmerge : ∀ x ∈ xs, mergeV xs (c.scope f) vs ξ₁ x = mergeV xs (c.scope f) vs ξ₂ x := by
           intro x hx
@@ -495,7 +496,7 @@ theorem enumTracker_spec (h𝔄 : 𝔄.Sound) (hvals : ∀ v, v ∈ vals)
         · rcases hagree p hp with h | h
           · exact Or.inl h
           · exact Or.inr (h.trans (hξ _ (List.of_mem_zip hp).1))
-        · rw [← Abs.inv_congr h𝔄 φ false J fun x hx => hmerge x (hxi c hcm f hf J hJ x hx)]
+        · rw [← Abs.inv_congr h𝔄 δₐ false J fun x hx => hmerge x (hxi c hcm f hf J hJ x hx)]
           exact hinv J hJ
         · obtain ⟨J, hJ, hxJ⟩ := List.mem_flatMap.1 hx
           rw [← hmerge x (hxi c hcm f hf J hJ x hxJ)]

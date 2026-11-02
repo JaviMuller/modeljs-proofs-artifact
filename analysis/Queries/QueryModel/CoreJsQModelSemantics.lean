@@ -18,9 +18,9 @@
     the negation.  `compSat` recurses on a *fuel* bounding the nesting of
     components (`QModel.depth`): a component of an `except` invoking a query
     with an `except` of its own refers to a further component, and so on.
-  * A model is satisfied by a record and arguments `l⃗` (`QModel.Sat`) if its
+  * A model is satisfied by a record and arguments `ls` (`QModel.Sat`) if its
     positive part accepts the whole trace, starting from the substitution
-    that binds the parameters to `l⃗`.
+    that binds the parameters to `ls`.
 
   Substitutions are total (`MEnv`), like the query semantics' `LEnv`; a
   model checker binding variables lazily, as runs mention them, computes the
@@ -70,16 +70,16 @@ theorem Inv.vars_map {ν μ} (ρ : ν → μ) : ∀ I : Inv ν, (I.map ρ).vars 
   | .or I₁ I₂ | .and I₁ I₂ => by simp [Inv.map, Inv.vars, Inv.vars_map ρ I₁, Inv.vars_map ρ I₂]
   | .tt | .ff => rfl
 
-theorem Pred.sat_map {ν μ} (ρ : ν → μ) (σ : Obs) (ξ : μ → Loc) :
-    ∀ p : Pred ν, Pred.Sat σ ξ (p.map ρ) ↔ Pred.Sat σ (ξ ∘ ρ) p
+theorem Pred.sat_map {ν μ} (ρ : ν → μ) (δ : Obs) (ξ : μ → Loc) :
+    ∀ p : Pred ν, Pred.Sat δ ξ (p.map ρ) ↔ Pred.Sat δ (ξ ∘ ρ) p
   | .sk _ | .ac _ | .dep _ _ | .sv _ _ | .hv _ _ => Iff.rfl
 
-theorem Inv.sat_map {ν μ} (ρ : ν → μ) (σ : Obs) (ξ : μ → Loc) :
-    ∀ I : Inv ν, Inv.Sat σ ξ (I.map ρ) ↔ Inv.Sat σ (ξ ∘ ρ) I
-  | .pred p => Pred.sat_map ρ σ ξ p
-  | .not I => by simp only [Inv.map, Inv.Sat, Inv.sat_map ρ σ ξ I]
-  | .or I₁ I₂ => by simp only [Inv.map, Inv.Sat, Inv.sat_map ρ σ ξ I₁, Inv.sat_map ρ σ ξ I₂]
-  | .and I₁ I₂ => by simp only [Inv.map, Inv.Sat, Inv.sat_map ρ σ ξ I₁, Inv.sat_map ρ σ ξ I₂]
+theorem Inv.sat_map {ν μ} (ρ : ν → μ) (δ : Obs) (ξ : μ → Loc) :
+    ∀ I : Inv ν, Inv.Sat δ ξ (I.map ρ) ↔ Inv.Sat δ (ξ ∘ ρ) I
+  | .pred p => Pred.sat_map ρ δ ξ p
+  | .not I => by simp only [Inv.map, Inv.Sat, Inv.sat_map ρ δ ξ I]
+  | .or I₁ I₂ => by simp only [Inv.map, Inv.Sat, Inv.sat_map ρ δ ξ I₁, Inv.sat_map ρ δ ξ I₂]
+  | .and I₁ I₂ => by simp only [Inv.map, Inv.Sat, Inv.sat_map ρ δ ξ I₁, Inv.sat_map ρ δ ξ I₂]
   | .tt | .ff => Iff.rfl
 
 /-! ## Runs -/
@@ -178,21 +178,21 @@ end run
 
 /-- The labels of the final state `f` hold under `ξ`: its invariants, and none
     of its `except` components (`X k ξ`: component `k` is satisfied). -/
-def QComp.Ok (c : QComp) (σ : Obs) (X : Nat → MEnv → Prop) (ξ : MEnv) (f : QSt) : Prop :=
-  (∀ I ∈ c.inv f, σ ⬝ ξ ⊨ I) ∧ ∀ k ∈ c.exc f, ¬ X k ξ
+def QComp.Ok (c : QComp) (δ : Obs) (X : Nat → MEnv → Prop) (ξ : MEnv) (f : QSt) : Prop :=
+  (∀ I ∈ c.inv f, δ ⬝ ξ ⊨ I) ∧ ∀ k ∈ c.exc f, ¬ X k ξ
 
 /-- `c` accepts `t[i..j)` under `ξ`: for some final state `f` and new values
     of the variables in `f`'s scope, a run reaches `f` and `f`'s labels hold. -/
-def QComp.Acc (c : QComp) (t : List Act) (σ : Obs) (X : Nat → MEnv → Prop) (ξ : MEnv)
+def QComp.Acc (c : QComp) (t : List Act) (δ : Obs) (X : Nat → MEnv → Prop) (ξ : MEnv)
     (i j : Nat) : Prop :=
   ∃ f ∈ c.finals, ∃ ξ' : MEnv, (∀ v, v ∉ c.scope f → ξ' v = ξ v) ∧
-    Run c.edges t ξ' c.start i f j ∧ c.Ok σ X ξ' f
+    Run c.edges t ξ' c.start i f j ∧ c.Ok δ X ξ' f
 
-/-- `compSat cs t σ n k ξ`: component `k` of `cs` accepts the whole trace
+/-- `compSat cs t δ n k ξ`: component `k` of `cs` accepts the whole trace
     under `ξ`, its own components evaluated with fuel `n - 1`. -/
-def compSat (cs : List QComp) (t : List Act) (σ : Obs) : Nat → Nat → MEnv → Prop
+def compSat (cs : List QComp) (t : List Act) (δ : Obs) : Nat → Nat → MEnv → Prop
   | 0,     _, _ => False
-  | n + 1, k, ξ => ∃ c, cs[k]? = some c ∧ c.Acc t σ (compSat cs t σ n) ξ 0 t.length
+  | n + 1, k, ξ => ∃ c, cs[k]? = some c ∧ c.Acc t δ (compSat cs t δ n) ξ 0 t.length
 
 /-- The substitution binding the parameters to `ls` (as `LEnv.bind` does) and
     everything else to `0`, like `LEnv.empty`. -/
@@ -261,12 +261,12 @@ theorem QComp.ReadsIn.weaken {cs : List QComp} {V W : MVar → Prop} (hVW : ∀ 
       (fun s I hI v hv => hVW v (hi s I hI v hv)) (fun s v hv => hVW v (hs s v hv)) hlt ih
 
 /-- The labels of a final state only read `V`. -/
-theorem QComp.ok_coincide {cs : List QComp} {V : MVar → Prop} {c : QComp} {σ : Obs}
+theorem QComp.ok_coincide {cs : List QComp} {V : MVar → Prop} {c : QComp} {δ : Obs}
     {X : Nat → MEnv → Prop}
     (hX : ∀ k c', cs[k]? = some c' → QComp.ReadsIn cs V c' →
       ∀ ξ₁ ξ₂ : MEnv, (∀ v, V v → ξ₁ v = ξ₂ v) → (X k ξ₁ ↔ X k ξ₂))
     (hc : QComp.ReadsIn cs V c) {ξ₁ ξ₂ : MEnv} (hξ : ∀ v, V v → ξ₁ v = ξ₂ v) (f : QSt) :
-    c.Ok σ X ξ₁ f ↔ c.Ok σ X ξ₂ f := by
+    c.Ok δ X ξ₁ f ↔ c.Ok δ X ξ₂ f := by
   unfold QComp.Ok
   constructor
   · rintro ⟨hi, he⟩
@@ -285,13 +285,13 @@ theorem QComp.ok_coincide {cs : List QComp} {V : MVar → Prop} {c : QComp} {σ 
 /-- Acceptance only reads `V`, for components referred to whose satisfaction
     only reads `V`. -/
 theorem QComp.acc_coincide {cs : List QComp} {V : MVar → Prop} {c : QComp} {t : List Act}
-    {σ : Obs} {X : Nat → MEnv → Prop}
+    {δ : Obs} {X : Nat → MEnv → Prop}
     (hX : ∀ k c', cs[k]? = some c' → QComp.ReadsIn cs V c' →
       ∀ ξ₁ ξ₂ : MEnv, (∀ v, V v → ξ₁ v = ξ₂ v) → (X k ξ₁ ↔ X k ξ₂))
     (hc : QComp.ReadsIn cs V c) {ξ₁ ξ₂ : MEnv} (hξ : ∀ v, V v → ξ₁ v = ξ₂ v) {i j : Nat} :
-    c.Acc t σ X ξ₁ i j ↔ c.Acc t σ X ξ₂ i j := by
+    c.Acc t δ X ξ₁ i j ↔ c.Acc t δ X ξ₂ i j := by
   have mp : ∀ {ξ₁ ξ₂ : MEnv}, (∀ v, V v → ξ₁ v = ξ₂ v) →
-      c.Acc t σ X ξ₁ i j → c.Acc t σ X ξ₂ i j := by
+      c.Acc t δ X ξ₁ i j → c.Acc t δ X ξ₂ i j := by
     rintro ξ₁ ξ₂ hξ ⟨f, hf, ξ', hξ', hrun, hok⟩
     let ξ'' : MEnv := fun v => if v ∈ c.scope f then ξ' v else ξ₂ v
     have hagree : ∀ v, V v → ξ' v = ξ'' v := by
@@ -304,9 +304,9 @@ theorem QComp.acc_coincide {cs : List QComp} {V : MVar → Prop} {c : QComp} {t 
   exact ⟨mp hξ, mp (fun v hv => (hξ v hv).symm)⟩
 
 /-- Satisfaction of a component only reads `V`. -/
-theorem compSat_coincide {cs : List QComp} {t : List Act} {σ : Obs} {V : MVar → Prop} :
+theorem compSat_coincide {cs : List QComp} {t : List Act} {δ : Obs} {V : MVar → Prop} :
     ∀ (n k : Nat) (c : QComp), cs[k]? = some c → QComp.ReadsIn cs V c →
-      ∀ ξ₁ ξ₂ : MEnv, (∀ v, V v → ξ₁ v = ξ₂ v) → (compSat cs t σ n k ξ₁ ↔ compSat cs t σ n k ξ₂)
+      ∀ ξ₁ ξ₂ : MEnv, (∀ v, V v → ξ₁ v = ξ₂ v) → (compSat cs t δ n k ξ₁ ↔ compSat cs t δ n k ξ₂)
   | 0, _, _, _, _, _, _, _ => Iff.rfl
   | n + 1, k, c, hc, hr, ξ₁, ξ₂, hξ => by
       simp only [compSat, hc, Option.some.injEq, exists_eq_left']

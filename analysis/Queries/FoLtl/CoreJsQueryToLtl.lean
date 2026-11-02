@@ -40,7 +40,7 @@
   tr (F₁;F₂)  K = tr F₁ (tr F₂ K)
   tr (F₁‖F₂)  K = tr F₁ K ∨ tr F₂ K
   tr (F₁&F₂)  K = tr F₁ K ∧ tr F₂ K
-  tr (Q(z⃗))   K = (the translation of Q's body, params bound to z⃗)
+  tr (Q(zs))  K = (the translation of Q's body, params bound to zs)
   ```
 
   `F₁ & F₂` ends at `max j₁ j₂`, and `K(max j₁ j₂) ⟺ K j₁ ∧ K j₂` only when `K`
@@ -54,18 +54,18 @@
 
   ## Guards, locals, invocation
 
-  A query body `∃y⃗: F when I except F'` translates, with continuation
+  A query body `∃ ys: F when I except F'` translates, with continuation
   `K`, to
 
   ```
-  ∃y⃗: I ∧ atStart(¬ tr F' ⊤) ∧ tr F K
+  ∃ ys: I ∧ atStart(¬ tr F' ⊤) ∧ tr F K
   ```
 
   (the `atStart(¬ tr F' ⊤)` conjunct is omitted when there is no `except`),
   written *in place* wherever the query occurs — no hoisting into any normal
   form is needed, matching `CoreJsFoLtl.lean`'s past operators.
 
-  Invoking `Q(z⃗)` inlines `Q`'s body under a *fresh* renaming: `Q`'s
+  Invoking `Q(zs)` inlines `Q`'s body under a *fresh* renaming: `Q`'s
   parameters resolve to the caller's arguments (through the caller's own
   renaming) and `Q`'s locals get brand-new synthetic names, so that inlining
   can never capture a variable free in the surrounding formula (see `LVar`,
@@ -110,7 +110,7 @@ def Ren.ofParams : List Var → List LVar → Ren
 
 /-- Extend `ρ` with fresh synthetic names for `locals`, starting at `n`
     (`locals[k] ↦ Sum.inr (n + k)`, by first-match exactly as `LEnv.bind`); used for a
-    query body's own `∃y⃗`. -/
+    query body's own `∃ ys`. -/
 def Ren.extendFresh (ρ : Ren) : List Var → Nat → Ren
   | [],       _ => ρ
   | y :: ys,  n => fun x => if x = y then Sum.inr n else Ren.extendFresh ρ ys (n + 1) x
@@ -295,7 +295,7 @@ theorem Ren.sat_ofParams (ξ : LVar → Loc) :
 A *continuation* `K` threaded into a translation step is built *before* the
 current query body's own fresh tags exist, so its truth must not depend
 on what they are eventually set to — otherwise wrapping it under a further
-`∃y⃗` (as `QBody.Tr` does) could silently change its meaning. `Ltl.Indep φ n`
+`∃ ys` (as `QBody.Tr` does) could silently change its meaning. `Ltl.Indep φ n`
 captures this: `φ` cannot tell `ξ` apart from any `updateFresh ξ m ls` with
 `m ≥ n`. It grows monotonically as more fresh tags are consumed
 (`Ltl.Indep.mono`), and — critically for `Ltl.ex`/`Ltl.all` — binding one of
@@ -550,11 +550,11 @@ theorem QProg.findRest?_length_lt {Q : QName} :
 
 /-- `QProg.interp`'s definition unfolded at a query found via `findRest?`: exactly
     `QProg.interp`'s own traversal, since both recurse identically on `Q = q.name`. -/
-theorem QProg.interp_findRest (t : List Act) (σ : Obs) (Q : QName) (ls : List Loc) (i j : Nat) :
+theorem QProg.interp_findRest (t : List Act) (δ : Obs) (Q : QName) (ls : List Loc) (i j : Nat) :
     ∀ {Δ : QProg} {q : Query} {Δ' : QProg}, QProg.findRest? Q Δ = some (q, Δ') →
-      (QProg.interp t σ Δ Q ls i j ↔
+      (QProg.interp t δ Δ Q ls i j ↔
         ls.length = q.params.length ∧
-        QProg.interp t σ Δ' ⬝ t ⬝ σ ⬝ LEnv.empty.bind q.params ls ⊨ q.body : i ⇝ j)
+        QProg.interp t δ Δ' ⬝ t ⬝ δ ⬝ LEnv.empty.bind q.params ls ⊨ q.body : i ⇝ j)
   | [], q, Δ', h => by simp [QProg.findRest?] at h
   | q₀ :: Δ₀, q, Δ', h => by
       simp only [QProg.findRest?] at h
@@ -565,7 +565,7 @@ theorem QProg.interp_findRest (t : List Act) (σ : Obs) (Q : QName) (ls : List L
         simp only [QProg.interp, if_pos hQ]
       · rw [if_neg hQ] at h
         simp only [QProg.interp, if_neg hQ]
-        exact QProg.interp_findRest t σ Q ls i j h
+        exact QProg.interp_findRest t δ Q ls i j h
 
 /-- The query found via `findRest?` is declared, and what it may itself invoke is
     well formed — what the correctness theorem's `query` case needs from `QProg.WF Δ`
@@ -664,7 +664,7 @@ inductive Pat.Tr : Ren → QProg → Pat → Ltl LVar → Nat → Ltl LVar → N
   /-- `a` -/
   | act {ρ Δ a K n} :
       Pat.Tr ρ Δ (.act a) K n (Ltl.F (.and (.atom (a.toAtom ρ)) (.next K))) n
-  /-- `Q(z⃗)`: look up `Q` in `Δ`, and inline its body under a fresh
+  /-- `Q(zs)`: look up `Q` in `Δ`, and inline its body under a fresh
       renaming (its parameters resolve to the caller's arguments, resolved
       through `ρ`). -/
   | query {ρ Δ Q zs K n φ n' q Δ'} :
@@ -689,13 +689,13 @@ inductive Pat.Tr : Ren → QProg → Pat → Ltl LVar → Nat → Ltl LVar → N
       Pat.Tr ρ Δ (.both F₁ F₂) K n (.and φ₁ φ₂) n₂
 
 inductive QBody.Tr : Ren → QProg → QBody → Ltl LVar → Nat → Ltl LVar → Nat → Prop where
-  /-- No `except`: `∃y⃗: I ∧ tr(F, K)`. -/
+  /-- No `except`: `∃ ys: I ∧ tr(F, K)`. -/
   | noExcept {ρ Δ P K n φ_pat n₁ ρ'} (hex : P.except = none)
       (hρ' : ρ' = ρ.extendFresh P.locals n) :
       Pat.Tr ρ' Δ P.pattern K (n + P.locals.length) φ_pat n₁ →
       QBody.Tr ρ Δ P K n
         (Ltl.exN (freshVars P.locals n) (.and (Inv.tr ρ' P.when) φ_pat)) n₁
-  /-- `except F'`: `∃y⃗: I ∧ atStart(¬ tr(F', ⊤)) ∧ tr(F, K)`. -/
+  /-- `except F'`: `∃ ys: I ∧ atStart(¬ tr(F', ⊤)) ∧ tr(F, K)`. -/
   | withExcept {ρ Δ P F' K n φ_pat n₁ φ_ex n₂ ρ'} (hex : P.except = some F')
       (hρ' : ρ' = ρ.extendFresh P.locals n) :
       Pat.Tr ρ' Δ P.pattern K (n + P.locals.length) φ_pat n₁ →
@@ -979,7 +979,7 @@ case keeps `Δ` fixed and recurses on `Pat`/`QBody`'s own structure.
 Each fact carries *four* conjuncts, not just the expected correctness `iff`:
 the fresh counter only grows (`n ≤ n'`), the produced formula is `Indep n'`,
 the produced formula is `Mono`-preserving for *any* valuation whenever the
-continuation is (needed because a query body's `∃y⃗` re-derives its
+continuation is (needed because a query body's `∃ ys` re-derives its
 pattern's correctness at `updateFresh ξ n ls`, a valuation different from the
 one the outer goal is stated at), and the correctness `iff` itself. -/
 
@@ -1250,7 +1250,8 @@ theorem correct_all : ∀ N, PatCorrect N ∧ QBodyCorrect N := by
               refine ⟨?_, ?_, (hcorrPat (updateFresh ξ n ls') hKls' i hi).1 ⟨j, ?_, hKj'⟩⟩
               · rw [Inv.sat_tr, hcomp]; rw [hξ''] at hwhen; exact hwhen
               · rw [Ltl.sat_atStart, Ltl.Sat, ← hExIff (updateFresh ξ n ls'), hcomp]
-                exact fun ⟨k, hk⟩ => hexcept F' hex k (hξ'' ▸ hk)
+                exact fun ⟨k, hk⟩ => hexcept F' hex k
+                  (hk.bound (QProg.interp_ok _ _ _) (Nat.zero_le _)) (hξ'' ▸ hk)
               · rw [hcomp]; rw [hξ''] at hpat; exact hpat
           · rintro ⟨ls, hlen, hψ⟩
             simp only [Ltl.Sat] at hψ
@@ -1264,7 +1265,7 @@ theorem correct_all : ∀ N, PatCorrect N ∧ QBodyCorrect N := by
               (hKI e.toModel ξ n ls (Nat.le_refl n) j).2 hKj'⟩
             · rw [hcomp] at hpat'; exact hpat'
             · rw [Inv.sat_tr] at hwhen; rw [hcomp] at hwhen; exact hwhen
-            · intro F'' hF'' k hk
+            · intro F'' hF'' k _ hk
               have hFeq : F'' = F' := by rw [hex] at hF''; exact (Option.some.inj hF'').symm
               subst hFeq
               rw [Ltl.sat_atStart, Ltl.Sat, ← hExIff (updateFresh ξ n ls), hcomp] at hnotex
@@ -1497,7 +1498,7 @@ decreasing_by
     | exact Prod.Lex.left _ _ (QProg.findRest?_length_lt _hfind)
     | (apply Prod.Lex.right; simp_wf; omega)
 
-/-- Compute the translation of a query body `∃y⃗: F when I except F'`. -/
+/-- Compute the translation of a query body `∃ ys: F when I except F'`. -/
 def QBody.tr (ρ : Ren) (Δ : QProg) : QBody → Ltl LVar → Nat → Option (Ltl LVar × Nat)
   | ⟨locals, pattern, when, except⟩, K, n =>
       match except with
