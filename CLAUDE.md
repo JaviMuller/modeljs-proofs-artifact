@@ -211,7 +211,7 @@ the end of `CoreJsAutomatonSemantics.lean`.
 ### The query language
 
 8. **`CoreJsQuerySyntax.lean`** — `Query Q(x⃗) { ∃y⃗: F₁ when I except F₂ }`:
-   `QAct`, `Pred`, `Inv` (generic in the variable type, default `Var`, with
+   `Pred`, `Inv`, `QAct` (generic in the variable type, default `Var`, with
    renaming `map`s: the query model instantiates them with its own
    variables), `Pat`, `QBody` (fields `locals`/`pattern`/`when`/`except`),
    `Query`, and the well-formedness predicates `Query.WF`/`QProg.WF` (all variables declared in `x⃗ ∪ y⃗`,

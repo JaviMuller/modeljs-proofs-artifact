@@ -27,24 +27,12 @@ namespace CoreJS
 /-- Query names `Q`. -/
 abbrev QName := String
 
-/-! ## Query actions, predicates, invariants -/
+/-! ## Predicates, invariants, query actions -/
 
 /-! Actions, predicates and invariants are generic in the type `ν` of the
 variables they mention, defaulting to the source variables `Var`: the query
 model (`Queries/QueryModel/`) instantiates them with its own variables after
 inlining invocations. -/
-
-/-- Query actions `a`, the syntactic counterparts of the trace actions. -/
-inductive QAct (ν : Type := Var) where
-  /-- `x₁ := x₂[x₃]` -/
-  | lookup (x₁ x₂ x₃ : ν)
-  /-- `x₁[x₂] := x₃` -/
-  | update (x₁ x₂ x₃ : ν)
-  /-- `Call(x_f, [x₁, ..., xₙ])` -/
-  | call   (xf : ν) (xs : List ν)
-  /-- `Retn(x_f, x)` -/
-  | retn   (xf x : ν)
-  deriving DecidableEq, Repr
 
 /-- Taint/value predicates `p ::= sk(x) | ac(x) | dep(x₁, x₂) | sv(x₁, x₂) | hv(x, c)`. -/
 inductive Pred (ν : Type := Var) where
@@ -63,6 +51,18 @@ inductive Inv (ν : Type := Var) where
   | and  (I₁ I₂ : Inv ν)
   | tt
   | ff
+  deriving DecidableEq, Repr
+
+/-- Query actions `a`, the syntactic counterparts of the trace actions. -/
+inductive QAct (ν : Type := Var) where
+  /-- `x₁ := x₂[x₃]` -/
+  | lookup (x₁ x₂ x₃ : ν)
+  /-- `x₁[x₂] := x₃` -/
+  | update (x₁ x₂ x₃ : ν)
+  /-- `Call(x_f, [x₁, ..., xₙ])` -/
+  | call   (xf : ν) (xs : List ν)
+  /-- `Retn(x_f, x)` -/
+  | retn   (xf x : ν)
   deriving DecidableEq, Repr
 
 /-! ## Action patterns and query bodies -/
